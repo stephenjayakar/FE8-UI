@@ -3,10 +3,11 @@ cmake_minimum_required(VERSION 3.20)
 project(fe8_mgba_sdl LANGUAGES C)
 
 include(FetchContent)
+find_package(ZLIB REQUIRED)
 
-# Keep the core build small and reproducible. This is the full mGBA commit for
-# the 0.10.3 release, not a moving branch or a shallow version label.
-set(MGBA_REVISION 1c61b54208ca6266129d0f2394c04bd8c44f98c5)
+# Keep the core build small and reproducible. This pinned 0.11 development
+# snapshot can restore states made by the installed 0.11 desktop application.
+set(MGBA_REVISION afd6f14eaf8bd35214ed3fb9dc69a92bfc3877a9)
 set(LIBMGBA_ONLY ON CACHE BOOL "" FORCE)
 set(BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
@@ -18,7 +19,7 @@ set(BUILD_SUITE OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(M_CORE_GBA ON CACHE BOOL "" FORCE)
 set(M_CORE_GB OFF CACHE BOOL "" FORCE)
-set(DISABLE_DEPS ON CACHE BOOL "" FORCE)
+set(DISABLE_DEPS OFF CACHE BOOL "" FORCE)
 set(USE_DEBUGGERS OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
@@ -42,9 +43,17 @@ else()
     set(FE8_SDL_TARGET PkgConfig::SDL2)
 endif()
 
-add_executable(fe8-mgba-sdl src/main.c)
+add_executable(fe8-mgba-sdl
+    src/main.c
+    src/fe8_profile.c
+    src/extended_map_renderer.c)
 target_compile_features(fe8-mgba-sdl PRIVATE c_std_11)
-target_link_libraries(fe8-mgba-sdl PRIVATE mgba ${FE8_SDL_MAIN_TARGET} ${FE8_SDL_TARGET})
+target_include_directories(fe8-mgba-sdl PRIVATE src)
+# libmGBA's public struct layout is feature-macro dependent. Its static target
+# does not export those definitions, so mirror the exact build definitions.
+target_compile_definitions(fe8-mgba-sdl PRIVATE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(fe8-mgba-sdl PRIVATE mgba ZLIB::ZLIB ${FE8_SDL_MAIN_TARGET} ${FE8_SDL_TARGET})
 
 if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
     # Homebrew's native arm64 SDL2 and the host compiler are the default on

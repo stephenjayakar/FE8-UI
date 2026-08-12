@@ -32,6 +32,8 @@ typedef struct Fe8Profile {
     uint32_t map_fog;
     uint32_t map_hidden;
     uint32_t map_other;
+    uint32_t map_base_tiles;
+    uint32_t tileset_config;
     uint32_t blue_units;
     uint32_t red_units;
     uint32_t green_units;
@@ -75,6 +77,8 @@ typedef struct Fe8Snapshot {
     uint8_t chapter;
     uint8_t phase;
     uint32_t flags;
+    uint32_t base_tile_rows;
+    uint32_t fog_rows;
 
     /* Flattened row-major data; only map_width * map_height is populated. */
     uint8_t terrain[FE8_MAX_MAP_CELLS];
@@ -94,6 +98,9 @@ const Fe8Profile *fe8u_profile(void);
 
 /* Checks the GBA header identity without writing to emulated memory. */
 bool fe8_detect_retail_fe8u(const Fe8MemoryReader *memory);
+
+/* Header-family check for FE8U hacks; structural validation is still required. */
+bool fe8_detect_fe8u_family(const Fe8MemoryReader *memory);
 
 /* Extracts a coherent, bounds-checked battle-map snapshot. */
 bool fe8_extract_snapshot(

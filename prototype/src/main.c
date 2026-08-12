@@ -1,9 +1,15 @@
 #include <SDL.h>
 
+#include <mgba/flags.h>
 #include <mgba/core/core.h>
 #include <mgba/core/interface.h>
+#include <mgba/core/log.h>
 #include <mgba/core/serialize.h>
+#include <mgba-util/image.h>
 #include <mgba-util/vfs.h>
+
+#include "extended_map_renderer.h"
+#include "fe8_profile.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -11,13 +17,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
-#define FE8_WIDTH 240u
-#define FE8_HEIGHT 160u
-#define WINDOW_WIDTH (FE8_WIDTH * 2u)
-#define WINDOW_HEIGHT (FE8_HEIGHT * 2u)
+enum {
+    GBA_WIDTH = 240,
+    GBA_HEIGHT = 160,
+    CANVAS_WIDTH = 480,
+    CANVAS_HEIGHT = 320,
+    GBA_X = (CANVAS_WIDTH - GBA_WIDTH) / 2,
+    GBA_Y = (CANVAS_HEIGHT - GBA_HEIGHT) / 2,
+};
 
-/* GBA keypad bit positions used by mCore::setKeys. */
 enum fe8_key {
     FE8_KEY_A = 0,
     FE8_KEY_B = 1,
@@ -35,140 +45,198 @@ struct fe8_options {
     const char *rom_path;
     const char *state_path;
     const char *save_path;
+    const char *capture_path;
+    int extensions;
+    unsigned capture_after;
+    int auto_continue;
+    int seek_large_map;
+    int mouse_target_set;
+    int mouse_target_x;
+    int mouse_target_y;
+};
+
+struct mouse_controller {
+    int active;
+    int target_x;
+    int target_y;
+    int confirm;
+    uint32_t pulse_key;
+    int pulse_frames;
+    int cooldown_frames;
 };
 
 static void usage(const char *program) {
-    fprintf(stderr, "Usage: %s --rom FE8.gba [--state STATE.ss] [--save FE8.sav]\n", program);
+    fprintf(stderr,
+        "Usage: %s --rom GAME.gba [--state STATE.ss] [--save GAME.sav]\n"
+        "       [--capture OUTPUT.bmp] [--capture-after FRAMES]\n"
+        "       [--auto-continue] [--seek-large-map] [--mouse-target X,Y]\n"
+        "       [--no-extensions]\n", program);
 }
 
 static int parse_options(int argc, char **argv, struct fe8_options *options) {
     int i;
     memset(options, 0, sizeof(*options));
-
+    options->extensions = 1;
+    options->capture_after = 1;
     for (i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--rom") == 0) {
-            if (++i >= argc) {
+        const char **destination = NULL;
+        if (strcmp(argv[i], "--rom") == 0)
+            destination = &options->rom_path;
+        else if (strcmp(argv[i], "--state") == 0)
+            destination = &options->state_path;
+        else if (strcmp(argv[i], "--save") == 0)
+            destination = &options->save_path;
+        else if (strcmp(argv[i], "--capture") == 0)
+            destination = &options->capture_path;
+        else if (strcmp(argv[i], "--capture-after") == 0) {
+            char *end;
+            unsigned long frames;
+            if (++i >= argc)
                 return 0;
-            }
-            options->rom_path = argv[i];
-        } else if (strcmp(argv[i], "--state") == 0) {
-            if (++i >= argc) {
+            frames = strtoul(argv[i], &end, 10);
+            if (!*argv[i] || *end || frames > 1000000)
                 return 0;
-            }
-            options->state_path = argv[i];
-        } else if (strcmp(argv[i], "--save") == 0) {
-            if (++i >= argc) {
+            options->capture_after = (unsigned)frames;
+            continue;
+        } else if (strcmp(argv[i], "--auto-continue") == 0) {
+            options->auto_continue = 1;
+            continue;
+        } else if (strcmp(argv[i], "--seek-large-map") == 0) {
+            options->auto_continue = 1;
+            options->seek_large_map = 1;
+            continue;
+        } else if (strcmp(argv[i], "--mouse-target") == 0) {
+            char *comma;
+            char *end;
+            if (++i >= argc)
                 return 0;
-            }
-            options->save_path = argv[i];
+            comma = strchr(argv[i], ',');
+            if (!comma)
+                return 0;
+            options->mouse_target_x = (int)strtol(argv[i], &end, 10);
+            if (end != comma)
+                return 0;
+            options->mouse_target_y = (int)strtol(comma + 1, &end, 10);
+            if (*end)
+                return 0;
+            options->mouse_target_set = 1;
+            continue;
+        }
+        else if (strcmp(argv[i], "--no-extensions") == 0) {
+            options->extensions = 0;
+            continue;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             return 0;
         } else {
             fprintf(stderr, "Unknown argument: %s\n", argv[i]);
             return 0;
         }
+        if (++i >= argc)
+            return 0;
+        *destination = argv[i];
     }
-
     return options->rom_path != NULL;
 }
 
 static uint32_t key_for_scancode(SDL_Scancode scancode) {
     switch (scancode) {
-    case SDL_SCANCODE_Z: return 1u << FE8_KEY_A;
-    case SDL_SCANCODE_X: return 1u << FE8_KEY_B;
-    case SDL_SCANCODE_BACKSPACE: return 1u << FE8_KEY_SELECT;
-    case SDL_SCANCODE_RETURN: return 1u << FE8_KEY_START;
-    case SDL_SCANCODE_RIGHT: return 1u << FE8_KEY_RIGHT;
-    case SDL_SCANCODE_LEFT: return 1u << FE8_KEY_LEFT;
-    case SDL_SCANCODE_UP: return 1u << FE8_KEY_UP;
-    case SDL_SCANCODE_DOWN: return 1u << FE8_KEY_DOWN;
-    case SDL_SCANCODE_S: return 1u << FE8_KEY_R;
-    case SDL_SCANCODE_A: return 1u << FE8_KEY_L;
+    case SDL_SCANCODE_Z: return UINT32_C(1) << FE8_KEY_A;
+    case SDL_SCANCODE_X: return UINT32_C(1) << FE8_KEY_B;
+    case SDL_SCANCODE_BACKSPACE: return UINT32_C(1) << FE8_KEY_SELECT;
+    case SDL_SCANCODE_RETURN: return UINT32_C(1) << FE8_KEY_START;
+    case SDL_SCANCODE_RIGHT: return UINT32_C(1) << FE8_KEY_RIGHT;
+    case SDL_SCANCODE_LEFT: return UINT32_C(1) << FE8_KEY_LEFT;
+    case SDL_SCANCODE_UP: return UINT32_C(1) << FE8_KEY_UP;
+    case SDL_SCANCODE_DOWN: return UINT32_C(1) << FE8_KEY_DOWN;
+    case SDL_SCANCODE_S: return UINT32_C(1) << FE8_KEY_R;
+    case SDL_SCANCODE_A: return UINT32_C(1) << FE8_KEY_L;
     default: return 0;
     }
 }
 
-static void update_keys(struct mCore *core, uint32_t *keys, const SDL_Event *event) {
+static void update_keyboard(uint32_t *keys, const SDL_Event *event) {
     uint32_t bit;
-    if (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP) {
+    if ((event->type != SDL_KEYDOWN && event->type != SDL_KEYUP) || event->key.repeat)
         return;
-    }
-    if (event->key.repeat) {
-        return;
-    }
-
     bit = key_for_scancode(event->key.keysym.scancode);
-    if (!bit) {
+    if (!bit)
         return;
-    }
-    if (event->type == SDL_KEYDOWN) {
+    if (event->type == SDL_KEYDOWN)
         *keys |= bit;
-    } else {
+    else
         *keys &= ~bit;
-    }
-    core->setKeys(core, *keys);
 }
 
-static void convert_framebuffer(const color_t *source, uint8_t *destination,
-                               unsigned width, unsigned height, size_t stride) {
+static uint8_t core_read8(void *context, uint32_t address) {
+    struct mCore *core = context;
+    return core->busRead8(core, address);
+}
+
+static void convert_framebuffer(
+    const mColor *source, size_t source_stride, Fe8HostPixel *canvas) {
     unsigned y;
-    for (y = 0; y < height; ++y) {
+    for (y = 0; y < GBA_HEIGHT; ++y) {
         unsigned x;
-        const color_t *source_row = source + y * stride;
-        uint8_t *destination_row = destination + y * width * 4u;
-        for (x = 0; x < width; ++x) {
-            color_t pixel = source_row[x];
+        const mColor *source_row = source + y * source_stride;
+        Fe8HostPixel *destination = canvas + (size_t)(y + GBA_Y) * CANVAS_WIDTH + GBA_X;
+        for (x = 0; x < GBA_WIDTH; ++x) {
+            mColor pixel = source_row[x];
 #ifdef COLOR_16_BIT
-            destination_row[x * 4u + 0u] = (uint8_t) M_R8(pixel);
-            destination_row[x * 4u + 1u] = (uint8_t) M_G8(pixel);
-            destination_row[x * 4u + 2u] = (uint8_t) M_B8(pixel);
+            uint32_t red = M_R8(pixel);
+            uint32_t green = M_G8(pixel);
+            uint32_t blue = M_B8(pixel);
 #else
-            destination_row[x * 4u + 0u] = (uint8_t) (pixel & 0xffu);
-            destination_row[x * 4u + 1u] = (uint8_t) ((pixel >> 8) & 0xffu);
-            destination_row[x * 4u + 2u] = (uint8_t) ((pixel >> 16) & 0xffu);
+            uint32_t red = pixel & 0xFF;
+            uint32_t green = (pixel >> 8) & 0xFF;
+            uint32_t blue = (pixel >> 16) & 0xFF;
 #endif
-            destination_row[x * 4u + 3u] = 0xffu;
+            destination[x] = UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;
         }
     }
 }
 
-/* Hook point: replace this upload/present path with an exterior renderer. */
-static int present_frame(SDL_Renderer *renderer, SDL_Texture *texture,
-                         const uint8_t *rgba, unsigned width, unsigned height) {
-    int window_width;
-    int window_height;
-    int scale;
-    SDL_Rect destination;
+static SDL_Rect canvas_destination(SDL_Renderer *renderer) {
+    SDL_Rect result;
+    int width;
+    int height;
+    SDL_GetRendererOutputSize(renderer, &width, &height);
+    result.w = width;
+    result.h = width * CANVAS_HEIGHT / CANVAS_WIDTH;
+    if (result.h > height) {
+        result.h = height;
+        result.w = height * CANVAS_WIDTH / CANVAS_HEIGHT;
+    }
+    result.x = (width - result.w) / 2;
+    result.y = (height - result.h) / 2;
+    return result;
+}
 
-    if (SDL_UpdateTexture(texture, NULL, rgba, (int)(width * 4u)) != 0) {
-        fprintf(stderr, "SDL_UpdateTexture failed: %s\n", SDL_GetError());
+static int present_frame(
+    SDL_Renderer *renderer, SDL_Texture *texture, const Fe8HostPixel *canvas) {
+    SDL_Rect destination = canvas_destination(renderer);
+    if (SDL_UpdateTexture(texture, NULL, canvas, CANVAS_WIDTH * (int)sizeof(*canvas)) != 0)
         return 0;
-    }
-    SDL_GetRendererOutputSize(renderer, &window_width, &window_height);
-    scale = window_width / (int)width;
-    if (window_height / (int)height < scale) {
-        scale = window_height / (int)height;
-    }
-    if (scale < 1) {
-        scale = 1;
-    }
-    destination.w = (int)width * scale;
-    destination.h = (int)height * scale;
-    destination.x = (window_width - destination.w) / 2;
-    destination.y = (window_height - destination.h) / 2;
-
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_SetRenderDrawColor(renderer, 8, 10, 12, 255);
     SDL_RenderClear(renderer);
     SDL_RenderCopy(renderer, texture, NULL, &destination);
     SDL_RenderPresent(renderer);
     return 1;
 }
 
-static int load_state(struct mCore *core, const char *path) {
-    struct VFile *state;
-    int success;
+static int window_to_canvas(
+    SDL_Renderer *renderer, int window_x, int window_y, int *canvas_x, int *canvas_y) {
+    SDL_Rect destination = canvas_destination(renderer);
+    if (window_x < destination.x || window_y < destination.y ||
+        window_x >= destination.x + destination.w || window_y >= destination.y + destination.h)
+        return 0;
+    *canvas_x = (window_x - destination.x) * CANVAS_WIDTH / destination.w;
+    *canvas_y = (window_y - destination.y) * CANVAS_HEIGHT / destination.h;
+    return 1;
+}
 
-    state = VFileOpen(path, O_RDONLY);
+static int load_state(struct mCore *core, const char *path) {
+    struct VFile *state = VFileOpen(path, O_RDONLY);
+    int success;
     if (!state) {
         fprintf(stderr, "Unable to open state '%s': %s\n", path, strerror(errno));
         return 0;
@@ -176,118 +244,348 @@ static int load_state(struct mCore *core, const char *path) {
     success = mCoreLoadStateNamed(core, state, SAVESTATE_ALL);
     state->close(state);
     if (!success) {
-        fprintf(stderr, "Unable to load mGBA state '%s'\n", path);
+        FILE *png = fopen(path, "rb");
+        static const uint8_t signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+        uint8_t header[8];
+        success = 0;
+        if (png && fread(header, 1, sizeof(header), png) == sizeof(header) &&
+                memcmp(header, signature, sizeof(signature)) == 0) {
+            while (fread(header, 1, sizeof(header), png) == sizeof(header)) {
+                uint32_t length = ((uint32_t)header[0] << 24) |
+                    ((uint32_t)header[1] << 16) | ((uint32_t)header[2] << 8) | header[3];
+                if (length > UINT32_C(16) * 1024 * 1024)
+                    break;
+                if (memcmp(header + 4, "gbAs", 4) == 0) {
+                    uint8_t *compressed = malloc(length);
+                    size_t state_size = core->stateSize(core);
+                    uint8_t *raw = malloc(state_size);
+                    uLongf raw_size = state_size;
+                    if (compressed && raw && fread(compressed, 1, length, png) == length &&
+                            uncompress(raw, &raw_size, compressed, length) == Z_OK &&
+                            raw_size == state_size) {
+                        success = core->loadState(core, raw);
+                    }
+                    free(raw);
+                    free(compressed);
+                    break;
+                }
+                if (fseek(png, (long)length + 4, SEEK_CUR) != 0)
+                    break;
+            }
+        }
+        if (png)
+            fclose(png);
+        if (success)
+            fprintf(stderr, "Loaded compatible gbAs core payload from '%s'\n", path);
+        else
+            fprintf(stderr, "Unable to load mGBA state '%s'\n", path);
     }
     return success;
+}
+
+static struct mCore *find_core(const char *path) {
+    struct VFile *rom = VFileOpen(path, O_RDONLY);
+    struct mCore *core;
+    if (!rom)
+        return NULL;
+    core = mCoreFindVF(rom);
+    rom->close(rom);
+    return core;
+}
+
+static int load_rom(struct mCore *core, const char *path) {
+    struct VFile *rom = VFileOpen(path, O_RDONLY);
+    if (!rom)
+        return 0;
+    if (!core->isROM(rom) || !core->loadROM(core, rom)) {
+        rom->close(rom);
+        return 0;
+    }
+    return 1;
+}
+
+static int load_save(struct mCore *core, const char *path) {
+    struct VFile *save = VFileOpen(path, O_RDWR);
+    if (!save)
+        return 0;
+    if (!core->loadSave(core, save)) {
+        save->close(save);
+        return 0;
+    }
+    return 1;
+}
+
+static int save_canvas_bmp(const char *path, Fe8HostPixel *canvas) {
+    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormatFrom(
+        canvas, CANVAS_WIDTH, CANVAS_HEIGHT, 32,
+        CANVAS_WIDTH * (int)sizeof(*canvas), SDL_PIXELFORMAT_RGBA32);
+    int result;
+    if (!surface)
+        return 0;
+    result = SDL_SaveBMP(surface, path) == 0;
+    SDL_FreeSurface(surface);
+    return result;
+}
+
+static uint32_t update_mouse_controller(
+    struct mouse_controller *mouse, const Fe8Snapshot *snapshot, int snapshot_valid) {
+    uint32_t result = 0;
+    if (mouse->pulse_frames > 0) {
+        --mouse->pulse_frames;
+        return mouse->pulse_key;
+    }
+    if (mouse->cooldown_frames > 0) {
+        --mouse->cooldown_frames;
+        return 0;
+    }
+    if (!mouse->active || !snapshot_valid)
+        return 0;
+    if (snapshot->cursor_x == mouse->target_x && snapshot->cursor_y == mouse->target_y) {
+        mouse->active = 0;
+        if (!mouse->confirm)
+            return 0;
+        result = UINT32_C(1) << FE8_KEY_A;
+    } else if (snapshot->cursor_x < mouse->target_x)
+        result = UINT32_C(1) << FE8_KEY_RIGHT;
+    else if (snapshot->cursor_x > mouse->target_x)
+        result = UINT32_C(1) << FE8_KEY_LEFT;
+    else if (snapshot->cursor_y < mouse->target_y)
+        result = UINT32_C(1) << FE8_KEY_DOWN;
+    else
+        result = UINT32_C(1) << FE8_KEY_UP;
+    mouse->pulse_key = result;
+    mouse->pulse_frames = 1;
+    mouse->cooldown_frames = 2;
+    return result;
+}
+
+static uint32_t scripted_continue_keys(unsigned frame) {
+    struct scripted_press { unsigned frame; uint32_t key; };
+    static const struct scripted_press presses[] = {
+        {90, UINT32_C(1) << FE8_KEY_A},
+        {210, UINT32_C(1) << FE8_KEY_START},
+        {330, UINT32_C(1) << FE8_KEY_START},
+        {450, UINT32_C(1) << FE8_KEY_A},
+        {570, UINT32_C(1) << FE8_KEY_A},
+        {690, UINT32_C(1) << FE8_KEY_A},
+        {850, UINT32_C(1) << FE8_KEY_START},
+        {1000, UINT32_C(1) << FE8_KEY_A},
+        {1120, UINT32_C(1) << FE8_KEY_A},
+        {1240, UINT32_C(1) << FE8_KEY_A},
+    };
+    size_t i;
+    for (i = 0; i < sizeof(presses) / sizeof(presses[0]); ++i)
+        if (frame >= presses[i].frame && frame < presses[i].frame + 3)
+            return presses[i].key;
+    if (frame >= 1420 && frame % 360 < 3)
+        return UINT32_C(1) << FE8_KEY_A;
+    if (frame >= 1420 && frame % 360 >= 180 && frame % 360 < 183)
+        return UINT32_C(1) << FE8_KEY_START;
+    return 0;
 }
 
 int main(int argc, char **argv) {
     struct fe8_options options;
     struct mCore *core = NULL;
-    color_t *video_buffer = NULL;
-    uint8_t *rgba_buffer = NULL;
+    const Fe8Profile *profile = fe8u_profile();
+    Fe8MemoryReader profile_memory;
+    Fe8MemoryView render_memory;
+    Fe8Snapshot snapshot;
+    Fe8MapRenderState map_state = {0};
+    Fe8ExtendedViewport viewport = {CANVAS_WIDTH, CANVAS_HEIGHT, GBA_X, GBA_Y};
+    struct mouse_controller mouse = {0};
+    mColor *video_buffer = NULL;
+    Fe8HostPixel *canvas = NULL;
     SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;
     SDL_Texture *texture = NULL;
+    uint32_t keyboard_keys = 0;
+    size_t video_stride = GBA_WIDTH;
     unsigned width = 0;
     unsigned height = 0;
-    size_t stride;
-    uint32_t keys = 0;
     int running = 1;
+    int core_initialized = 0;
+    int sdl_initialized = 0;
+    int family_match = 0;
+    int snapshot_valid = 0;
+    int extension_active = 0;
+    int reported_profile = 0;
+    int injected_mouse_target = 0;
+    unsigned frame_count = 0;
+    unsigned large_map_seen_frame = 0;
     int exit_code = EXIT_FAILURE;
+    struct mStandardLogger logger = {0};
 
     if (!parse_options(argc, argv, &options)) {
         usage(argv[0]);
         return EXIT_FAILURE;
     }
-
-    core = mCoreFind(options.rom_path);
-    if (!core) {
-        fprintf(stderr, "mGBA could not identify ROM '%s'\n", options.rom_path);
+    fprintf(stderr, "Starting libmGBA core: %s\n", options.rom_path);
+    core = find_core(options.rom_path);
+    if (!core || !core->init(core)) {
+        fprintf(stderr, "mGBA could not initialize '%s'\n", options.rom_path);
         goto cleanup;
     }
-    if (!core->init(core)) {
-        fprintf(stderr, "mGBA core initialization failed\n");
-        goto cleanup;
-    }
-    if (!mCoreLoadFile(core, options.rom_path)) {
+    fprintf(stderr, "mGBA core initialized\n");
+    core_initialized = 1;
+    mCoreInitConfig(core, "fe8-extended");
+    mStandardLoggerInit(&logger);
+    logger.d.filter->defaultLevels = mLOG_FATAL | mLOG_ERROR | mLOG_WARN;
+    mLogSetDefaultLogger(&logger.d);
+    if (!load_rom(core, options.rom_path)) {
         fprintf(stderr, "mGBA could not load ROM '%s'\n", options.rom_path);
-        goto cleanup_core;
+        goto cleanup;
     }
-
-    core->desiredVideoDimensions(core, &width, &height);
-    if (width != FE8_WIDTH || height != FE8_HEIGHT) {
-        fprintf(stderr, "Unexpected GBA framebuffer dimensions: %ux%u\n", width, height);
-        goto cleanup_core;
+    fprintf(stderr, "ROM loaded\n");
+    core->baseVideoSize(core, &width, &height);
+    if (width != GBA_WIDTH || height != GBA_HEIGHT) {
+        fprintf(stderr, "Expected a 240x160 GBA framebuffer, got %ux%u\n", width, height);
+        goto cleanup;
     }
-    stride = width;
-    video_buffer = (color_t *)calloc((size_t)height * stride, sizeof(*video_buffer));
-    rgba_buffer = (uint8_t *)malloc((size_t)width * height * 4u);
-    if (!video_buffer || !rgba_buffer) {
-        fprintf(stderr, "Unable to allocate the %ux%u framebuffer\n", width, height);
-        goto cleanup_core;
-    }
-    core->setVideoBuffer(core, video_buffer, stride);
-
-    if (options.save_path && !mCoreLoadSaveFile(core, options.save_path, false)) {
-        fprintf(stderr, "Warning: unable to load save file '%s'\n", options.save_path);
-    }
+    video_buffer = calloc((size_t)GBA_HEIGHT * video_stride, sizeof(*video_buffer));
+    canvas = malloc((size_t)CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(*canvas));
+    if (!video_buffer || !canvas)
+        goto cleanup;
+    core->setVideoBuffer(core, video_buffer, video_stride);
+    if (options.save_path && !load_save(core, options.save_path))
+        fprintf(stderr, "Warning: unable to load save '%s'\n", options.save_path);
     core->reset(core);
-    if (options.state_path && !load_state(core, options.state_path)) {
-        goto cleanup_core;
-    }
+    fprintf(stderr, "Core reset complete (state bytes=%zu)\n", core->stateSize(core));
+    if (options.state_path && !load_state(core, options.state_path))
+        goto cleanup;
+
+    profile_memory.context = core;
+    profile_memory.read8 = core_read8;
+    render_memory.context = core;
+    render_memory.read8 = core_read8;
+    family_match = options.extensions && fe8_detect_fe8u_family(&profile_memory);
+    fprintf(stderr, "FE8 extensions: %s\n", family_match ?
+        (fe8_detect_retail_fe8u(&profile_memory) ? "retail-layout profile" : "FE8U-family structural profile") :
+        "disabled (unknown ROM or --no-extensions)");
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-        goto cleanup_core;
+        goto cleanup;
     }
-    window = SDL_CreateWindow("FE8 mGBA prototype", SDL_WINDOWPOS_CENTERED,
-                             SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT,
-                             SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-    renderer = window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED |
-                                           SDL_RENDERER_PRESENTVSYNC) : NULL;
+    sdl_initialized = 1;
+    window = SDL_CreateWindow("FE8 extended-map prototype", SDL_WINDOWPOS_CENTERED,
+        SDL_WINDOWPOS_CENTERED, CANVAS_WIDTH * 2, CANVAS_HEIGHT * 2,
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    renderer = window ? SDL_CreateRenderer(window, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : NULL;
     texture = renderer ? SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_STREAMING, (int)width,
-                                           (int)height) : NULL;
+        SDL_TEXTUREACCESS_STREAMING, CANVAS_WIDTH, CANVAS_HEIGHT) : NULL;
     if (!window || !renderer || !texture) {
         fprintf(stderr, "SDL setup failed: %s\n", SDL_GetError());
-        goto cleanup_sdl;
+        goto cleanup;
     }
     SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
 
-    SDL_SetWindowMinimumSize(window, (int)WINDOW_WIDTH, (int)WINDOW_HEIGHT);
     while (running) {
         SDL_Event event;
+        snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
+        if (options.mouse_target_set && snapshot_valid && !injected_mouse_target) {
+            mouse.active = 1;
+            mouse.target_x = options.mouse_target_x;
+            mouse.target_y = options.mouse_target_y;
+            mouse.confirm = 0;
+            injected_mouse_target = 1;
+            fprintf(stderr, "Mouse-path test: cursor %u,%u -> target %d,%d\n",
+                snapshot.cursor_x, snapshot.cursor_y, mouse.target_x, mouse.target_y);
+        }
+        if (!large_map_seen_frame && snapshot_valid &&
+                (snapshot.map_width > 15 || snapshot.map_height > 10))
+            large_map_seen_frame = frame_count;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
+            if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
+                    event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)) {
                 running = 0;
-            } else if (event.type == SDL_KEYDOWN &&
-                       event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-                running = 0;
+            } else if (event.type == SDL_MOUSEBUTTONDOWN && snapshot_valid) {
+                int canvas_x;
+                int canvas_y;
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    mouse.pulse_key = UINT32_C(1) << FE8_KEY_B;
+                    mouse.pulse_frames = 2;
+                    mouse.active = 0;
+                } else if (event.button.button == SDL_BUTTON_LEFT &&
+                        window_to_canvas(renderer, event.button.x, event.button.y,
+                            &canvas_x, &canvas_y) &&
+                        fe8_canvas_to_map_tile(&map_state, viewport, canvas_x, canvas_y,
+                            &mouse.target_x, &mouse.target_y)) {
+                    mouse.active = 1;
+                    mouse.confirm = event.button.clicks >= 2;
+                }
             } else {
-                update_keys(core, &keys, &event);
+                update_keyboard(&keyboard_keys, &event);
             }
         }
 
-        core->setKeys(core, keys);
+        ++frame_count;
+        core->setKeys(core, keyboard_keys |
+            (options.auto_continue ? scripted_continue_keys(frame_count) : 0) |
+            update_mouse_controller(&mouse, &snapshot, snapshot_valid));
         core->runFrame(core);
-        convert_framebuffer(video_buffer, rgba_buffer, width, height, stride);
-        if (!present_frame(renderer, texture, rgba_buffer, width, height)) {
+        snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
+        extension_active = 0;
+        if (snapshot_valid) {
+            map_state.map_width = snapshot.map_width;
+            map_state.map_height = snapshot.map_height;
+            map_state.camera_x = snapshot.camera_x;
+            map_state.camera_y = snapshot.camera_y;
+            map_state.base_tile_rows = snapshot.base_tile_rows;
+            map_state.fog_rows = snapshot.fog_rows;
+            map_state.tileset_config = profile->tileset_config;
+            map_state.tile_graphics = UINT32_C(0x06008000);
+            map_state.palette = UINT32_C(0x05000000);
+            extension_active = fe8_render_extended_terrain(
+                &render_memory, &map_state, viewport, canvas, CANVAS_WIDTH);
+        }
+        if (!extension_active) {
+            size_t index;
+            for (index = 0; index < (size_t)CANVAS_WIDTH * CANVAS_HEIGHT; ++index)
+                canvas[index] = UINT32_C(0xFF101418);
+            if (family_match && !reported_profile) {
+                fprintf(stderr, "Extended renderer inactive: no validated tactical-map state\n");
+                reported_profile = 1;
+            }
+        }
+        convert_framebuffer(video_buffer, video_stride, canvas);
+        if (!present_frame(renderer, texture, canvas)) {
+            fprintf(stderr, "SDL presentation failed: %s\n", SDL_GetError());
+            running = 0;
+        }
+        if (options.capture_path &&
+                ((!options.seek_large_map && frame_count >= options.capture_after) ||
+                 (options.seek_large_map && large_map_seen_frame &&
+                    frame_count >= large_map_seen_frame + 300 && snapshot_valid &&
+                    (snapshot.map_width > 15 || snapshot.map_height > 10)) ||
+                 (options.seek_large_map && frame_count >= 3600))) {
+            if (!save_canvas_bmp(options.capture_path, canvas))
+                fprintf(stderr, "Unable to save capture '%s': %s\n", options.capture_path, SDL_GetError());
+            else
+                fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u)\n",
+                    options.capture_path, extension_active ? "yes" : "no",
+                    snapshot_valid ? snapshot.map_width : 0,
+                    snapshot_valid ? snapshot.map_height : 0);
+            if (snapshot_valid)
+                fprintf(stderr, "Final FE8 cursor: %u,%u\n", snapshot.cursor_x, snapshot.cursor_y);
             running = 0;
         }
     }
-
     exit_code = EXIT_SUCCESS;
 
-cleanup_sdl:
+cleanup:
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-    SDL_Quit();
-cleanup_core:
-    core->deinit(core);
-cleanup:
-    free(rgba_buffer);
+    if (sdl_initialized)
+        SDL_Quit();
+    if (core_initialized)
+        core->deinit(core);
+    mLogSetDefaultLogger(NULL);
+    if (logger.d.filter)
+        mStandardLoggerDeinit(&logger);
+    free(canvas);
     free(video_buffer);
     return exit_code;
 }
