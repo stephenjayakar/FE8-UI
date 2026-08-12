@@ -78,6 +78,7 @@ static void setup_state(void) {
     put16(profile->bm_state + 0x2A, 0x0040);
     put16(profile->bm_state + 0x14, 2);
     put16(profile->bm_state + 0x16, 1);
+    put8(profile->bm_state + 0x01, 0);
     put8(profile->play_state + 0x0E, 7);
     put8(profile->play_state + 0x0F, 0);
     make_map(profile->map_terrain, UINT32_C(0x02032000), width, height, 10);
@@ -121,6 +122,7 @@ static void test_snapshot(void) {
     assert(snapshot.map_width == 4 && snapshot.map_height == 3);
     assert(snapshot.camera_x == 0x10 && snapshot.camera_y == 0x20);
     assert(snapshot.cursor_x == 2 && snapshot.cursor_y == 1);
+    assert(snapshot.input_lock == 0);
     assert(snapshot.terrain[0] == 10 && snapshot.terrain[11] == 21);
     assert((snapshot.flags & (FE8_SNAPSHOT_TERRAIN | FE8_SNAPSHOT_UNIT_MAP)) ==
         (FE8_SNAPSHOT_TERRAIN | FE8_SNAPSHOT_UNIT_MAP));

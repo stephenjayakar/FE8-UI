@@ -205,6 +205,7 @@ bool fe8_extract_snapshot(
     snapshot->camera_max_y = (int16_t)read16(memory, profile->bm_state + 0x2A);
     snapshot->cursor_x = (uint8_t)read16(memory, profile->bm_state + 0x14);
     snapshot->cursor_y = (uint8_t)read16(memory, profile->bm_state + 0x16);
+    snapshot->input_lock = read8(memory, profile->bm_state + 0x01);
     snapshot->chapter = read8(memory, profile->play_state + 0x0E);
     snapshot->phase = read8(memory, profile->play_state + 0x0F);
     if (snapshot->cursor_x >= width || snapshot->cursor_y >= height)

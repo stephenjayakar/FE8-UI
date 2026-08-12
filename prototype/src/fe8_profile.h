@@ -74,6 +74,7 @@ typedef struct Fe8Snapshot {
     int16_t camera_max_y;
     uint8_t cursor_x;
     uint8_t cursor_y;
+    uint8_t input_lock;
     uint8_t chapter;
     uint8_t phase;
     uint32_t flags;

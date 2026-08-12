@@ -55,7 +55,9 @@ cartridge save through mGBA before reset. Use a copy when testing: mGBA may writ
 normal game progress back to this file. `--no-extensions` leaves the 480×320
 canvas letterboxed and runs as an ordinary frontend.
 
-The logical canvas is 480×320 and the initial window is 960×640. Nearest-neighbor
+The logical canvas is 480×320. The window starts maximized, preserves that 3:2
+aspect ratio with letterboxing as needed, and uses SDL's logical-coordinate
+conversion so mouse input remains aligned on Retina displays. Nearest-neighbor
 scaling preserves pixel art. Escape or the window close button exits.
 
 Keyboard bindings:
@@ -82,10 +84,10 @@ Retail FE8U and FE8U-derived hacks with the standard `BE8E` header are allowed
 to attempt the retail-layout profile. Every pointer, dimension, row table, and
 cursor coordinate is validated each frame before the extension activates.
 
-This was tested with the local retail ROM/state and with *Sacred Stones
-Reforged*, where a 22×28 map rendered outside the hardware frame. Hacks that
-relocate globals, replace tileset storage, or change the renderer need a separate
-profile. They still run through mGBA; only the enhancement falls back.
+This was tested end-to-end on a retail FE8U 28×24 tactical map. Several hacks
+also pass the structural map checks, but hacks that relocate globals, replace
+tileset storage, or change the renderer still need a separate visual profile.
+They continue to run through mGBA; only the enhancement falls back.
 
 The prototype currently draws terrain and fog outside the center. Unit sprites,
 cursor art, weather, map animations, range/movement overlays, and UI remain
@@ -100,12 +102,14 @@ These options exist for repeatable local testing and do not touch ROM data:
 --mouse-target 7,5
 --auto-continue
 --seek-large-map
+--state-out /tmp/large-map.ss
 ```
 
 `--mouse-target` exercises the same D-pad path controller used by clicks.
 `--auto-continue` sends a small scripted set of normal A/Start inputs.
 `--seek-large-map` waits for a validated map larger than 15×10 (or stops after a
-bounded timeout) before capturing.
+bounded timeout) before capturing. When `--state-out` is supplied, that large,
+interactive checkpoint is also saved for repeatable tests.
 
 ## Renderer architecture
 
@@ -120,3 +124,5 @@ The core is configured with `setVideoBuffer()` and queried through
 format remains explicit and portable across mGBA's 16-bit and 32-bit builds.
 
 The three alternative project plans are preserved in [`../docs/plans/`](../docs/plans/README.md).
+The complete build and validation recipe is in
+[`../docs/prototype-testing.md`](../docs/prototype-testing.md).

@@ -46,6 +46,7 @@ struct fe8_options {
     const char *state_path;
     const char *save_path;
     const char *capture_path;
+    const char *state_out_path;
     int extensions;
     unsigned capture_after;
     int auto_continue;
@@ -61,8 +62,12 @@ struct mouse_controller {
     int target_y;
     int confirm;
     uint32_t pulse_key;
-    int pulse_frames;
-    int cooldown_frames;
+    int press_frames;
+    int release_frames;
+    int wait_frames;
+    int issued_x;
+    int issued_y;
+    int retries;
 };
 
 static void usage(const char *program) {
@@ -70,7 +75,7 @@ static void usage(const char *program) {
         "Usage: %s --rom GAME.gba [--state STATE.ss] [--save GAME.sav]\n"
         "       [--capture OUTPUT.bmp] [--capture-after FRAMES]\n"
         "       [--auto-continue] [--seek-large-map] [--mouse-target X,Y]\n"
-        "       [--no-extensions]\n", program);
+        "       [--state-out MAP_STATE.ss] [--no-extensions]\n", program);
 }
 
 static int parse_options(int argc, char **argv, struct fe8_options *options) {
@@ -88,6 +93,8 @@ static int parse_options(int argc, char **argv, struct fe8_options *options) {
             destination = &options->save_path;
         else if (strcmp(argv[i], "--capture") == 0)
             destination = &options->capture_path;
+        else if (strcmp(argv[i], "--state-out") == 0)
+            destination = &options->state_out_path;
         else if (strcmp(argv[i], "--capture-after") == 0) {
             char *end;
             unsigned long frames;
@@ -195,42 +202,26 @@ static void convert_framebuffer(
     }
 }
 
-static SDL_Rect canvas_destination(SDL_Renderer *renderer) {
-    SDL_Rect result;
-    int width;
-    int height;
-    SDL_GetRendererOutputSize(renderer, &width, &height);
-    result.w = width;
-    result.h = width * CANVAS_HEIGHT / CANVAS_WIDTH;
-    if (result.h > height) {
-        result.h = height;
-        result.w = height * CANVAS_WIDTH / CANVAS_HEIGHT;
-    }
-    result.x = (width - result.w) / 2;
-    result.y = (height - result.h) / 2;
-    return result;
-}
-
 static int present_frame(
     SDL_Renderer *renderer, SDL_Texture *texture, const Fe8HostPixel *canvas) {
-    SDL_Rect destination = canvas_destination(renderer);
     if (SDL_UpdateTexture(texture, NULL, canvas, CANVAS_WIDTH * (int)sizeof(*canvas)) != 0)
         return 0;
     SDL_SetRenderDrawColor(renderer, 8, 10, 12, 255);
     SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, NULL, &destination);
+    SDL_RenderCopy(renderer, texture, NULL, NULL);
     SDL_RenderPresent(renderer);
     return 1;
 }
 
 static int window_to_canvas(
     SDL_Renderer *renderer, int window_x, int window_y, int *canvas_x, int *canvas_y) {
-    SDL_Rect destination = canvas_destination(renderer);
-    if (window_x < destination.x || window_y < destination.y ||
-        window_x >= destination.x + destination.w || window_y >= destination.y + destination.h)
+    float logical_x;
+    float logical_y;
+    SDL_RenderWindowToLogical(renderer, window_x, window_y, &logical_x, &logical_y);
+    if (logical_x < 0 || logical_y < 0 || logical_x >= CANVAS_WIDTH || logical_y >= CANVAS_HEIGHT)
         return 0;
-    *canvas_x = (window_x - destination.x) * CANVAS_WIDTH / destination.w;
-    *canvas_y = (window_y - destination.y) * CANVAS_HEIGHT / destination.h;
+    *canvas_x = (int)logical_x;
+    *canvas_y = (int)logical_y;
     return 1;
 }
 
@@ -283,6 +274,16 @@ static int load_state(struct mCore *core, const char *path) {
     return success;
 }
 
+static int save_state(struct mCore *core, const char *path) {
+    struct VFile *state = VFileOpen(path, O_RDWR | O_CREAT | O_TRUNC);
+    int success;
+    if (!state)
+        return 0;
+    success = mCoreSaveStateNamed(core, state, SAVESTATE_ALL);
+    state->close(state);
+    return success;
+}
+
 static struct mCore *find_core(const char *path) {
     struct VFile *rom = VFileOpen(path, O_RDONLY);
     struct mCore *core;
@@ -330,16 +331,39 @@ static int save_canvas_bmp(const char *path, Fe8HostPixel *canvas) {
 static uint32_t update_mouse_controller(
     struct mouse_controller *mouse, const Fe8Snapshot *snapshot, int snapshot_valid) {
     uint32_t result = 0;
-    if (mouse->pulse_frames > 0) {
-        --mouse->pulse_frames;
+    if (!snapshot_valid || snapshot->input_lock != 0) {
+        mouse->active = 0;
+        mouse->press_frames = 0;
+        mouse->release_frames = 0;
+        mouse->wait_frames = 0;
+        return 0;
+    }
+    if (mouse->press_frames > 0) {
+        --mouse->press_frames;
         return mouse->pulse_key;
     }
-    if (mouse->cooldown_frames > 0) {
-        --mouse->cooldown_frames;
+    if (mouse->release_frames > 0) {
+        --mouse->release_frames;
         return 0;
     }
-    if (!mouse->active || !snapshot_valid)
+    if (!mouse->active)
         return 0;
+    if (mouse->wait_frames > 0) {
+        if (snapshot->cursor_x != mouse->issued_x || snapshot->cursor_y != mouse->issued_y) {
+            mouse->wait_frames = 0;
+            mouse->release_frames = 2;
+            mouse->retries = 0;
+            return 0;
+        }
+        --mouse->wait_frames;
+        if (mouse->wait_frames > 0)
+            return 0;
+        if (++mouse->retries > 3) {
+            fprintf(stderr, "Mouse path cancelled: FE8 cursor did not acknowledge input\n");
+            mouse->active = 0;
+            return 0;
+        }
+    }
     if (snapshot->cursor_x == mouse->target_x && snapshot->cursor_y == mouse->target_y) {
         mouse->active = 0;
         if (!mouse->confirm)
@@ -354,8 +378,10 @@ static uint32_t update_mouse_controller(
     else
         result = UINT32_C(1) << FE8_KEY_UP;
     mouse->pulse_key = result;
-    mouse->pulse_frames = 1;
-    mouse->cooldown_frames = 2;
+    mouse->press_frames = 2;
+    mouse->wait_frames = 16;
+    mouse->issued_x = snapshot->cursor_x;
+    mouse->issued_y = snapshot->cursor_y;
     return result;
 }
 
@@ -412,7 +438,9 @@ int main(int argc, char **argv) {
     int reported_profile = 0;
     int injected_mouse_target = 0;
     unsigned frame_count = 0;
-    unsigned large_map_seen_frame = 0;
+    unsigned large_map_ready_frames = 0;
+    int large_map_ready = 0;
+    int state_out_saved = 0;
     int exit_code = EXIT_FAILURE;
     struct mStandardLogger logger = {0};
 
@@ -470,9 +498,9 @@ int main(int argc, char **argv) {
     sdl_initialized = 1;
     window = SDL_CreateWindow("FE8 extended-map prototype", SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, CANVAS_WIDTH * 2, CANVAS_HEIGHT * 2,
-        SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_MAXIMIZED);
     renderer = window ? SDL_CreateRenderer(window, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : NULL;
+        SDL_RENDERER_ACCELERATED | (options.capture_path ? 0 : SDL_RENDERER_PRESENTVSYNC)) : NULL;
     texture = renderer ? SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
         SDL_TEXTUREACCESS_STREAMING, CANVAS_WIDTH, CANVAS_HEIGHT) : NULL;
     if (!window || !renderer || !texture) {
@@ -480,6 +508,27 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
     SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+    if (SDL_RenderSetLogicalSize(renderer, CANVAS_WIDTH, CANVAS_HEIGHT) != 0) {
+        fprintf(stderr, "Unable to configure aspect-preserving logical canvas: %s\n", SDL_GetError());
+        goto cleanup;
+    }
+    SDL_RenderSetIntegerScale(renderer, SDL_FALSE);
+    {
+        int window_width;
+        int window_height;
+        int output_width;
+        int output_height;
+        float logical_x;
+        float logical_y;
+        SDL_GetWindowSize(window, &window_width, &window_height);
+        SDL_GetRendererOutputSize(renderer, &output_width, &output_height);
+        SDL_RenderWindowToLogical(renderer, window_width / 2, window_height / 2,
+            &logical_x, &logical_y);
+        fprintf(stderr,
+            "Display: window=%dx%d output=%dx%d center=%.1f,%.1f logical=%dx%d\n",
+            window_width, window_height, output_width, output_height,
+            logical_x, logical_y, CANVAS_WIDTH, CANVAS_HEIGHT);
+    }
 
     while (running) {
         SDL_Event event;
@@ -493,19 +542,29 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Mouse-path test: cursor %u,%u -> target %d,%d\n",
                 snapshot.cursor_x, snapshot.cursor_y, mouse.target_x, mouse.target_y);
         }
-        if (!large_map_seen_frame && snapshot_valid &&
-                (snapshot.map_width > 15 || snapshot.map_height > 10))
-            large_map_seen_frame = frame_count;
+        if (!large_map_ready && snapshot_valid && snapshot.input_lock == 0 &&
+                (snapshot.map_width > 15 || snapshot.map_height > 10)) {
+            if (large_map_ready_frames < 60)
+                ++large_map_ready_frames;
+            if (large_map_ready_frames == 60) {
+                large_map_ready = 1;
+                fprintf(stderr, "Large interactive map ready: %ux%u\n",
+                    snapshot.map_width, snapshot.map_height);
+            }
+        } else if (!large_map_ready) {
+            large_map_ready_frames = 0;
+        }
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
                     event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)) {
                 running = 0;
-            } else if (event.type == SDL_MOUSEBUTTONDOWN && snapshot_valid) {
+            } else if (event.type == SDL_MOUSEBUTTONDOWN && snapshot_valid &&
+                    snapshot.input_lock == 0) {
                 int canvas_x;
                 int canvas_y;
                 if (event.button.button == SDL_BUTTON_RIGHT) {
                     mouse.pulse_key = UINT32_C(1) << FE8_KEY_B;
-                    mouse.pulse_frames = 2;
+                    mouse.press_frames = 2;
                     mouse.active = 0;
                 } else if (event.button.button == SDL_BUTTON_LEFT &&
                         window_to_canvas(renderer, event.button.x, event.button.y,
@@ -522,7 +581,7 @@ int main(int argc, char **argv) {
 
         ++frame_count;
         core->setKeys(core, keyboard_keys |
-            (options.auto_continue ? scripted_continue_keys(frame_count) : 0) |
+            (options.auto_continue && !large_map_ready ? scripted_continue_keys(frame_count) : 0) |
             update_mouse_controller(&mouse, &snapshot, snapshot_valid));
         core->runFrame(core);
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
@@ -554,11 +613,18 @@ int main(int argc, char **argv) {
             fprintf(stderr, "SDL presentation failed: %s\n", SDL_GetError());
             running = 0;
         }
+        if (large_map_ready && options.state_out_path && !state_out_saved) {
+            if (save_state(core, options.state_out_path)) {
+                fprintf(stderr, "Saved large-map state: %s\n", options.state_out_path);
+                state_out_saved = 1;
+            } else {
+                fprintf(stderr, "Unable to save large-map state: %s\n", options.state_out_path);
+                state_out_saved = 1;
+            }
+        }
         if (options.capture_path &&
                 ((!options.seek_large_map && frame_count >= options.capture_after) ||
-                 (options.seek_large_map && large_map_seen_frame &&
-                    frame_count >= large_map_seen_frame + 300 && snapshot_valid &&
-                    (snapshot.map_width > 15 || snapshot.map_height > 10)) ||
+                 (options.seek_large_map && large_map_ready) ||
                  (options.seek_large_map && frame_count >= 3600))) {
             if (!save_canvas_bmp(options.capture_path, canvas))
                 fprintf(stderr, "Unable to save capture '%s': %s\n", options.capture_path, SDL_GetError());
