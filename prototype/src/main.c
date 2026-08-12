@@ -11,6 +11,8 @@
 #include "extended_map_renderer.h"
 #include "extended_unit_renderer.h"
 #include "fe8_profile.h"
+#include "mouse_controller.h"
+#include "viewport_controller.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -53,25 +55,11 @@ struct fe8_options {
     int auto_continue;
     int seek_large_map;
     int realtime;
+    int pan_test;
     int mouse_target_set;
     int mouse_confirm;
     int mouse_target_x;
     int mouse_target_y;
-};
-
-struct mouse_controller {
-    int active;
-    int target_x;
-    int target_y;
-    int confirm;
-    uint32_t pulse_key;
-    int press_frames;
-    int release_frames;
-    int wait_frames;
-    int issued_x;
-    int issued_y;
-    int retries;
-    int blocked_frames;
 };
 
 struct pan_controller {
@@ -91,7 +79,8 @@ static void usage(const char *program) {
         "       [--capture OUTPUT.bmp] [--capture-after FRAMES]\n"
         "       [--auto-continue] [--seek-large-map] [--mouse-target X,Y]\n"
         "       [--mouse-click X,Y]\n"
-        "       [--state-out MAP_STATE.ss] [--realtime] [--no-extensions]\n", program);
+        "       [--state-out MAP_STATE.ss] [--realtime] [--pan-test]\n"
+        "       [--no-extensions]\n", program);
 }
 
 static int parse_options(int argc, char **argv, struct fe8_options *options) {
@@ -130,6 +119,9 @@ static int parse_options(int argc, char **argv, struct fe8_options *options) {
             continue;
         } else if (strcmp(argv[i], "--realtime") == 0) {
             options->realtime = 1;
+            continue;
+        } else if (strcmp(argv[i], "--pan-test") == 0) {
+            options->pan_test = 1;
             continue;
         } else if (strcmp(argv[i], "--mouse-target") == 0 ||
                 strcmp(argv[i], "--mouse-click") == 0) {
@@ -251,37 +243,6 @@ static int window_to_canvas(
     return 1;
 }
 
-static int clamp_int(int value, int minimum, int maximum) {
-    if (value < minimum)
-        return minimum;
-    if (value > maximum)
-        return maximum;
-    return value;
-}
-
-static void clamp_pan(
-    struct pan_controller *pan, const Fe8Snapshot *snapshot,
-    Fe8ExtendedViewport *viewport) {
-    int base_x = snapshot->camera_x - GBA_X;
-    int base_y = snapshot->camera_y - GBA_Y;
-    int map_width = snapshot->map_width * 16;
-    int map_height = snapshot->map_height * 16;
-    int origin_x = base_x + pan->x;
-    int origin_y = base_y + pan->y;
-    if (map_width <= CANVAS_WIDTH)
-        origin_x = (map_width - CANVAS_WIDTH) / 2;
-    else
-        origin_x = clamp_int(origin_x, 0, map_width - CANVAS_WIDTH);
-    if (map_height <= CANVAS_HEIGHT)
-        origin_y = (map_height - CANVAS_HEIGHT) / 2;
-    else
-        origin_y = clamp_int(origin_y, 0, map_height - CANVAS_HEIGHT);
-    pan->x = origin_x - base_x;
-    pan->y = origin_y - base_y;
-    viewport->gba_x = GBA_X - pan->x;
-    viewport->gba_y = GBA_Y - pan->y;
-}
-
 static void pace_frame(uint64_t *deadline, uint64_t period, uint64_t frequency) {
     uint64_t now;
     *deadline += period;
@@ -401,76 +362,6 @@ static int save_canvas_bmp(const char *path, Fe8HostPixel *canvas) {
     return result;
 }
 
-static uint32_t update_mouse_controller(
-    struct mouse_controller *mouse, const Fe8Snapshot *snapshot, int snapshot_valid) {
-    uint32_t result = 0;
-    if (!snapshot_valid) {
-        mouse->active = 0;
-        mouse->press_frames = 0;
-        mouse->release_frames = 0;
-        mouse->wait_frames = 0;
-        mouse->blocked_frames = 0;
-        return 0;
-    }
-    if (snapshot->input_lock != 0) {
-        if (++mouse->blocked_frames > 300) {
-            fprintf(stderr, "Mouse path cancelled: FE8 input remained locked\n");
-            mouse->active = 0;
-            mouse->press_frames = 0;
-            mouse->release_frames = 0;
-            mouse->wait_frames = 0;
-        }
-        return 0;
-    }
-    mouse->blocked_frames = 0;
-    if (mouse->press_frames > 0) {
-        --mouse->press_frames;
-        return mouse->pulse_key;
-    }
-    if (mouse->release_frames > 0) {
-        --mouse->release_frames;
-        return 0;
-    }
-    if (!mouse->active)
-        return 0;
-    if (mouse->wait_frames > 0) {
-        if (snapshot->cursor_x != mouse->issued_x || snapshot->cursor_y != mouse->issued_y) {
-            mouse->wait_frames = 0;
-            mouse->release_frames = 2;
-            mouse->retries = 0;
-            return 0;
-        }
-        --mouse->wait_frames;
-        if (mouse->wait_frames > 0)
-            return 0;
-        if (++mouse->retries > 3) {
-            fprintf(stderr, "Mouse path cancelled: FE8 cursor did not acknowledge input\n");
-            mouse->active = 0;
-            return 0;
-        }
-    }
-    if (snapshot->cursor_x == mouse->target_x && snapshot->cursor_y == mouse->target_y) {
-        mouse->active = 0;
-        if (!mouse->confirm)
-            return 0;
-        result = UINT32_C(1) << FE8_KEY_A;
-        fprintf(stderr, "Mouse confirm: A at %d,%d\n", mouse->target_x, mouse->target_y);
-    } else if (snapshot->cursor_x < mouse->target_x)
-        result = UINT32_C(1) << FE8_KEY_RIGHT;
-    else if (snapshot->cursor_x > mouse->target_x)
-        result = UINT32_C(1) << FE8_KEY_LEFT;
-    else if (snapshot->cursor_y < mouse->target_y)
-        result = UINT32_C(1) << FE8_KEY_DOWN;
-    else
-        result = UINT32_C(1) << FE8_KEY_UP;
-    mouse->pulse_key = result;
-    mouse->press_frames = 2;
-    mouse->wait_frames = 16;
-    mouse->issued_x = snapshot->cursor_x;
-    mouse->issued_y = snapshot->cursor_y;
-    return result;
-}
-
 static uint32_t scripted_continue_keys(unsigned frame) {
     struct scripted_press { unsigned frame; uint32_t key; };
     static const struct scripted_press presses[] = {
@@ -505,7 +396,7 @@ int main(int argc, char **argv) {
     Fe8Snapshot snapshot;
     Fe8MapRenderState map_state = {0};
     Fe8ExtendedViewport viewport = {CANVAS_WIDTH, CANVAS_HEIGHT, GBA_X, GBA_Y};
-    struct mouse_controller mouse = {0};
+    Fe8MouseController mouse = {0};
     struct pan_controller pan = {0};
     mColor *video_buffer = NULL;
     Fe8HostPixel *canvas = NULL;
@@ -525,6 +416,8 @@ int main(int argc, char **argv) {
     unsigned rendered_units = 0;
     int reported_profile = 0;
     int injected_mouse_target = 0;
+    int injected_pan_test = 0;
+    int reset_test_modifiers = 0;
     unsigned frame_count = 0;
     unsigned large_map_ready_frames = 0;
     int large_map_ready = 0;
@@ -636,16 +529,72 @@ int main(int argc, char **argv) {
             map_state.map_height = snapshot.map_height;
             map_state.camera_x = snapshot.camera_x;
             map_state.camera_y = snapshot.camera_y;
-            clamp_pan(&pan, &snapshot, &viewport);
+            fe8_viewport_clamp_pan(
+                &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
         }
         if (options.mouse_target_set && snapshot_valid && !injected_mouse_target) {
-            mouse.active = 1;
-            mouse.target_x = options.mouse_target_x;
-            mouse.target_y = options.mouse_target_y;
-            mouse.confirm = options.mouse_confirm;
+            if (options.mouse_confirm) {
+                int canvas_x = options.mouse_target_x * 16 - snapshot.camera_x +
+                    viewport.gba_x + 8;
+                int canvas_y = options.mouse_target_y * 16 - snapshot.camera_y +
+                    viewport.gba_y + 8;
+                int window_x;
+                int window_y;
+                SDL_Event pointer_event;
+                SDL_RenderLogicalToWindow(renderer, (float)canvas_x, (float)canvas_y,
+                    &window_x, &window_y);
+                memset(&pointer_event, 0, sizeof(pointer_event));
+                pointer_event.type = SDL_MOUSEBUTTONDOWN;
+                pointer_event.button.button = SDL_BUTTON_LEFT;
+                pointer_event.button.state = SDL_PRESSED;
+                pointer_event.button.clicks = 1;
+                pointer_event.button.x = window_x;
+                pointer_event.button.y = window_y;
+                SDL_PushEvent(&pointer_event);
+                fprintf(stderr,
+                    "Pointer-event test: tile %d,%d -> logical %d,%d -> window %d,%d\n",
+                    options.mouse_target_x, options.mouse_target_y,
+                    canvas_x, canvas_y, window_x, window_y);
+            } else {
+                fe8_mouse_set_target(&mouse, options.mouse_target_x,
+                    options.mouse_target_y, 0);
+            }
             injected_mouse_target = 1;
             fprintf(stderr, "Mouse-path test: cursor %u,%u -> target %d,%d\n",
-                snapshot.cursor_x, snapshot.cursor_y, mouse.target_x, mouse.target_y);
+                snapshot.cursor_x, snapshot.cursor_y,
+                options.mouse_target_x, options.mouse_target_y);
+        }
+        if (options.pan_test && snapshot_valid && !injected_pan_test) {
+            int start_window_x;
+            int start_window_y;
+            int end_window_x;
+            int end_window_y;
+            SDL_Event pan_events[3];
+            SDL_RenderLogicalToWindow(renderer, CANVAS_WIDTH / 2.0f,
+                CANVAS_HEIGHT / 2.0f, &start_window_x, &start_window_y);
+            SDL_RenderLogicalToWindow(renderer, CANVAS_WIDTH / 2.0f,
+                CANVAS_HEIGHT / 2.0f - 64.0f, &end_window_x, &end_window_y);
+            memset(pan_events, 0, sizeof(pan_events));
+            pan_events[0].type = SDL_MOUSEBUTTONDOWN;
+            pan_events[0].button.button = SDL_BUTTON_LEFT;
+            pan_events[0].button.state = SDL_PRESSED;
+            pan_events[0].button.x = start_window_x;
+            pan_events[0].button.y = start_window_y;
+            pan_events[1].type = SDL_MOUSEMOTION;
+            pan_events[1].motion.state = SDL_BUTTON_LMASK;
+            pan_events[1].motion.x = end_window_x;
+            pan_events[1].motion.y = end_window_y;
+            pan_events[2].type = SDL_MOUSEBUTTONUP;
+            pan_events[2].button.button = SDL_BUTTON_LEFT;
+            pan_events[2].button.state = SDL_RELEASED;
+            pan_events[2].button.x = end_window_x;
+            pan_events[2].button.y = end_window_y;
+            SDL_SetModState(KMOD_SHIFT);
+            SDL_PushEvent(&pan_events[0]);
+            SDL_PushEvent(&pan_events[1]);
+            SDL_PushEvent(&pan_events[2]);
+            injected_pan_test = 1;
+            reset_test_modifiers = 1;
         }
         if (!large_map_ready && snapshot_valid && snapshot.input_lock == 0 &&
                 (snapshot.map_width > 15 || snapshot.map_height > 10)) {
@@ -681,18 +630,17 @@ int main(int argc, char **argv) {
                     pan.start_canvas_y = canvas_y;
                     pan.start_pan_x = pan.x;
                     pan.start_pan_y = pan.y;
-                    mouse.active = 0;
+                    fe8_mouse_cancel(&mouse);
                 } else if (event.button.button == SDL_BUTTON_RIGHT) {
+                    fe8_mouse_cancel(&mouse);
                     mouse.pulse_key = UINT32_C(1) << FE8_KEY_B;
                     mouse.press_frames = 2;
-                    mouse.active = 0;
                 } else if (event.button.button == SDL_BUTTON_LEFT &&
                         window_to_canvas(renderer, event.button.x, event.button.y,
                             &canvas_x, &canvas_y) &&
                         fe8_canvas_to_map_tile(&map_state, viewport, canvas_x, canvas_y,
                             &mouse.target_x, &mouse.target_y)) {
-                    mouse.active = 1;
-                    mouse.confirm = 1;
+                    fe8_mouse_set_target(&mouse, mouse.target_x, mouse.target_y, 1);
                     native_frame_until = frame_count + 180;
                     fprintf(stderr, "Mouse click: target=%d,%d lock=%u\n",
                         mouse.target_x, mouse.target_y, snapshot.input_lock);
@@ -707,14 +655,17 @@ int main(int argc, char **argv) {
                     int map_y;
                     if (fe8_canvas_to_map_tile(&map_state, viewport, canvas_x, canvas_y,
                             &map_x, &map_y)) {
-                        int desired_origin_x = map_x * 16 + 8 - CANVAS_WIDTH / 2;
-                        int desired_origin_y = map_y * 16 + 8 - CANVAS_HEIGHT / 2;
-                        pan.x = desired_origin_x - (snapshot.camera_x - GBA_X);
-                        pan.y = desired_origin_y - (snapshot.camera_y - GBA_Y);
+                        fe8_viewport_recenter_on_tile(
+                            &pan.x, &pan.y, &snapshot, &viewport,
+                            GBA_X, GBA_Y, map_x, map_y);
                     }
                 }
                 pan.dragging = 0;
-                clamp_pan(&pan, &snapshot, &viewport);
+                fe8_viewport_clamp_pan(
+                    &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+                fprintf(stderr, "Pan view: origin=%d,%d\n",
+                    snapshot.camera_x - viewport.gba_x,
+                    snapshot.camera_y - viewport.gba_y);
             } else if (event.type == SDL_MOUSEMOTION && snapshot_valid) {
                 int canvas_x;
                 int canvas_y;
@@ -728,31 +679,37 @@ int main(int argc, char **argv) {
                     pan.x = pan.start_pan_x - dx;
                     pan.y = pan.start_pan_y - dy;
                     pan.moved = pan.moved || abs(dx) >= 2 || abs(dy) >= 2;
-                    clamp_pan(&pan, &snapshot, &viewport);
+                    fe8_viewport_clamp_pan(
+                        &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
                 } else if ((!mouse.active || !mouse.confirm) && fe8_canvas_to_map_tile(
                         &map_state, viewport, canvas_x, canvas_y,
                         &mouse.target_x, &mouse.target_y)) {
                     if (mouse.target_x != snapshot.cursor_x ||
                             mouse.target_y != snapshot.cursor_y) {
-                        mouse.active = 1;
-                        mouse.confirm = 0;
+                        fe8_mouse_set_target(
+                            &mouse, mouse.target_x, mouse.target_y, 0);
                     }
                 }
             } else {
                 update_keyboard(&keyboard_keys, &event);
             }
         }
+        if (reset_test_modifiers) {
+            SDL_SetModState(KMOD_NONE);
+            reset_test_modifiers = 0;
+        }
 
         ++frame_count;
         core->setKeys(core, keyboard_keys |
             (options.auto_continue && !large_map_ready ? scripted_continue_keys(frame_count) : 0) |
-            update_mouse_controller(&mouse, &snapshot, snapshot_valid));
+            fe8_mouse_update(&mouse, &snapshot, snapshot_valid));
         core->runFrame(core);
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         extension_active = 0;
         rendered_units = 0;
         if (snapshot_valid) {
-            clamp_pan(&pan, &snapshot, &viewport);
+            fe8_viewport_clamp_pan(
+                &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
             map_state.map_width = snapshot.map_width;
             map_state.map_height = snapshot.map_height;
             map_state.camera_x = snapshot.camera_x;

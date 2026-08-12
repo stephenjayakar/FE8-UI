@@ -47,7 +47,9 @@ add_executable(fe8-mgba-sdl
     src/main.c
     src/fe8_profile.c
     src/extended_map_renderer.c
-    src/extended_unit_renderer.c)
+    src/extended_unit_renderer.c
+    src/mouse_controller.c
+    src/viewport_controller.c)
 target_compile_features(fe8-mgba-sdl PRIVATE c_std_11)
 target_include_directories(fe8-mgba-sdl PRIVATE src)
 # libmGBA's public struct layout is feature-macro dependent. Its static target

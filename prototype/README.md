@@ -112,10 +112,12 @@ These options exist for repeatable local testing and do not touch ROM data:
 --auto-continue
 --seek-large-map
 --state-out /tmp/large-map.ss
+--pan-test
 ```
 
 `--mouse-target` exercises the same D-pad path controller used by clicks.
 `--mouse-click` also verifies the final `A` confirmation.
+`--pan-test` injects a Shift-drag through SDL for a repeatable viewport test.
 `--auto-continue` sends a small scripted set of normal A/Start inputs.
 `--seek-large-map` waits for a validated map larger than 15×10 (or stops after a
 bounded timeout) before capturing. When `--state-out` is supplied, that large,
