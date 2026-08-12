@@ -6,6 +6,7 @@
 
 enum {
     KEY_A = 1 << 0,
+    KEY_B = 1 << 1,
     KEY_RIGHT = 1 << 4,
     KEY_DOWN = 1 << 7,
 };
@@ -55,6 +56,11 @@ int main(void) {
 
     fe8_mouse_cancel(&mouse);
     assert(!mouse.active && mouse.press_frames == 0);
+    mouse.pulse_key = KEY_B;
+    mouse.press_frames = 2;
+    snapshot.input_lock = 1;
+    assert(fe8_mouse_update(&mouse, &snapshot, 1) == KEY_B);
+    assert(fe8_mouse_update(&mouse, &snapshot, 0) == KEY_B);
     puts("mouse controller tests passed");
     return 0;
 }

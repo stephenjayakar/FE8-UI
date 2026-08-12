@@ -423,7 +423,9 @@ int main(int argc, char **argv) {
     int large_map_ready = 0;
     int state_out_saved = 0;
     int native_frame_visible = 0;
-    unsigned native_frame_until = 0;
+    int pointer_position_valid = 0;
+    int pointer_canvas_x = 0;
+    int pointer_canvas_y = 0;
     uint64_t frame_deadline = 0;
     uint64_t frame_period = 0;
     uint64_t performance_frequency = 0;
@@ -531,6 +533,15 @@ int main(int argc, char **argv) {
             map_state.camera_y = snapshot.camera_y;
             fe8_viewport_clamp_pan(
                 &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+            if (pointer_position_valid && !pan.dragging &&
+                    (!mouse.active || !mouse.confirm)) {
+                int target_x;
+                int target_y;
+                if (fe8_canvas_to_map_tile(&map_state, viewport,
+                        pointer_canvas_x, pointer_canvas_y, &target_x, &target_y) &&
+                        (target_x != snapshot.cursor_x || target_y != snapshot.cursor_y))
+                    fe8_mouse_set_target(&mouse, target_x, target_y, 0);
+            }
         }
         if (options.mouse_target_set && snapshot_valid && !injected_mouse_target) {
             if (options.mouse_confirm) {
@@ -617,6 +628,15 @@ int main(int argc, char **argv) {
                 native_frame_visible = !native_frame_visible;
                 fprintf(stderr, "Native FE8 HUD: %s\n",
                     native_frame_visible ? "visible" : "hidden");
+            } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                    event.button.button == SDL_BUTTON_RIGHT) {
+                fe8_mouse_cancel(&mouse);
+                pointer_position_valid = 0;
+                mouse.pulse_key = UINT32_C(1) << FE8_KEY_B;
+                mouse.press_frames = 2;
+                fprintf(stderr, "Mouse cancel: B queued (snapshot=%s lock=%u)\n",
+                    snapshot_valid ? "valid" : "invalid",
+                    snapshot_valid ? snapshot.input_lock : 0);
             } else if (event.type == SDL_MOUSEBUTTONDOWN && snapshot_valid) {
                 int canvas_x;
                 int canvas_y;
@@ -631,18 +651,18 @@ int main(int argc, char **argv) {
                     pan.start_pan_x = pan.x;
                     pan.start_pan_y = pan.y;
                     fe8_mouse_cancel(&mouse);
-                } else if (event.button.button == SDL_BUTTON_RIGHT) {
-                    fe8_mouse_cancel(&mouse);
-                    mouse.pulse_key = UINT32_C(1) << FE8_KEY_B;
-                    mouse.press_frames = 2;
                 } else if (event.button.button == SDL_BUTTON_LEFT &&
                         window_to_canvas(renderer, event.button.x, event.button.y,
                             &canvas_x, &canvas_y) &&
                         fe8_canvas_to_map_tile(&map_state, viewport, canvas_x, canvas_y,
                             &mouse.target_x, &mouse.target_y)) {
+                    pointer_position_valid = 1;
+                    pointer_canvas_x = canvas_x;
+                    pointer_canvas_y = canvas_y;
                     fe8_mouse_set_target(&mouse, mouse.target_x, mouse.target_y, 1);
-                    native_frame_until = frame_count + 180;
-                    fprintf(stderr, "Mouse click: target=%d,%d lock=%u\n",
+                    fprintf(stderr,
+                        "Mouse click: window=%d,%d canvas=%d,%d target=%d,%d lock=%u\n",
+                        event.button.x, event.button.y, canvas_x, canvas_y,
                         mouse.target_x, mouse.target_y, snapshot.input_lock);
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP &&
@@ -671,8 +691,12 @@ int main(int argc, char **argv) {
                 int canvas_y;
                 if (!window_to_canvas(renderer, event.motion.x, event.motion.y,
                         &canvas_x, &canvas_y)) {
+                    pointer_position_valid = 0;
                     continue;
                 }
+                pointer_position_valid = 1;
+                pointer_canvas_x = canvas_x;
+                pointer_canvas_y = canvas_y;
                 if (pan.dragging) {
                     int dx = canvas_x - pan.start_canvas_x;
                     int dy = canvas_y - pan.start_canvas_y;
@@ -734,7 +758,7 @@ int main(int argc, char **argv) {
                 reported_profile = 1;
             }
         }
-        if (!extension_active || native_frame_visible || frame_count < native_frame_until)
+        if (!extension_active || native_frame_visible)
             composite_framebuffer(video_buffer, video_stride, canvas,
                 viewport.gba_x, viewport.gba_y);
         if (!present_frame(renderer, texture, canvas)) {

@@ -80,8 +80,8 @@ Mouse controls on a validated tactical map:
 - Right-click sends `B` and cancels queued movement.
 - Shift-click recenters the extended view. Shift-drag pans it across maps that
   are larger than the host canvas without changing FE8's own camera.
-- `H` toggles the original FE8 framebuffer/HUD. The clean extended view is the
-  default; the native HUD appears briefly after a click so menus remain usable.
+- `H` toggles the original FE8 framebuffer/HUD. The clean extended view remains
+  active after clicks; enable the native HUD explicitly when a menu is needed.
 - Temporary FE8 input locks pause mouse movement instead of discarding it.
   Cursor coordinates are never written directly.
 
