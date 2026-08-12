@@ -14,6 +14,12 @@ add_executable(test_extended_map_renderer
     ../src/extended_map_renderer.c)
 target_include_directories(test_extended_map_renderer PRIVATE ../src)
 
+add_executable(test_extended_unit_renderer
+    test_extended_unit_renderer.c
+    ../src/extended_unit_renderer.c)
+target_include_directories(test_extended_unit_renderer PRIVATE ../src)
+
 enable_testing()
 add_test(NAME fe8_profile COMMAND test_fe8_profile)
 add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
+add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)

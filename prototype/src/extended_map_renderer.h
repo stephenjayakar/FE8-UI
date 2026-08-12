@@ -8,7 +8,10 @@
 /* Pixel layout is 0xAABBGGRR, i.e. RGBA bytes on little-endian hosts. */
 typedef uint32_t Fe8HostPixel;
 
+#ifndef FE8_READ8_DEFINED
+#define FE8_READ8_DEFINED
 typedef uint8_t (*Fe8Read8)(void *context, uint32_t address);
+#endif
 
 typedef struct Fe8MemoryView {
     void *context;

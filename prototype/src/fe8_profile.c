@@ -37,6 +37,7 @@
 #define FE8_UNIT_STATE_HIDDEN UINT32_C(1u << 0)
 #define FE8_UNIT_STATE_DEAD UINT32_C(1u << 2)
 #define FE8_UNIT_STATE_NOT_DEPLOYED UINT32_C(1u << 3)
+#define FE8_UNIT_STATE_FOG_HIDDEN UINT32_C(1u << 9)
 
 static const Fe8Profile s_fe8u_profile = {
     FE8_HEADER_TITLE, FE8_HEADER_GAME_CODE, FE8_HEADER_MAKER_CODE, 0, 0x9D,
@@ -173,10 +174,12 @@ static void append_units(
         int8_t y = (int8_t)read8(memory, address + 0x11);
         uint32_t character = read32(memory, address);
         if (!valid_pointer(character) || (state & (FE8_UNIT_STATE_HIDDEN | FE8_UNIT_STATE_DEAD |
-            FE8_UNIT_STATE_NOT_DEPLOYED)) != 0 || x < 0 || y < 0 || x >= (int8_t)width || y >= (int8_t)height)
+            FE8_UNIT_STATE_NOT_DEPLOYED | FE8_UNIT_STATE_FOG_HIDDEN)) != 0 ||
+            x < 0 || y < 0 || x >= (int8_t)width || y >= (int8_t)height)
             continue;
         snapshot->visible_units[snapshot->visible_unit_count++] = (Fe8VisibleUnit){
-            read8(memory, address + 0x0B), faction, x, y, state};
+            read8(memory, address + 0x0B), faction, x, y, state,
+            read32(memory, address + 0x3C)};
     }
 }
 
@@ -244,8 +247,8 @@ bool fe8_extract_snapshot(
             snapshot->flags |= map_flags[i];
 
     append_units(memory, profile->blue_units, FE8_BLUE_UNIT_COUNT, 0x00, width, height, snapshot);
-    append_units(memory, profile->red_units, FE8_RED_UNIT_COUNT, 0x40, width, height, snapshot);
-    append_units(memory, profile->green_units, FE8_GREEN_UNIT_COUNT, 0x80, width, height, snapshot);
+    append_units(memory, profile->red_units, FE8_RED_UNIT_COUNT, 0x80, width, height, snapshot);
+    append_units(memory, profile->green_units, FE8_GREEN_UNIT_COUNT, 0x40, width, height, snapshot);
     if (snapshot->visible_unit_count != 0)
         snapshot->flags |= FE8_SNAPSHOT_UNITS;
     return true;

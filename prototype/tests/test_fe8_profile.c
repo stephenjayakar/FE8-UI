@@ -102,6 +102,15 @@ static void setup_state(void) {
     put32(profile->blue_units + 0x0C, 0);
     put8(profile->blue_units + 0x10, 1);
     put8(profile->blue_units + 0x11, 2);
+    put32(profile->blue_units + 0x3C, UINT32_C(0x02031000));
+
+    /* Unit 0x81 is an enemy; faction values must not be swapped with NPCs. */
+    put32(profile->red_units, UINT32_C(0x08000000));
+    put8(profile->red_units + 0x0B, 0x81);
+    put32(profile->red_units + 0x0C, 0);
+    put8(profile->red_units + 0x10, 3);
+    put8(profile->red_units + 0x11, 2);
+    put32(profile->red_units + 0x3C, UINT32_C(0x02031100));
 }
 
 static void test_identity(void) {
@@ -126,9 +135,13 @@ static void test_snapshot(void) {
     assert(snapshot.terrain[0] == 10 && snapshot.terrain[11] == 21);
     assert((snapshot.flags & (FE8_SNAPSHOT_TERRAIN | FE8_SNAPSHOT_UNIT_MAP)) ==
         (FE8_SNAPSHOT_TERRAIN | FE8_SNAPSHOT_UNIT_MAP));
-    assert(snapshot.visible_unit_count == 1);
+    assert(snapshot.visible_unit_count == 2);
     assert(snapshot.visible_units[0].unit_id == 1);
     assert(snapshot.visible_units[0].x == 1 && snapshot.visible_units[0].y == 2);
+    assert(snapshot.visible_units[0].faction == 0x00);
+    assert(snapshot.visible_units[0].map_sprite_handle == UINT32_C(0x02031000));
+    assert(snapshot.visible_units[1].unit_id == 0x81);
+    assert(snapshot.visible_units[1].faction == 0x80);
 }
 
 static void test_rejects_bad_rows_and_dimensions(void) {

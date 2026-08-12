@@ -8,7 +8,10 @@
 extern "C" {
 #endif
 
+#ifndef FE8_READ8_DEFINED
+#define FE8_READ8_DEFINED
 typedef uint8_t (*Fe8Read8)(void *context, uint32_t address);
+#endif
 
 typedef struct Fe8MemoryReader {
     void *context;
@@ -63,6 +66,7 @@ typedef struct Fe8VisibleUnit {
     int8_t x;
     int8_t y;
     uint32_t state;
+    uint32_t map_sprite_handle;
 } Fe8VisibleUnit;
 
 typedef struct Fe8Snapshot {

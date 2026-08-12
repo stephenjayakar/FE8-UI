@@ -59,6 +59,8 @@ The logical canvas is 480×320. The window starts maximized, preserves that 3:2
 aspect ratio with letterboxing as needed, and uses SDL's logical-coordinate
 conversion so mouse input remains aligned on Retina displays. Nearest-neighbor
 scaling preserves pixel art. Escape or the window close button exits.
+Emulation is paced from libmGBA's GBA timing (59.728 fps), independently of a
+60 Hz or 120 Hz display refresh rate.
 
 Keyboard bindings:
 
@@ -71,12 +73,17 @@ Keyboard bindings:
 
 Mouse controls on a validated tactical map:
 
-- Left-click sets a map-tile target. The frontend observes the real FE8 cursor
-  and sends paced D-pad taps until it reaches that tile.
-- Double-click does the same and then sends `A`.
+- Moving the mouse over the map moves the real FE8 cursor with acknowledged,
+  paced D-pad taps.
+- Left-click moves to the map tile and sends `A`, allowing units and map tiles
+  to be selected with a normal click.
 - Right-click sends `B` and cancels queued movement.
-- Movement is cancelled automatically if the tactical-map snapshot becomes
-  invalid. Cursor coordinates are never written directly.
+- Shift-click recenters the extended view. Shift-drag pans it across maps that
+  are larger than the host canvas without changing FE8's own camera.
+- `H` toggles the original FE8 framebuffer/HUD. The clean extended view is the
+  default; the native HUD appears briefly after a click so menus remain usable.
+- Temporary FE8 input locks pause mouse movement instead of discarding it.
+  Cursor coordinates are never written directly.
 
 ## ROM-hack compatibility
 
@@ -89,9 +96,10 @@ also pass the structural map checks, but hacks that relocate globals, replace
 tileset storage, or change the renderer still need a separate visual profile.
 They continue to run through mGBA; only the enhancement falls back.
 
-The prototype currently draws terrain and fog outside the center. Unit sprites,
-cursor art, weather, map animations, range/movement overlays, and UI remain
-canonical inside mGBA's 240×160 frame and are not yet reproduced outside it.
+The prototype draws terrain, fog, standing unit map sprites, and a host cursor
+across the extended canvas. Weather, map animations, range/movement overlays,
+and transient moving-unit animations still come from the canonical mGBA frame.
+The original frame can always be restored with `H`.
 
 ## Diagnostic capture options
 
@@ -100,12 +108,14 @@ These options exist for repeatable local testing and do not touch ROM data:
 ```sh
 --capture /tmp/frame.bmp --capture-after 120
 --mouse-target 7,5
+--mouse-click 7,5
 --auto-continue
 --seek-large-map
 --state-out /tmp/large-map.ss
 ```
 
 `--mouse-target` exercises the same D-pad path controller used by clicks.
+`--mouse-click` also verifies the final `A` confirmation.
 `--auto-continue` sends a small scripted set of normal A/Start inputs.
 `--seek-large-map` waits for a validated map larger than 15×10 (or stops after a
 bounded timeout) before capturing. When `--state-out` is supplied, that large,
@@ -115,9 +125,10 @@ interactive checkpoint is also saved for repeatable tests.
 
 `fe8_profile.c` recognizes and validates FE8 memory. `extended_map_renderer.c`
 decodes the full logical metatile map, tile flips, 4bpp graphics, palettes, and
-fog. `main.c` composites the canonical frame and converts mouse targets to GBA
-keys. The modules communicate through callback-based byte readers rather than
-private mGBA structs.
+fog. `extended_unit_renderer.c` reconstructs standing sprites from validated
+unit handles, OBJ VRAM, and OBJ palettes. `main.c` handles the host camera, HUD
+composition, frame pacing, and mouse-to-GBA input. The modules communicate
+through callback-based byte readers rather than private mGBA structs.
 
 The core is configured with `setVideoBuffer()` and queried through
 `baseVideoSize()`. `mColor` is converted at this boundary so the SDL texture

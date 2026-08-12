@@ -53,16 +53,21 @@ Then exercise the same acknowledged D-pad controller used by a mouse click:
 build/prototype/fe8-mgba-sdl \
   --rom "/path/to/Fire Emblem The Sacred Stones.GBA" \
   --state /tmp/fe8-large-map.ss \
-  --mouse-target 18,6 \
+  --mouse-click 18,6 \
   --capture /tmp/fe8-mouse-test.bmp \
   --capture-after 180
 ```
 
 Success is reported as `extended=yes`, a map larger than 15×10, and a final
 cursor position equal to the requested target. In the interactive window,
-left-click moves the cursor, double-click moves and presses A, and right-click
-presses B. Mouse input deliberately pauses while FE8's input lock is active.
+mouse movement moves the FE8 cursor, left-click moves and presses A, and
+right-click presses B. Shift-click recenters the host view, Shift-drag pans it,
+and `H` toggles the original FE8 HUD. Mouse input deliberately pauses while
+FE8's input lock is active.
 
 The startup `Display:` line is also a useful Retina check: the renderer output
 may be twice the window size, but the reported window center should remain near
 the logical canvas center, `240,160`.
+
+To time the real frame limiter while capturing, add `--realtime`. A 120-frame
+capture should take approximately 2.0 seconds at the reported 59.728 fps.
