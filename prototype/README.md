@@ -113,11 +113,11 @@ On the `mouse` branch, pointer motion over a validated tactical map moves FE8's
 map cursor. Left-click moves to the latched tile and presses A; right-click
 presses B. Pointer coordinates are converted through the actual window,
 high-DPI drawable, letterboxed 480×320 canvas, and current extended-map
-viewport, so Retina scaling does not alter tile selection. Directional input is
-attempted first; if FE8 ignores repeated D-pad pulses, the frontend writes only
-the validated cursor coordinates as a compatibility fallback. Mouse map input
-is disabled during dialogue and cutscenes, while left/right click continue to
-act as A/B for native UI.
+viewport, so Retina scaling does not alter tile selection. Pointer targets write
+only FE8's validated map-cursor coordinates, keeping continuous mouse movement
+synchronized without waiting for repeated D-pad input. Mouse map input is
+disabled during dialogue and cutscenes, while left/right click continue to act
+as A/B for native UI.
 
 Hold Shift and drag with the left button to pan the extended map. A Shift-click
 without dragging recenters the host viewport on that tile. Panning changes only

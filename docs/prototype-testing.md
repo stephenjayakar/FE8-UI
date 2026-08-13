@@ -90,9 +90,9 @@ teleportation must remain disabled; left/right click should still act as A/B.
 
 Hold Shift and drag to pan the host viewport, then Shift-click a tile to
 recenter it. The extended terrain should move without corrupting FE8's camera,
-and the log should report the new map origin. If simulated D-pad pulses are not
-acknowledged after four retries, the log should report a validated cursor
-teleport and still reach the requested tile.
+and the log should report the new map origin. Pointer movement should report
+`Mouse cursor synchronized` immediately and reach the requested tile without
+accumulating D-pad lag.
 
 To time the real frame limiter while capturing, add `--realtime`. A 120-frame
 capture should take approximately 2.0 seconds at the reported 59.728 fps.

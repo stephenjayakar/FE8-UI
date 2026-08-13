@@ -216,6 +216,7 @@ static unsigned terrain_frame_match_percent(
 
 static int apply_cursor_teleport(struct mCore *core, const Fe8Profile *profile,
     Fe8MouseController *mouse, Fe8Snapshot *snapshot, int snapshot_valid) {
+    int cursor_moved;
     if (!mouse->teleport_requested || !snapshot_valid || snapshot->input_lock != 0)
         return 0;
     if (mouse->target_x < 0 || mouse->target_y < 0 ||
@@ -224,8 +225,12 @@ static int apply_cursor_teleport(struct mCore *core, const Fe8Profile *profile,
         fe8_mouse_cancel(mouse);
         return 0;
     }
-    core->busWrite16(core, profile->bm_state + 0x14, (uint16_t)mouse->target_x);
-    core->busWrite16(core, profile->bm_state + 0x16, (uint16_t)mouse->target_y);
+    cursor_moved = snapshot->cursor_x != mouse->target_x ||
+        snapshot->cursor_y != mouse->target_y;
+    if (cursor_moved) {
+        core->busWrite16(core, profile->bm_state + 0x14, (uint16_t)mouse->target_x);
+        core->busWrite16(core, profile->bm_state + 0x16, (uint16_t)mouse->target_y);
+    }
     snapshot->cursor_x = (uint8_t)mouse->target_x;
     snapshot->cursor_y = (uint8_t)mouse->target_y;
     mouse->teleport_requested = 0;
@@ -233,8 +238,9 @@ static int apply_cursor_teleport(struct mCore *core, const Fe8Profile *profile,
     mouse->wait_frames = 0;
     mouse->press_frames = 0;
     mouse->release_frames = 2;
-    fprintf(stderr, "Mouse cursor teleported to %d,%d after ignored D-pad input\n",
-        mouse->target_x, mouse->target_y);
+    if (cursor_moved)
+        fprintf(stderr, "Mouse cursor synchronized to %d,%d\n",
+            mouse->target_x, mouse->target_y);
     return 1;
 }
 
