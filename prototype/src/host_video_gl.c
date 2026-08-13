@@ -70,10 +70,22 @@ static int shader_linked(const struct mGLES2Shader *shader) {
     return linked == GL_TRUE;
 }
 
+static void apply_layout(Fe8HostVideo *video, Fe8HostVideoGl *backend) {
+    struct mRectangle image = {
+        0, 0, video->scaling.canvas_width, video->scaling.canvas_height};
+    video->canvas_width = image.width;
+    video->canvas_height = image.height;
+    backend->renderer.d.setImageSize(&backend->renderer.d,
+        VIDEO_LAYER_IMAGE, image.width, image.height);
+    backend->renderer.d.setLayerDimensions(&backend->renderer.d,
+        VIDEO_LAYER_IMAGE, &image);
+    backend->renderer.d.contextResized(&backend->renderer.d,
+        (unsigned)backend->drawable_width, (unsigned)backend->drawable_height, 0, 0);
+}
+
 int fe8_host_video_init(Fe8HostVideo *video, const char *title,
     int canvas_width, int canvas_height, int vsync_enabled) {
     Fe8HostVideoGl *backend;
-    struct mRectangle image = {0, 0, canvas_width, canvas_height};
     memset(video, 0, sizeof(*video));
     if (SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) != 0 ||
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2) != 0 ||
@@ -102,16 +114,13 @@ int fe8_host_video_init(Fe8HostVideo *video, const char *title,
     backend->renderer.d.filter = false;
     backend->renderer.d.init(&backend->renderer.d, NULL);
     backend->renderer_initialized = 1;
-    backend->renderer.d.setImageSize(&backend->renderer.d,
-        VIDEO_LAYER_IMAGE, canvas_width, canvas_height);
-    backend->renderer.d.setLayerDimensions(&backend->renderer.d,
-        VIDEO_LAYER_IMAGE, &image);
     SDL_GL_GetDrawableSize(video->window,
         &backend->drawable_width, &backend->drawable_height);
-    backend->renderer.d.contextResized(&backend->renderer.d,
-        (unsigned)backend->drawable_width, (unsigned)backend->drawable_height, 0, 0);
-    video->canvas_width = canvas_width;
-    video->canvas_height = canvas_height;
+    fe8_display_scaling_init(&video->scaling,
+        canvas_width, canvas_height, 240, 160);
+    fe8_display_scaling_resize(&video->scaling,
+        backend->drawable_width, backend->drawable_height);
+    apply_layout(video, backend);
     video->shader = FE8_HOST_SHADER_OFF;
     fe8_host_video_set_vsync(video, vsync_enabled);
     return 1;
@@ -170,18 +179,9 @@ int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader mode) {
 
 int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
     Fe8HostVideoGl *backend = video ? video->backend : NULL;
-    int width;
-    int height;
     if (!backend || !pixels)
         return 0;
     while (glGetError() != GL_NO_ERROR) {}
-    SDL_GL_GetDrawableSize(video->window, &width, &height);
-    if (width != backend->drawable_width || height != backend->drawable_height) {
-        backend->drawable_width = width;
-        backend->drawable_height = height;
-        backend->renderer.d.contextResized(&backend->renderer.d,
-            (unsigned)width, (unsigned)height, 0, 0);
-    }
     /* mGLES2ContextClear clears its offscreen render target, not framebuffer
      * zero. Clear the macOS drawable as well so pixels from the old viewport
      * cannot survive in newly exposed letterbox bars after a resize. glClear
@@ -212,6 +212,38 @@ int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
         window_x, window_y, canvas_x, canvas_y);
 }
 
+int fe8_host_video_adjust_zoom(
+    Fe8HostVideo *video, double wheel_delta, double sensitivity) {
+    Fe8HostVideoGl *backend = video ? video->backend : NULL;
+    if (!backend || !video->window)
+        return 0;
+    if (!fe8_display_scaling_adjust(
+            &video->scaling, wheel_delta, sensitivity))
+        return 0;
+    apply_layout(video, backend);
+    return 1;
+}
+
+int fe8_host_video_refresh_layout(Fe8HostVideo *video) {
+    Fe8HostVideoGl *backend = video ? video->backend : NULL;
+    int width;
+    int height;
+    if (!backend || !video->window)
+        return 0;
+    SDL_GL_GetDrawableSize(video->window, &width, &height);
+    if (width == backend->drawable_width && height == backend->drawable_height)
+        return 0;
+    backend->drawable_width = width;
+    backend->drawable_height = height;
+    if (fe8_display_scaling_resize(&video->scaling, width, height)) {
+        apply_layout(video, backend);
+        return 1;
+    }
+    backend->renderer.d.contextResized(&backend->renderer.d,
+        (unsigned)width, (unsigned)height, 0, 0);
+    return 0;
+}
+
 void fe8_host_video_log_status(const Fe8HostVideo *video) {
     const Fe8HostVideoGl *backend = video ? video->backend : NULL;
     int window_width;
@@ -219,9 +251,9 @@ void fe8_host_video_log_status(const Fe8HostVideo *video) {
     if (!backend)
         return;
     SDL_GetWindowSize(video->window, &window_width, &window_height);
-    fprintf(stderr, "Display: window=%dx%d output=%dx%d logical=%dx%d backend=mGLES2\n",
+    fprintf(stderr, "Display: window=%dx%d output=%dx%d logical=%dx%d scale=%.2fx backend=mGLES2\n",
         window_width, window_height, backend->drawable_width, backend->drawable_height,
-        video->canvas_width, video->canvas_height);
+        video->canvas_width, video->canvas_height, video->scaling.pixel_scale);
 }
 
 void fe8_host_video_deinit(Fe8HostVideo *video) {

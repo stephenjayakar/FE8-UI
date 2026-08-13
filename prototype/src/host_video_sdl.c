@@ -10,6 +10,21 @@ typedef struct Fe8HostVideoSdl {
     SDL_Texture *texture;
 } Fe8HostVideoSdl;
 
+static int apply_layout(Fe8HostVideo *video, Fe8HostVideoSdl *backend) {
+    SDL_Texture *texture = SDL_CreateTexture(backend->renderer,
+        SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
+        video->scaling.canvas_width, video->scaling.canvas_height);
+    if (!texture)
+        return 0;
+    SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+    SDL_DestroyTexture(backend->texture);
+    backend->texture = texture;
+    video->canvas_width = video->scaling.canvas_width;
+    video->canvas_height = video->scaling.canvas_height;
+    return SDL_RenderSetLogicalSize(backend->renderer,
+        video->canvas_width, video->canvas_height) == 0;
+}
+
 int fe8_host_video_init(Fe8HostVideo *video, const char *title,
     int canvas_width, int canvas_height, int vsync_enabled) {
     Fe8HostVideoSdl *backend;
@@ -23,17 +38,19 @@ int fe8_host_video_init(Fe8HostVideo *video, const char *title,
     video->backend = backend;
     backend->renderer = SDL_CreateRenderer(video->window, -1,
         SDL_RENDERER_ACCELERATED | (vsync_enabled ? SDL_RENDERER_PRESENTVSYNC : 0));
-    backend->texture = backend->renderer ? SDL_CreateTexture(backend->renderer,
-        SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
-        canvas_width, canvas_height) : NULL;
-    if (!backend->renderer || !backend->texture ||
-            SDL_RenderSetLogicalSize(backend->renderer,
-                canvas_width, canvas_height) != 0)
+    if (!backend->renderer)
         return 0;
-    SDL_SetTextureScaleMode(backend->texture, SDL_ScaleModeNearest);
     SDL_RenderSetIntegerScale(backend->renderer, SDL_FALSE);
-    video->canvas_width = canvas_width;
-    video->canvas_height = canvas_height;
+    fe8_display_scaling_init(&video->scaling,
+        canvas_width, canvas_height, 240, 160);
+    {
+        int output_width;
+        int output_height;
+        SDL_GetRendererOutputSize(backend->renderer, &output_width, &output_height);
+        fe8_display_scaling_resize(&video->scaling, output_width, output_height);
+    }
+    if (!apply_layout(video, backend))
+        return 0;
     fe8_host_video_set_vsync(video, vsync_enabled);
     return 1;
 }
@@ -55,7 +72,9 @@ int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader shader) {
 
 int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
     Fe8HostVideoSdl *backend = video ? video->backend : NULL;
-    if (!backend || SDL_UpdateTexture(backend->texture, NULL, pixels,
+    if (!backend)
+        return 0;
+    if (SDL_UpdateTexture(backend->texture, NULL, pixels,
             video->canvas_width * 4) != 0)
         return 0;
     SDL_SetRenderDrawColor(backend->renderer, 8, 10, 12, 255);
@@ -81,6 +100,30 @@ int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
         window_x, window_y, canvas_x, canvas_y);
 }
 
+int fe8_host_video_adjust_zoom(
+    Fe8HostVideo *video, double wheel_delta, double sensitivity) {
+    Fe8HostVideoSdl *backend = video ? video->backend : NULL;
+    if (!backend || !backend->renderer)
+        return 0;
+    if (!fe8_display_scaling_adjust(
+            &video->scaling, wheel_delta, sensitivity))
+        return 0;
+    return apply_layout(video, backend);
+}
+
+int fe8_host_video_refresh_layout(Fe8HostVideo *video) {
+    Fe8HostVideoSdl *backend = video ? video->backend : NULL;
+    int output_width;
+    int output_height;
+    if (!backend || !backend->renderer)
+        return 0;
+    SDL_GetRendererOutputSize(backend->renderer, &output_width, &output_height);
+    if (!fe8_display_scaling_resize(
+            &video->scaling, output_width, output_height))
+        return 0;
+    return apply_layout(video, backend);
+}
+
 void fe8_host_video_log_status(const Fe8HostVideo *video) {
     const Fe8HostVideoSdl *backend = video ? video->backend : NULL;
     int window_width;
@@ -91,9 +134,9 @@ void fe8_host_video_log_status(const Fe8HostVideo *video) {
         return;
     SDL_GetWindowSize(video->window, &window_width, &window_height);
     SDL_GetRendererOutputSize(backend->renderer, &output_width, &output_height);
-    fprintf(stderr, "Display: window=%dx%d output=%dx%d logical=%dx%d backend=SDL\n",
+    fprintf(stderr, "Display: window=%dx%d output=%dx%d logical=%dx%d scale=%.2fx backend=SDL\n",
         window_width, window_height, output_width, output_height,
-        video->canvas_width, video->canvas_height);
+        video->canvas_width, video->canvas_height, video->scaling.pixel_scale);
 }
 
 void fe8_host_video_deinit(Fe8HostVideo *video) {

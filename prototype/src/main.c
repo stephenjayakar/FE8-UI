@@ -36,7 +36,6 @@ enum {
     CANVAS_HEIGHT = 320,
     GBA_X = (CANVAS_WIDTH - GBA_WIDTH) / 2,
     GBA_Y = (CANVAS_HEIGHT - GBA_HEIGHT) / 2,
-    SPEED_UP_MULTIPLIER = 4,
 };
 
 struct fe8_options {
@@ -163,7 +162,7 @@ static uint8_t core_read8(void *context, uint32_t address) {
 
 static void composite_framebuffer(
     const Fe8HostPixel *source, size_t source_stride, Fe8HostPixel *canvas,
-    int destination_x, int destination_y) {
+    int canvas_width, int canvas_height, int destination_x, int destination_y) {
     unsigned y;
     for (y = 0; y < GBA_HEIGHT; ++y) {
         unsigned x;
@@ -172,8 +171,8 @@ static void composite_framebuffer(
             int canvas_x = destination_x + (int)x;
             int canvas_y = destination_y + (int)y;
             if (canvas_x >= 0 && canvas_y >= 0 &&
-                    canvas_x < CANVAS_WIDTH && canvas_y < CANVAS_HEIGHT)
-                canvas[(size_t)canvas_y * CANVAS_WIDTH + canvas_x] = source_row[x];
+                    canvas_x < canvas_width && canvas_y < canvas_height)
+                canvas[(size_t)canvas_y * canvas_width + canvas_x] = source_row[x];
         }
     }
 }
@@ -241,8 +240,9 @@ static void set_speed_up_mode(int requested, int *active,
     if (audio_initialized)
         fe8_host_audio_set_enabled(audio, settings->audio_enabled && !*active);
     *frame_deadline = SDL_GetPerformanceCounter();
-    fprintf(stderr, "Speed Up: %s (%dx)\n",
-        *active ? "on" : "off", SPEED_UP_MULTIPLIER);
+    fprintf(stderr, "Speed Up: %s (%s)\n",
+        *active ? "on" : "off",
+        fe8_host_speedup_name(settings->speedup_rate));
 }
 
 static int load_state(struct mCore *core, const char *path) {
@@ -349,16 +349,36 @@ static int load_save(struct mCore *core, const char *path) {
     return 1;
 }
 
-static int save_canvas_bmp(const char *path, Fe8HostPixel *canvas) {
+static int save_canvas_bmp(const char *path, Fe8HostPixel *canvas,
+    int canvas_width, int canvas_height) {
     SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormatFrom(
-        canvas, CANVAS_WIDTH, CANVAS_HEIGHT, 32,
-        CANVAS_WIDTH * (int)sizeof(*canvas), SDL_PIXELFORMAT_RGBA32);
+        canvas, canvas_width, canvas_height, 32,
+        canvas_width * (int)sizeof(*canvas), SDL_PIXELFORMAT_RGBA32);
     int result;
     if (!surface)
         return 0;
     result = SDL_SaveBMP(surface, path) == 0;
     SDL_FreeSurface(surface);
     return result;
+}
+
+static int resize_canvas(Fe8HostPixel **canvas,
+    int *canvas_width, int *canvas_height,
+    Fe8ExtendedViewport *viewport, const Fe8HostVideo *video) {
+    Fe8HostPixel *resized;
+    if (*canvas_width == video->canvas_width &&
+            *canvas_height == video->canvas_height)
+        return 1;
+    resized = realloc(*canvas,
+        (size_t)video->canvas_width * video->canvas_height * sizeof(**canvas));
+    if (!resized)
+        return 0;
+    *canvas = resized;
+    *canvas_width = video->canvas_width;
+    *canvas_height = video->canvas_height;
+    viewport->width = *canvas_width;
+    viewport->height = *canvas_height;
+    return 1;
 }
 
 static uint32_t scripted_continue_keys(unsigned frame) {
@@ -394,7 +414,7 @@ int main(int argc, char **argv) {
     Fe8MemoryView render_memory;
     Fe8Snapshot snapshot;
     Fe8MapRenderState map_state = {0};
-    Fe8ExtendedViewport viewport = {CANVAS_WIDTH, CANVAS_HEIGHT, GBA_X, GBA_Y};
+    Fe8ExtendedViewport viewport = {0};
     Fe8HostSettings settings;
     Fe8HostAudio audio = {0};
     Fe8HostVideo video = {0};
@@ -403,6 +423,10 @@ int main(int argc, char **argv) {
     mColor *video_buffer = NULL;
     Fe8HostPixel *host_frame = NULL;
     Fe8HostPixel *canvas = NULL;
+    int canvas_width = 0;
+    int canvas_height = 0;
+    int gba_x = GBA_X;
+    int gba_y = GBA_Y;
     uint32_t keyboard_keys = 0;
     uint32_t hotkeys_down = 0;
     size_t video_stride = GBA_WIDTH;
@@ -480,8 +504,7 @@ int main(int argc, char **argv) {
     }
     video_buffer = calloc((size_t)GBA_HEIGHT * video_stride, sizeof(*video_buffer));
     host_frame = malloc((size_t)GBA_WIDTH * GBA_HEIGHT * sizeof(*host_frame));
-    canvas = malloc((size_t)CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(*canvas));
-    if (!video_buffer || !host_frame || !canvas)
+    if (!video_buffer || !host_frame)
         goto cleanup;
     core->setVideoBuffer(core, video_buffer, video_stride);
     if (options.save_path && !load_save(core, options.save_path))
@@ -510,6 +533,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Video setup failed: %s\n", SDL_GetError());
         goto cleanup;
     }
+    if (!resize_canvas(&canvas, &canvas_width, &canvas_height, &viewport, &video))
+        goto cleanup;
+    gba_x = (canvas_width - GBA_WIDTH) / 2;
+    gba_y = (canvas_height - GBA_HEIGHT) / 2;
+    viewport.gba_x = gba_x;
+    viewport.gba_y = gba_y;
     applied_mouse_enabled = settings.mouse_enabled;
     if (!fe8_host_video_set_shader(&video, settings.shader)) {
         fprintf(stderr, "Unable to enable shader '%s'; using Off\n",
@@ -535,6 +564,35 @@ int main(int argc, char **argv) {
 
     while (running) {
         SDL_Event event;
+        if (fe8_host_video_refresh_layout(&video)) {
+            int old_center_world_x = snapshot_valid ?
+                snapshot.camera_x + canvas_width / 2 - viewport.gba_x : 0;
+            int old_center_world_y = snapshot_valid ?
+                snapshot.camera_y + canvas_height / 2 - viewport.gba_y : 0;
+            if (!resize_canvas(
+                    &canvas, &canvas_width, &canvas_height, &viewport, &video)) {
+                fprintf(stderr, "Unable to resize host canvas\n");
+                running = 0;
+                break;
+            }
+            gba_x = (canvas_width - GBA_WIDTH) / 2;
+            gba_y = (canvas_height - GBA_HEIGHT) / 2;
+            if (snapshot_valid) {
+                int desired_gba_x = snapshot.camera_x + canvas_width / 2 -
+                    old_center_world_x;
+                int desired_gba_y = snapshot.camera_y + canvas_height / 2 -
+                    old_center_world_y;
+                pan.x = gba_x - desired_gba_x;
+                pan.y = gba_y - desired_gba_y;
+                fe8_viewport_clamp_pan(
+                    &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
+            } else {
+                viewport.gba_x = gba_x;
+                viewport.gba_y = gba_y;
+            }
+            pointer_canvas_valid = 0;
+            pointer_tile_valid = 0;
+        }
         if (settings.revision != settings_revision) {
             keyboard_keys = 0;
             hotkeys_down = 0;
@@ -566,12 +624,14 @@ int main(int argc, char **argv) {
             previous_camera_valid = 0;
             settings_revision = settings.revision;
             frame_deadline = SDL_GetPerformanceCounter();
-            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s\n",
+            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s zoom=%.1f%% speed-up=%s\n",
                 settings.audio_enabled ? "on" : "off",
                 video.vsync_active ? "on" : "off",
                 settings.extensions_enabled ? "on" : "off",
                 settings.mouse_enabled ? "on" : "off",
-                fe8_host_shader_name(video.shader));
+                fe8_host_shader_name(video.shader),
+                settings.zoom_sensitivity * 100.0,
+                fe8_host_speedup_name(settings.speedup_rate));
         }
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         if (snapshot_valid) {
@@ -580,7 +640,7 @@ int main(int argc, char **argv) {
             map_state.camera_x = snapshot.camera_x;
             map_state.camera_y = snapshot.camera_y;
             fe8_viewport_clamp_pan(
-                &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+                &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
             if (settings.mouse_enabled && pointer_canvas_valid && !pan.dragging &&
                     visual_profile_active && snapshot.input_lock == 0 &&
                     !mouse.confirm) {
@@ -660,6 +720,68 @@ int main(int argc, char **argv) {
             if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
                     event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)) {
                 running = 0;
+            } else if (event.type == SDL_MOUSEWHEEL) {
+                int window_x;
+                int window_y;
+                int old_canvas_x;
+                int old_canvas_y;
+                int old_pointer_valid;
+                int old_world_x = 0;
+                int old_world_y = 0;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+                double wheel_delta = event.wheel.preciseY;
+#else
+                double wheel_delta = event.wheel.y;
+#endif
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+                    wheel_delta = -wheel_delta;
+                if (wheel_delta > 1.0)
+                    wheel_delta = 1.0;
+                else if (wheel_delta < -1.0)
+                    wheel_delta = -1.0;
+                SDL_GetMouseState(&window_x, &window_y);
+                old_pointer_valid = fe8_host_video_window_to_canvas(&video,
+                    window_x, window_y, &old_canvas_x, &old_canvas_y);
+                if (old_pointer_valid && snapshot_valid) {
+                    old_world_x = snapshot.camera_x + old_canvas_x - viewport.gba_x;
+                    old_world_y = snapshot.camera_y + old_canvas_y - viewport.gba_y;
+                }
+                if (fe8_host_video_adjust_zoom(
+                        &video, wheel_delta, settings.zoom_sensitivity)) {
+                    int canvas_x;
+                    int canvas_y;
+                    if (!resize_canvas(&canvas, &canvas_width, &canvas_height,
+                            &viewport, &video)) {
+                        running = 0;
+                        break;
+                    }
+                    gba_x = (canvas_width - GBA_WIDTH) / 2;
+                    gba_y = (canvas_height - GBA_HEIGHT) / 2;
+                    pointer_tile_valid = 0;
+                    if (fe8_host_video_window_to_canvas(&video,
+                            window_x, window_y, &canvas_x, &canvas_y)) {
+                        if (old_pointer_valid && snapshot_valid) {
+                            int desired_gba_x = snapshot.camera_x + canvas_x - old_world_x;
+                            int desired_gba_y = snapshot.camera_y + canvas_y - old_world_y;
+                            pan.x = gba_x - desired_gba_x;
+                            pan.y = gba_y - desired_gba_y;
+                            fe8_viewport_clamp_pan(&pan.x, &pan.y,
+                                &snapshot, &viewport, gba_x, gba_y);
+                        }
+                        host_pointer_canvas_x = canvas_x;
+                        host_pointer_canvas_y = canvas_y;
+                        if (settings.mouse_enabled) {
+                            host_pointer_visible = 1;
+                            pointer_canvas_valid = 1;
+                            pointer_canvas_x = canvas_x;
+                            pointer_canvas_y = canvas_y;
+                        }
+                    }
+                    fprintf(stderr,
+                        "Display zoom: %.2fx (scale %.2fx, canvas %dx%d)\n",
+                        video.scaling.zoom_factor, video.scaling.pixel_scale,
+                        canvas_width, canvas_height);
+                }
             } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                     event.button.button == SDL_BUTTON_RIGHT && settings.mouse_enabled) {
                 fe8_mouse_cancel(&mouse);
@@ -727,13 +849,13 @@ int main(int argc, char **argv) {
                     if (fe8_canvas_to_map_tile(&map_state, viewport,
                             canvas_x, canvas_y, &map_x, &map_y))
                         fe8_viewport_recenter_on_tile(&pan.x, &pan.y,
-                            &snapshot, &viewport, GBA_X, GBA_Y, map_x, map_y);
+                            &snapshot, &viewport, gba_x, gba_y, map_x, map_y);
                 }
                 pan.dragging = 0;
                 pointer_canvas_valid = 0;
                 pointer_tile_valid = 0;
                 fe8_viewport_clamp_pan(
-                    &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+                    &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
                 fprintf(stderr, "Mouse pan: map origin=%d,%d\n",
                     snapshot.camera_x - viewport.gba_x,
                     snapshot.camera_y - viewport.gba_y);
@@ -753,7 +875,7 @@ int main(int argc, char **argv) {
                     pan.y = pan.start_pan_y - dy;
                     pan.moved = pan.moved || abs(dx) >= 2 || abs(dy) >= 2;
                     fe8_viewport_clamp_pan(
-                        &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+                        &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
                 } else {
                     int map_x;
                     int map_y;
@@ -814,10 +936,10 @@ int main(int argc, char **argv) {
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         extension_active = 0;
         rendered_units = 0;
-        Fe8FramePlacement frame_placement = {GBA_X, GBA_Y, 0};
+        Fe8FramePlacement frame_placement = {gba_x, gba_y, 0};
         if (snapshot_valid) {
             fe8_viewport_clamp_pan(
-                &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+                &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
             map_state.map_width = snapshot.map_width;
             map_state.map_height = snapshot.map_height;
             map_state.camera_x = snapshot.camera_x;
@@ -828,14 +950,14 @@ int main(int argc, char **argv) {
             map_state.tile_graphics = UINT32_C(0x06008000);
             map_state.palette = UINT32_C(0x05000000);
             extension_active = fe8_render_extended_terrain(
-                &render_memory, &map_state, viewport, canvas, CANVAS_WIDTH);
+                &render_memory, &map_state, viewport, canvas, canvas_width);
             if (extension_active) {
                 int camera_moving = previous_camera_valid &&
                     (snapshot.camera_x != previous_camera_x ||
                      snapshot.camera_y != previous_camera_y);
                 frame_placement = fe8_align_frame_to_terrain(
                     host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
-                    canvas, CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH,
+                    canvas, canvas_width, canvas_height, canvas_width,
                     viewport.gba_x, viewport.gba_y, camera_moving ? 8 : 0);
                 unsigned match = frame_placement.match_percent;
                 int frame_compatible = match >= 15;
@@ -875,13 +997,13 @@ int main(int argc, char **argv) {
             previous_camera_valid = 1;
             if (extension_active)
                 rendered_units = fe8_render_extended_units(&render_memory, &snapshot, viewport,
-                    canvas, CANVAS_WIDTH, frame_count);
+                    canvas, canvas_width, frame_count);
         } else {
             previous_camera_valid = 0;
         }
         if (!extension_active) {
             size_t index;
-            for (index = 0; index < (size_t)CANVAS_WIDTH * CANVAS_HEIGHT; ++index)
+            for (index = 0; index < (size_t)canvas_width * canvas_height; ++index)
                 canvas[index] = UINT32_C(0xFF101418);
             if (family_match && !reported_profile) {
                 fprintf(stderr, "Extended renderer inactive: no validated tactical-map state\n");
@@ -895,11 +1017,12 @@ int main(int argc, char **argv) {
          * an apparent one-tile mouse offset whenever the map is centered or
          * panned. Outside a validated map, retain the normal centered frame. */
         composite_framebuffer(host_frame, GBA_WIDTH, canvas,
-            extension_active ? frame_placement.x : GBA_X,
-            extension_active ? frame_placement.y : GBA_Y);
+            canvas_width, canvas_height,
+            extension_active ? frame_placement.x : gba_x,
+            extension_active ? frame_placement.y : gba_y);
         if (settings.mouse_enabled && host_pointer_visible)
-            fe8_host_draw_mouse_cursor(canvas, CANVAS_WIDTH,
-                CANVAS_WIDTH, CANVAS_HEIGHT,
+            fe8_host_draw_mouse_cursor(canvas, canvas_width,
+                canvas_width, canvas_height,
                 host_pointer_canvas_x, host_pointer_canvas_y);
         if (!fe8_host_video_present(&video, canvas)) {
             fprintf(stderr, "Video presentation failed: %s\n", SDL_GetError());
@@ -918,7 +1041,8 @@ int main(int argc, char **argv) {
                 ((!options.seek_large_map && frame_count >= options.capture_after) ||
                  (options.seek_large_map && large_map_ready) ||
                  (options.seek_large_map && frame_count >= 3600))) {
-            if (!save_canvas_bmp(options.capture_path, canvas))
+            if (!save_canvas_bmp(
+                    options.capture_path, canvas, canvas_width, canvas_height))
                 fprintf(stderr, "Unable to save capture '%s': %s\n", options.capture_path, SDL_GetError());
             else
                 fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u, units=%u)\n",
@@ -929,10 +1053,14 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Final FE8 cursor: %u,%u\n", snapshot.cursor_x, snapshot.cursor_y);
             running = 0;
         }
-        if ((!options.capture_path || options.realtime) && running)
-            pace_frame(&frame_deadline,
-                speed_up_active ? frame_period / SPEED_UP_MULTIPLIER : frame_period,
-                performance_frequency);
+        if ((!options.capture_path || options.realtime) && running) {
+            unsigned speedup_multiplier = speed_up_active ?
+                fe8_host_speedup_multiplier(settings.speedup_rate) : 1;
+            if (speedup_multiplier != 0)
+                pace_frame(&frame_deadline,
+                    frame_period / speedup_multiplier,
+                    performance_frequency);
+        }
     }
     exit_code = EXIT_SUCCESS;
 

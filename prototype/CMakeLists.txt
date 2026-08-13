@@ -52,6 +52,7 @@ add_executable(fe8-mgba-sdl
     src/mouse_controller.c
     src/pointer_mapping.c
     src/viewport_controller.c
+    src/display_scaling.c
     src/host_cursor.c
     src/host_audio.c
     src/host_settings.c)

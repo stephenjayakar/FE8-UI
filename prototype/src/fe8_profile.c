@@ -39,6 +39,8 @@
 #define FE8_UNIT_STATE_DEAD UINT32_C(1u << 2)
 #define FE8_UNIT_STATE_NOT_DEPLOYED UINT32_C(1u << 3)
 #define FE8_UNIT_STATE_FOG_HIDDEN UINT32_C(1u << 9)
+#define FE8_CHARACTER_ATTRIBUTES_OFFSET UINT32_C(0x28)
+#define FE8_CLASS_ATTRIBUTES_OFFSET UINT32_C(0x28)
 
 static const Fe8Profile s_fe8u_profile = {
     FE8_HEADER_TITLE, FE8_HEADER_GAME_CODE, FE8_HEADER_MAKER_CODE, 0, 0x9D,
@@ -64,6 +66,12 @@ static bool valid_pointer(uint32_t address) {
     return valid_range(address, 1, FE8_EWRAM_START, FE8_EWRAM_END) ||
         valid_range(address, 1, FE8_IWRAM_START, FE8_IWRAM_END) ||
         valid_range(address, 1, FE8_ROM_START, FE8_ROM_END);
+}
+
+static bool valid_data(uint32_t address, uint32_t size) {
+    return valid_range(address, size, FE8_EWRAM_START, FE8_EWRAM_END) ||
+        valid_range(address, size, FE8_IWRAM_START, FE8_IWRAM_END) ||
+        valid_range(address, size, FE8_ROM_START, FE8_ROM_END);
 }
 
 static uint8_t read8(const Fe8MemoryReader *memory, uint32_t address) {
@@ -171,15 +179,23 @@ static void append_units(
     for (i = 0; i < count && snapshot->visible_unit_count < FE8_MAX_VISIBLE_UNITS; ++i) {
         uint32_t address = base + i * FE8_UNIT_SIZE;
         uint32_t state = read32(memory, address + 0x0C);
+        uint32_t character = read32(memory, address);
+        uint32_t class_data = read32(memory, address + 4);
+        uint32_t attributes = 0;
         int8_t x = (int8_t)read8(memory, address + 0x10);
         int8_t y = (int8_t)read8(memory, address + 0x11);
-        uint32_t character = read32(memory, address);
         if (!valid_pointer(character) || (state & (FE8_UNIT_STATE_HIDDEN | FE8_UNIT_STATE_DEAD |
             FE8_UNIT_STATE_NOT_DEPLOYED | FE8_UNIT_STATE_FOG_HIDDEN)) != 0 ||
             x < 0 || y < 0 || x >= (int8_t)width || y >= (int8_t)height)
             continue;
+        if (valid_data(character, FE8_CHARACTER_ATTRIBUTES_OFFSET + 4))
+            attributes |= read32(memory,
+                character + FE8_CHARACTER_ATTRIBUTES_OFFSET);
+        if (valid_data(class_data, FE8_CLASS_ATTRIBUTES_OFFSET + 4))
+            attributes |= read32(memory,
+                class_data + FE8_CLASS_ATTRIBUTES_OFFSET);
         snapshot->visible_units[snapshot->visible_unit_count++] = (Fe8VisibleUnit){
-            read8(memory, address + 0x0B), faction, x, y, state,
+            read8(memory, address + 0x0B), faction, x, y, state, attributes,
             read32(memory, address + 0x3C)};
     }
 }
