@@ -66,6 +66,11 @@ does not delete the ROM or that game's saves.
 Audio, VSync, extended rendering, video shader, and every keyboard binding are
 global and apply to all imported games.
 
+The Settings window also has a global **Hotkeys** section. Hold **Space** to run
+at 4× speed; audio and VSync resume automatically when it is released. **F5**
+quick-saves and **F8** quick-loads the current game's isolated state by default.
+All three hotkeys can be rebound by clicking their binding and pressing a key.
+
 The command-line interface remains available for diagnostics and direct launch:
 
 ```sh
@@ -106,8 +111,9 @@ macOS user defaults.
 
 The macOS **State** menu provides **Quick Save State**, **Quick Load State**,
 **Save State As…**, and **Load State…**. When launched with `--quick-state
-/path/to/checkpoint.ss`, F5 saves that checkpoint and F8 loads it. Library
-launches supply each game's isolated checkpoint automatically.
+/path/to/checkpoint.ss`, the configured Quick Save and Quick Load hotkeys use
+that checkpoint. Library launches supply each game's isolated checkpoint
+automatically.
 
 This branch is intentionally renderer-only. The experimental mouse controls
 and independent host panning are preserved on the Git branch `mouse`.

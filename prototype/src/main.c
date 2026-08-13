@@ -32,6 +32,7 @@ enum {
     CANVAS_HEIGHT = 320,
     GBA_X = (CANVAS_WIDTH - GBA_WIDTH) / 2,
     GBA_Y = (CANVAS_HEIGHT - GBA_HEIGHT) / 2,
+    SPEED_UP_MULTIPLIER = 4,
 };
 
 struct fe8_options {
@@ -128,6 +129,18 @@ static void update_keyboard(
         *keys &= ~bit;
 }
 
+static void update_hotkeys(
+    uint32_t *hotkeys, const Fe8HostSettings *settings, const SDL_Event *event) {
+    uint32_t bits;
+    if (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP)
+        return;
+    bits = fe8_host_hotkey_for_scancode(settings, event->key.keysym.scancode);
+    if (event->type == SDL_KEYDOWN)
+        *hotkeys |= bits;
+    else
+        *hotkeys &= ~bits;
+}
+
 static uint8_t core_read8(void *context, uint32_t address) {
     struct mCore *core = context;
     return core->busRead8(core, address);
@@ -209,6 +222,22 @@ static void pace_frame(uint64_t *deadline, uint64_t period, uint64_t frequency) 
     } else if (now - *deadline > period * 4) {
         *deadline = now;
     }
+}
+
+static void set_speed_up_mode(int requested, int *active,
+    Fe8HostVideo *video, Fe8HostAudio *audio, int audio_initialized,
+    const Fe8HostSettings *settings, uint64_t *frame_deadline) {
+    if (requested == *active)
+        return;
+    *active = requested;
+    if (!fe8_host_video_set_vsync(video,
+            settings->vsync_enabled && !*active))
+        fprintf(stderr, "Unable to change VSync for speed-up: %s\n", SDL_GetError());
+    if (audio_initialized)
+        fe8_host_audio_set_enabled(audio, settings->audio_enabled && !*active);
+    *frame_deadline = SDL_GetPerformanceCounter();
+    fprintf(stderr, "Speed Up: %s (%dx)\n",
+        *active ? "on" : "off", SPEED_UP_MULTIPLIER);
 }
 
 static int load_state(struct mCore *core, const char *path) {
@@ -367,6 +396,7 @@ int main(int argc, char **argv) {
     mColor *video_buffer = NULL;
     Fe8HostPixel *canvas = NULL;
     uint32_t keyboard_keys = 0;
+    uint32_t hotkeys_down = 0;
     size_t video_stride = GBA_WIDTH;
     unsigned width = 0;
     unsigned height = 0;
@@ -388,6 +418,7 @@ int main(int argc, char **argv) {
     uint64_t performance_frequency = 0;
     unsigned settings_revision = 0;
     int visual_profile_active = 0;
+    int speed_up_active = 0;
     unsigned visual_good_frames = 0;
     unsigned visual_bad_frames = 0;
     int previous_camera_valid = 0;
@@ -485,6 +516,9 @@ int main(int argc, char **argv) {
         SDL_Event event;
         if (settings.revision != settings_revision) {
             keyboard_keys = 0;
+            hotkeys_down = 0;
+            set_speed_up_mode(0, &speed_up_active, &video, &audio,
+                audio_initialized, &settings, &frame_deadline);
             if (audio_initialized)
                 fe8_host_audio_set_enabled(&audio, settings.audio_enabled);
             if (!fe8_host_video_set_vsync(&video, settings.vsync_enabled))
@@ -522,16 +556,23 @@ int main(int argc, char **argv) {
             if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
                     event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)) {
                 running = 0;
-            } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
-                    event.key.keysym.scancode == SDL_SCANCODE_F5 &&
-                    options.quick_state_path) {
-                host_save_state(core, options.quick_state_path);
-            } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
-                    event.key.keysym.scancode == SDL_SCANCODE_F8 &&
-                    options.quick_state_path) {
-                host_load_state(core, options.quick_state_path);
             } else {
+                uint32_t pressed_hotkeys = event.type == SDL_KEYDOWN && !event.key.repeat ?
+                    fe8_host_hotkey_for_scancode(&settings,
+                        event.key.keysym.scancode) : 0;
+                if (options.quick_state_path &&
+                        (pressed_hotkeys & (UINT32_C(1) << FE8_HOST_HOTKEY_QUICK_SAVE)))
+                    host_save_state(core, options.quick_state_path);
+                if (options.quick_state_path &&
+                        (pressed_hotkeys & (UINT32_C(1) << FE8_HOST_HOTKEY_QUICK_LOAD)))
+                    host_load_state(core, options.quick_state_path);
+                update_hotkeys(&hotkeys_down, &settings, &event);
                 update_keyboard(&keyboard_keys, &settings, &event);
+                set_speed_up_mode(
+                    (hotkeys_down &
+                        (UINT32_C(1) << FE8_HOST_HOTKEY_SPEED_UP)) != 0,
+                    &speed_up_active, &video, &audio, audio_initialized,
+                    &settings, &frame_deadline);
             }
         }
 
@@ -649,7 +690,9 @@ int main(int argc, char **argv) {
             running = 0;
         }
         if ((!options.capture_path || options.realtime) && running)
-            pace_frame(&frame_deadline, frame_period, performance_frequency);
+            pace_frame(&frame_deadline,
+                speed_up_active ? frame_period / SPEED_UP_MULTIPLIER : frame_period,
+                performance_frequency);
     }
     exit_code = EXIT_SUCCESS;
 
