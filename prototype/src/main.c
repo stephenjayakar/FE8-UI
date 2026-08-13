@@ -613,8 +613,13 @@ int main(int argc, char **argv) {
             }
         }
         /* The emulated frame is authoritative for all UI, overlays, moving
-         * sprites, and selected units. Draw it last over the extended world. */
-        composite_framebuffer(video_buffer, video_stride, canvas, GBA_X, GBA_Y);
+         * sprites, and selected units. While the extended world is active it
+         * must use the same movable origin as the reconstructed terrain and
+         * host-rendered units; a fixed center creates seams whenever a small
+         * map is centered or the host viewport is panned. */
+        composite_framebuffer(video_buffer, video_stride, canvas,
+            extension_active ? viewport.gba_x : GBA_X,
+            extension_active ? viewport.gba_y : GBA_Y);
         if (!fe8_host_video_present(&video, canvas)) {
             fprintf(stderr, "Video presentation failed: %s\n", SDL_GetError());
             running = 0;
