@@ -36,7 +36,6 @@ enum {
     CANVAS_HEIGHT = 320,
     GBA_X = (CANVAS_WIDTH - GBA_WIDTH) / 2,
     GBA_Y = (CANVAS_HEIGHT - GBA_HEIGHT) / 2,
-    SPEED_UP_MULTIPLIER = 4,
 };
 
 struct fe8_options {
@@ -241,8 +240,9 @@ static void set_speed_up_mode(int requested, int *active,
     if (audio_initialized)
         fe8_host_audio_set_enabled(audio, settings->audio_enabled && !*active);
     *frame_deadline = SDL_GetPerformanceCounter();
-    fprintf(stderr, "Speed Up: %s (%dx)\n",
-        *active ? "on" : "off", SPEED_UP_MULTIPLIER);
+    fprintf(stderr, "Speed Up: %s (%s)\n",
+        *active ? "on" : "off",
+        fe8_host_speedup_name(settings->speedup_rate));
 }
 
 static int load_state(struct mCore *core, const char *path) {
@@ -624,13 +624,14 @@ int main(int argc, char **argv) {
             previous_camera_valid = 0;
             settings_revision = settings.revision;
             frame_deadline = SDL_GetPerformanceCounter();
-            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s zoom=%.1f%%\n",
+            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s zoom=%.1f%% speed-up=%s\n",
                 settings.audio_enabled ? "on" : "off",
                 video.vsync_active ? "on" : "off",
                 settings.extensions_enabled ? "on" : "off",
                 settings.mouse_enabled ? "on" : "off",
                 fe8_host_shader_name(video.shader),
-                settings.zoom_sensitivity * 100.0);
+                settings.zoom_sensitivity * 100.0,
+                fe8_host_speedup_name(settings.speedup_rate));
         }
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         if (snapshot_valid) {
@@ -1052,10 +1053,14 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Final FE8 cursor: %u,%u\n", snapshot.cursor_x, snapshot.cursor_y);
             running = 0;
         }
-        if ((!options.capture_path || options.realtime) && running)
-            pace_frame(&frame_deadline,
-                speed_up_active ? frame_period / SPEED_UP_MULTIPLIER : frame_period,
-                performance_frequency);
+        if ((!options.capture_path || options.realtime) && running) {
+            unsigned speedup_multiplier = speed_up_active ?
+                fe8_host_speedup_multiplier(settings.speedup_rate) : 1;
+            if (speedup_multiplier != 0)
+                pace_frame(&frame_deadline,
+                    frame_period / speedup_multiplier,
+                    performance_frequency);
+        }
     }
     exit_code = EXIT_SUCCESS;
 

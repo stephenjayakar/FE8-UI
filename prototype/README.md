@@ -67,7 +67,9 @@ Audio, VSync, extended rendering, video shader, zoom sensitivity, and every
 keyboard binding are global and apply to all imported games.
 
 The Settings window also has a global **Hotkeys** section. Hold **Space** to run
-at 4× speed; audio and VSync resume automatically when it is released. **F5**
+at the configured **2×**, **3×**, **4×** (default), or **Unlimited** speed;
+audio and VSync resume automatically when it is released. Unlimited removes
+frontend frame pacing and runs as quickly as emulation and rendering allow. **F5**
 quick-saves and **F8** quick-loads the current game's isolated state by default.
 All three hotkeys can be rebound by clicking their binding and pressing a key.
 

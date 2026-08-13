@@ -28,6 +28,7 @@ void fe8_host_settings_init(Fe8HostSettings *settings) {
     settings->extensions_enabled = 1;
     settings->mouse_enabled = 1;
     settings->shader = FE8_HOST_SHADER_OFF;
+    settings->speedup_rate = FE8_HOST_SPEEDUP_4X;
     settings->zoom_sensitivity = FE8_HOST_ZOOM_SENSITIVITY_LOW;
 }
 
@@ -78,4 +79,16 @@ const char *fe8_host_shader_name(enum Fe8HostShader shader) {
         "Off", "CRT (TV Mode)", "Scanlines"
     };
     return shader >= 0 && shader < FE8_HOST_SHADER_COUNT ? names[shader] : "Off";
+}
+
+const char *fe8_host_speedup_name(enum Fe8HostSpeedupRate rate) {
+    static const char *names[FE8_HOST_SPEEDUP_COUNT] = {
+        "2×", "3×", "4×", "Unlimited"
+    };
+    return rate >= 0 && rate < FE8_HOST_SPEEDUP_COUNT ? names[rate] : "4×";
+}
+
+unsigned fe8_host_speedup_multiplier(enum Fe8HostSpeedupRate rate) {
+    static const unsigned multipliers[FE8_HOST_SPEEDUP_COUNT] = {2, 3, 4, 0};
+    return rate >= 0 && rate < FE8_HOST_SPEEDUP_COUNT ? multipliers[rate] : 4;
 }
