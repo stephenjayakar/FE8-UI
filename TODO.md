@@ -31,4 +31,5 @@
 - Add per-game shader overrides.
 - Add native Open Recent, multiple named state slots, controller configuration,
   and per-game settings. Quick save/load and state file pickers are implemented.
+- [x] Add global bindable Speed Up, Quick Save, and Quick Load hotkeys.
 - Add an About panel that exposes the MIT license and third-party notices.

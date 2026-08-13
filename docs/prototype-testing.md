@@ -95,7 +95,8 @@ Renderer toggles, a Video Shader selector, and a capture button for every GBA
 input. Click a binding,
 confirm that it changes to `Press a key…`, press a replacement key, and reopen
 the app to verify that the new binding persisted. Repeat with standalone left
-and right Shift and Control keys. Escape should cancel capture. The same global
+and right Shift and Control keys, including binding Select to Shift; modifier
+capture must not crash. Escape should cancel capture. The same global
 values must appear when Settings is opened from the library before a ROM is
 launched. Toggling an option during gameplay should print a `Settings applied:`
 line without restarting emulation.
@@ -108,8 +109,15 @@ than only the centered GBA frame; menus, units, and extended terrain must remain
 visible. Reopen the app and confirm the selected preset persisted globally.
 Startup should identify `backend=mGLES2` and log the selected shader name.
 
-Open the macOS **State** menu and verify all four actions: Quick Save State (F5),
-Quick Load State (F8), Save State As…, and Load State…. Test against a temporary
+Verify the Hotkeys section from both the library and a running game. Its
+defaults are Space for Speed Up, F5 for Quick Save, and F8 for Quick Load. Hold
+Speed Up and confirm the log reports `Speed Up: on (4x)` and then `off` on
+release; emulation should accelerate while sound is temporarily muted. Rebind
+all three entries, restart the app, and confirm the new global values persist.
+Quick Save and Quick Load must operate on the selected ROM's isolated state.
+
+Open the macOS **State** menu and verify all four actions: Quick Save State,
+Quick Load State, Save State As…, and Load State…. Test against a temporary
 `--quick-state` path. Saving must create a nonempty mGBA state, and loading it
 must return to the captured frame without restarting the process. File-picker
 actions must accept `.ss` and `.ss1` states.

@@ -8,8 +8,14 @@ static NSString *const kVSyncKey = @"FE8VSyncEnabled";
 static NSString *const kExtensionsKey = @"FE8ExtensionsEnabled";
 static NSString *const kShaderKey = @"FE8ShaderMode";
 
+enum { FE8_HOTKEY_TAG_BASE = 100 };
+
 static NSString *bindingKey(enum Fe8HostButton button) {
     return [NSString stringWithFormat:@"FE8Binding.%s", fe8_host_button_name(button)];
+}
+
+static NSString *hotkeyBindingKey(enum Fe8HostHotkey hotkey) {
+    return [NSString stringWithFormat:@"FE8Hotkey.%s", fe8_host_hotkey_name(hotkey)];
 }
 
 static SDL_Scancode scancodeForEvent(NSEvent *event) {
@@ -101,8 +107,14 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 
 @implementation Fe8SettingsController
 
-- (NSString *)titleForBinding:(enum Fe8HostButton)button {
-    const char *name = SDL_GetScancodeName(self.settings->bindings[button]);
+- (NSString *)titleForBindingTag:(NSInteger)tag {
+    SDL_Scancode scancode = SDL_SCANCODE_UNKNOWN;
+    if (tag >= 0 && tag < FE8_HOST_BUTTON_COUNT)
+        scancode = self.settings->bindings[tag];
+    else if (tag >= FE8_HOTKEY_TAG_BASE &&
+            tag < FE8_HOTKEY_TAG_BASE + FE8_HOST_HOTKEY_COUNT)
+        scancode = self.settings->hotkeys[tag - FE8_HOTKEY_TAG_BASE];
+    const char *name = SDL_GetScancodeName(scancode);
     return name && *name ? [NSString stringWithUTF8String:name] : @"Unbound";
 }
 
@@ -112,9 +124,8 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         self.keyMonitor = nil;
     }
     if (self.listeningButton) {
-        NSInteger button = self.listeningButton.tag;
-        if (button >= 0 && button < FE8_HOST_BUTTON_COUNT)
-            self.listeningButton.title = [self titleForBinding:(enum Fe8HostButton)button];
+        NSInteger tag = self.listeningButton.tag;
+        self.listeningButton.title = [self titleForBindingTag:tag];
         self.listeningButton = nil;
     }
 }
@@ -127,19 +138,30 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
         NSEventMaskKeyDown | NSEventMaskFlagsChanged
         handler:^NSEvent *(NSEvent *event) {
-            NSString *characters = event.charactersIgnoringModifiers;
+            NSString *characters = event.type == NSEventTypeKeyDown ?
+                event.charactersIgnoringModifiers : nil;
             if (characters.length && [characters characterAtIndex:0] == 0x1B) {
                 [self stopListening];
                 return nil;
             }
             SDL_Scancode scancode = scancodeForEvent(event);
-            NSInteger button = self.listeningButton.tag;
-            if (scancode != SDL_SCANCODE_UNKNOWN && button >= 0 &&
-                    button < FE8_HOST_BUTTON_COUNT) {
-                self.settings->bindings[button] = scancode;
+            NSInteger tag = self.listeningButton.tag;
+            if (scancode != SDL_SCANCODE_UNKNOWN && tag >= 0 &&
+                    tag < FE8_HOST_BUTTON_COUNT) {
+                self.settings->bindings[tag] = scancode;
                 ++self.settings->revision;
                 [NSUserDefaults.standardUserDefaults setInteger:scancode
-                    forKey:bindingKey((enum Fe8HostButton)button)];
+                    forKey:bindingKey((enum Fe8HostButton)tag)];
+                [self stopListening];
+            } else if (scancode != SDL_SCANCODE_UNKNOWN &&
+                    tag >= FE8_HOTKEY_TAG_BASE &&
+                    tag < FE8_HOTKEY_TAG_BASE + FE8_HOST_HOTKEY_COUNT) {
+                enum Fe8HostHotkey hotkey =
+                    (enum Fe8HostHotkey)(tag - FE8_HOTKEY_TAG_BASE);
+                self.settings->hotkeys[hotkey] = scancode;
+                ++self.settings->revision;
+                [NSUserDefaults.standardUserDefaults setInteger:scancode
+                    forKey:hotkeyBindingKey(hotkey)];
                 [self stopListening];
             }
             return nil;
@@ -184,7 +206,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.quickStatePath = quickStatePath;
     self.bindingButtons = [NSMutableArray array];
     self.window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 430, 560)
+        initWithContentRect:NSMakeRect(0, 0, 430, 680)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
         backing:NSBackingStoreBuffered defer:NO];
     self.window.title = @"FE8 Frontend Settings";
@@ -201,7 +223,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     NSInteger i;
     for (i = 0; i < (NSInteger)optionNames.count; ++i) {
         NSButton *check = [[NSButton alloc]
-            initWithFrame:NSMakeRect(24, 515 - i * 30, 380, 24)];
+            initWithFrame:NSMakeRect(24, 635 - i * 30, 380, 24)];
         check.buttonType = NSButtonTypeSwitch;
         check.title = optionNames[i];
         check.state = optionValues[i] ? NSControlStateValueOn : NSControlStateValueOff;
@@ -212,10 +234,10 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     }
 
     NSTextField *shaderLabel = [NSTextField labelWithString:@"Video shader"];
-    shaderLabel.frame = NSMakeRect(30, 409, 90, 24);
+    shaderLabel.frame = NSMakeRect(30, 529, 90, 24);
     [content addSubview:shaderLabel];
     NSPopUpButton *shaderPopup = [[NSPopUpButton alloc]
-        initWithFrame:NSMakeRect(130, 405, 265, 28) pullsDown:NO];
+        initWithFrame:NSMakeRect(130, 525, 265, 28) pullsDown:NO];
     for (i = 0; i < FE8_HOST_SHADER_COUNT; ++i)
         [shaderPopup addItemWithTitle:[NSString stringWithUTF8String:
             fe8_host_shader_name((enum Fe8HostShader)i)]];
@@ -225,28 +247,48 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     [content addSubview:shaderPopup];
 
     NSTextField *heading = [NSTextField labelWithString:@"Keyboard controls"];
-    heading.frame = NSMakeRect(24, 375, 380, 24);
+    heading.frame = NSMakeRect(24, 495, 380, 24);
     heading.font = [NSFont boldSystemFontOfSize:13];
     [content addSubview:heading];
 
     NSTextField *hint = [NSTextField labelWithString:
         @"Click a binding, then press the key you want to use."];
-    hint.frame = NSMakeRect(24, 350, 380, 20);
+    hint.frame = NSMakeRect(24, 470, 380, 20);
     hint.textColor = NSColor.secondaryLabelColor;
     [content addSubview:hint];
 
     for (i = 0; i < FE8_HOST_BUTTON_COUNT; ++i) {
-        CGFloat y = 318 - i * 29;
+        CGFloat y = 438 - i * 29;
         NSTextField *label = [NSTextField labelWithString:[NSString stringWithUTF8String:
             fe8_host_button_name((enum Fe8HostButton)i)]];
         label.frame = NSMakeRect(30, y + 4, 90, 20);
         [content addSubview:label];
 
         NSButton *binding = [NSButton buttonWithTitle:
-            [self titleForBinding:(enum Fe8HostButton)i]
+            [self titleForBindingTag:i]
             target:self action:@selector(captureBinding:)];
         binding.frame = NSMakeRect(130, y, 265, 26);
         binding.tag = i;
+        binding.bezelStyle = NSBezelStyleRounded;
+        [self.bindingButtons addObject:binding];
+        [content addSubview:binding];
+    }
+
+    NSTextField *hotkeyHeading = [NSTextField labelWithString:@"Hotkeys"];
+    hotkeyHeading.frame = NSMakeRect(24, 140, 380, 24);
+    hotkeyHeading.font = [NSFont boldSystemFontOfSize:13];
+    [content addSubview:hotkeyHeading];
+    for (i = 0; i < FE8_HOST_HOTKEY_COUNT; ++i) {
+        CGFloat y = 108 - i * 29;
+        NSInteger tag = FE8_HOTKEY_TAG_BASE + i;
+        NSTextField *label = [NSTextField labelWithString:[NSString stringWithUTF8String:
+            fe8_host_hotkey_name((enum Fe8HostHotkey)i)]];
+        label.frame = NSMakeRect(30, y + 4, 90, 20);
+        [content addSubview:label];
+        NSButton *binding = [NSButton buttonWithTitle:[self titleForBindingTag:tag]
+            target:self action:@selector(captureBinding:)];
+        binding.frame = NSMakeRect(130, y, 265, 26);
+        binding.tag = tag;
         binding.bezelStyle = NSBezelStyleRounded;
         [self.bindingButtons addObject:binding];
         [content addSubview:binding];
@@ -347,6 +389,12 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
                 settings->bindings[button] =
                     (SDL_Scancode)[defaults integerForKey:key];
         }
+        for (int hotkey = 0; hotkey < FE8_HOST_HOTKEY_COUNT; ++hotkey) {
+            NSString *key = hotkeyBindingKey((enum Fe8HostHotkey)hotkey);
+            if ([defaults objectForKey:key])
+                settings->hotkeys[hotkey] =
+                    (SDL_Scancode)[defaults integerForKey:key];
+        }
     }
 }
 
@@ -385,12 +433,10 @@ void fe8_macos_install_settings_menu(
             NSMenuItem *stateRoot = [[NSMenuItem alloc]
                 initWithTitle:@"State" action:nil keyEquivalent:@""];
             NSMenu *stateMenu = [[NSMenu alloc] initWithTitle:@"State"];
-            unichar f5Character = NSF5FunctionKey;
-            unichar f8Character = NSF8FunctionKey;
             [stateMenu addItem:stateMenuItem(@"Quick Save State", @selector(quickSaveState:),
-                [NSString stringWithCharacters:&f5Character length:1], 0)];
+                @"", 0)];
             [stateMenu addItem:stateMenuItem(@"Quick Load State", @selector(quickLoadState:),
-                [NSString stringWithCharacters:&f8Character length:1], 0)];
+                @"", 0)];
             [stateMenu addItem:NSMenuItem.separatorItem];
             [stateMenu addItem:stateMenuItem(@"Save State As…", @selector(saveStateAs:),
                 @"s", NSEventModifierFlagCommand | NSEventModifierFlagShift)];
