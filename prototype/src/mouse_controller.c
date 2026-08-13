@@ -11,13 +11,13 @@ enum {
 };
 
 void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm) {
+    if (mouse->active && mouse->confirm && !confirm)
+        return;
     mouse->active = 1;
     mouse->target_x = x;
     mouse->target_y = y;
-    mouse->confirm = confirm;
-    /* Keep an already-requested fallback armed while motion updates its
-     * destination. Otherwise a steady stream of pointer events can cancel the
-     * fallback every frame and leave the visible cursor behind the mouse. */
+    mouse->confirm = mouse->confirm || confirm;
+    /* An explicit click remains latched while incidental hover events arrive. */
 }
 
 void fe8_mouse_cancel(Fe8MouseController *mouse) {
@@ -25,8 +25,11 @@ void fe8_mouse_cancel(Fe8MouseController *mouse) {
     mouse->press_frames = 0;
     mouse->release_frames = 0;
     mouse->wait_frames = 0;
+    mouse->step_active = 0;
     mouse->blocked_frames = 0;
-    mouse->teleport_requested = 0;
+    mouse->stalled = 0;
+    mouse->confirm = 0;
+    mouse->retries = 0;
 }
 
 uint32_t fe8_mouse_update(
@@ -56,44 +59,68 @@ uint32_t fe8_mouse_update(
         return 0;
     }
     mouse->blocked_frames = 0;
-    if (mouse->wait_frames > 0) {
-        if (snapshot->cursor_x != mouse->issued_x || snapshot->cursor_y != mouse->issued_y) {
+    if (mouse->stalled)
+        return 0;
+    if (mouse->step_active) {
+        int logical_arrived = snapshot->cursor_x == mouse->issued_x &&
+            snapshot->cursor_y == mouse->issued_y;
+        int display_arrived = snapshot->cursor_display_x == mouse->issued_x * 16 &&
+            snapshot->cursor_display_y == mouse->issued_y * 16 &&
+            snapshot->cursor_target_x == mouse->issued_x * 16 &&
+            snapshot->cursor_target_y == mouse->issued_y * 16;
+        if (logical_arrived && display_arrived) {
+            mouse->step_active = 0;
             mouse->wait_frames = 0;
-            mouse->release_frames = 2;
             mouse->retries = 0;
+            mouse->release_frames = 1;
             return 0;
         }
-        --mouse->wait_frames;
-        if (mouse->wait_frames > 0)
+        if (++mouse->wait_frames <= (logical_arrived ? 90 : 16))
             return 0;
-        if (++mouse->retries > 3) {
-            fprintf(stderr, "Mouse path fallback: requesting cursor teleport to %d,%d\n",
+        mouse->wait_frames = 0;
+        if (logical_arrived || ++mouse->retries > 3) {
+            fprintf(stderr, "Mouse path stalled: cursor animation/input stopped at %u,%u (%d,%d px); target=%d,%d\n",
+                snapshot->cursor_x, snapshot->cursor_y,
+                snapshot->cursor_display_x, snapshot->cursor_display_y,
                 mouse->target_x, mouse->target_y);
-            mouse->teleport_requested = 1;
-            mouse->wait_frames = 0;
-            mouse->press_frames = 0;
-            mouse->release_frames = 0;
+            mouse->stalled = 1;
             return 0;
         }
+        mouse->release_frames = 1;
+        return mouse->pulse_key;
     }
     if (snapshot->cursor_x == mouse->target_x && snapshot->cursor_y == mouse->target_y) {
-        mouse->active = 0;
-        if (!mouse->confirm)
+        if (snapshot->cursor_display_x != mouse->target_x * 16 ||
+                snapshot->cursor_display_y != mouse->target_y * 16)
             return 0;
+        mouse->active = 0;
+        if (!mouse->confirm) {
+            mouse->confirm = 0;
+            return 0;
+        }
+        mouse->confirm = 0;
         result = UINT32_C(1) << FE8_KEY_A;
         fprintf(stderr, "Mouse confirm: A at %d,%d\n", mouse->target_x, mouse->target_y);
-    } else if (snapshot->cursor_x < mouse->target_x)
+    } else if (snapshot->cursor_x < mouse->target_x) {
         result = UINT32_C(1) << FE8_KEY_RIGHT;
-    else if (snapshot->cursor_x > mouse->target_x)
+        mouse->issued_x = snapshot->cursor_x + 1;
+        mouse->issued_y = snapshot->cursor_y;
+    } else if (snapshot->cursor_x > mouse->target_x) {
         result = UINT32_C(1) << FE8_KEY_LEFT;
-    else if (snapshot->cursor_y < mouse->target_y)
+        mouse->issued_x = snapshot->cursor_x - 1;
+        mouse->issued_y = snapshot->cursor_y;
+    } else if (snapshot->cursor_y < mouse->target_y) {
         result = UINT32_C(1) << FE8_KEY_DOWN;
-    else
+        mouse->issued_x = snapshot->cursor_x;
+        mouse->issued_y = snapshot->cursor_y + 1;
+    } else {
         result = UINT32_C(1) << FE8_KEY_UP;
+        mouse->issued_x = snapshot->cursor_x;
+        mouse->issued_y = snapshot->cursor_y - 1;
+    }
     mouse->pulse_key = result;
-    mouse->press_frames = 2;
-    mouse->wait_frames = 16;
-    mouse->issued_x = snapshot->cursor_x;
-    mouse->issued_y = snapshot->cursor_y;
+    mouse->step_active = 1;
+    mouse->wait_frames = 0;
+    mouse->release_frames = 1;
     return result;
 }

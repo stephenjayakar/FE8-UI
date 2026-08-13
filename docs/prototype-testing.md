@@ -76,9 +76,9 @@ build/prototype/fe8-mgba-sdl.app/Contents/MacOS/fe8-mgba-sdl \
 
 Success is reported as `extended=yes` with a map larger than 15×10. Use the
 keyboard to select a unit and open its action menu. The original 240×160 mGBA
-frame should remain intact in the center, including menus, selected or moving
-units, range overlays, and every other FE8 UI element. Extended terrain and
-standing units should remain visible outside it.
+frame should remain intact and aligned with the extended viewport, including
+menus, selected or moving units, range overlays, and every other FE8 UI element.
+Extended terrain and standing units should remain visible outside it.
 
 On the `mouse` branch, move the native pointer across several known map tiles
 and compare each `Mouse move:` log's window, canvas, tile, and FE8 cursor values.
@@ -86,14 +86,14 @@ Left-click must reach the logged tile and print `Mouse confirm: A`; right-click
 must print `Mouse right-click: B queued` and visibly cancel the current action.
 Repeat on a Retina display and after resizing the window. Black letterbox areas
 must not produce map clicks. During dialogue or menus, map movement and cursor
-teleportation must remain disabled; left/right click should still act as A/B.
+recovery must remain disabled; left/right click should still act as A/B.
 
 Hold Shift and drag to pan the host viewport, then Shift-click a tile to
 recenter it. The extended terrain should move without corrupting FE8's camera,
 and the log should report the new map origin. Slow pointer motion should use
-normal FE8 cursor steps. If those steps are ignored, the fallback must remain
-armed as pointer events update its destination, then report `Mouse cursor
-synchronized` for the newest tile.
+normal FE8 cursor steps and wait for both the logical cursor and its displayed
+animation to arrive. If a step is repeatedly ignored, the path must cancel and
+wait for fresh pointer motion; the frontend must not write emulated cursor state.
 
 To time the real frame limiter while capturing, add `--realtime`. A 120-frame
 capture should take approximately 2.0 seconds at the reported 59.728 fps.

@@ -16,9 +16,10 @@ typedef struct Fe8MouseController {
     int wait_frames;
     int issued_x;
     int issued_y;
+    int step_active;
     int retries;
     int blocked_frames;
-    int teleport_requested;
+    int stalled;
 } Fe8MouseController;
 
 void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm);

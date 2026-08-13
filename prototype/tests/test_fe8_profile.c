@@ -21,6 +21,8 @@ static uint8_t read8(void *context, uint32_t address) {
         return rom[address - ROM_BASE];
     if (address >= UINT32_C(0x0859A9D4) && address < UINT32_C(0x0859A9D8))
         return (uint8_t)(synthetic_base_tiles >> ((address - UINT32_C(0x0859A9D4)) * 8));
+    if (address >= UINT32_C(0x03004E50) && address < UINT32_C(0x03004E54))
+        return 0;
     return 0;
 }
 
@@ -78,7 +80,12 @@ static void setup_state(void) {
     put16(profile->bm_state + 0x2A, 0x0040);
     put16(profile->bm_state + 0x14, 2);
     put16(profile->bm_state + 0x16, 1);
+    put16(profile->bm_state + 0x1C, 32);
+    put16(profile->bm_state + 0x1E, 16);
+    put16(profile->bm_state + 0x20, 28);
+    put16(profile->bm_state + 0x22, 16);
     put8(profile->bm_state + 0x01, 0);
+    put8(profile->bm_state + 0x04, 2);
     put8(profile->play_state + 0x0E, 7);
     put8(profile->play_state + 0x0F, 0);
     make_map(profile->map_terrain, UINT32_C(0x02032000), width, height, 10);
@@ -131,7 +138,10 @@ static void test_snapshot(void) {
     assert(snapshot.map_width == 4 && snapshot.map_height == 3);
     assert(snapshot.camera_x == 0x10 && snapshot.camera_y == 0x20);
     assert(snapshot.cursor_x == 2 && snapshot.cursor_y == 1);
+    assert(snapshot.cursor_target_x == 32 && snapshot.cursor_target_y == 16);
+    assert(snapshot.cursor_display_x == 28 && snapshot.cursor_display_y == 16);
     assert(snapshot.input_lock == 0);
+    assert(snapshot.game_state_bits == 2);
     assert(snapshot.terrain[0] == 10 && snapshot.terrain[11] == 21);
     assert((snapshot.flags & (FE8_SNAPSHOT_TERRAIN | FE8_SNAPSHOT_UNIT_MAP)) ==
         (FE8_SNAPSHOT_TERRAIN | FE8_SNAPSHOT_UNIT_MAP));

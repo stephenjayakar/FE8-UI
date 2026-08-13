@@ -29,6 +29,7 @@
 #define FE8_BLUE_UNITS UINT32_C(0x0202BE4C)
 #define FE8_RED_UNITS UINT32_C(0x0202CFBC)
 #define FE8_GREEN_UNITS UINT32_C(0x0202DDCC)
+#define FE8_ACTIVE_UNIT UINT32_C(0x03004E50)
 
 #define FE8_UNIT_SIZE UINT32_C(0x48)
 #define FE8_BLUE_UNIT_COUNT 62u
@@ -44,7 +45,7 @@ static const Fe8Profile s_fe8u_profile = {
     FE8_BM_STATE, FE8_PLAY_STATE, FE8_MAP_SIZE, FE8_MAP_UNIT, FE8_MAP_TERRAIN,
     FE8_MAP_MOVEMENT, FE8_MAP_RANGE, FE8_MAP_FOG, FE8_MAP_HIDDEN, FE8_MAP_OTHER,
     FE8_MAP_BASE_TILES, FE8_TILESET_CONFIG,
-    FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS,
+    FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS, FE8_ACTIVE_UNIT,
 };
 
 static bool valid_reader(const Fe8MemoryReader *memory) {
@@ -208,10 +209,25 @@ bool fe8_extract_snapshot(
     snapshot->camera_max_y = (int16_t)read16(memory, profile->bm_state + 0x2A);
     snapshot->cursor_x = (uint8_t)read16(memory, profile->bm_state + 0x14);
     snapshot->cursor_y = (uint8_t)read16(memory, profile->bm_state + 0x16);
+    snapshot->cursor_target_x = (int16_t)read16(memory, profile->bm_state + 0x1C);
+    snapshot->cursor_target_y = (int16_t)read16(memory, profile->bm_state + 0x1E);
+    snapshot->cursor_display_x = (int16_t)read16(memory, profile->bm_state + 0x20);
+    snapshot->cursor_display_y = (int16_t)read16(memory, profile->bm_state + 0x22);
+    snapshot->active_unit_address = read32(memory, profile->active_unit);
+    snapshot->game_state_bits = read8(memory, profile->bm_state + 0x04);
     snapshot->input_lock = read8(memory, profile->bm_state + 0x01);
     snapshot->chapter = read8(memory, profile->play_state + 0x0E);
     snapshot->phase = read8(memory, profile->play_state + 0x0F);
-    if (snapshot->cursor_x >= width || snapshot->cursor_y >= height)
+    if (snapshot->active_unit_address != 0 &&
+            !valid_ewram(snapshot->active_unit_address, FE8_UNIT_SIZE))
+        return false;
+    if (snapshot->cursor_x >= width || snapshot->cursor_y >= height ||
+            snapshot->cursor_target_x < 0 || snapshot->cursor_target_y < 0 ||
+            snapshot->cursor_display_x < 0 || snapshot->cursor_display_y < 0 ||
+            snapshot->cursor_target_x > (int)(width - 1) * 16 ||
+            snapshot->cursor_target_y > (int)(height - 1) * 16 ||
+            snapshot->cursor_display_x > (int)(width - 1) * 16 ||
+            snapshot->cursor_display_y > (int)(height - 1) * 16)
         return false;
 
     map_handles[0] = profile->map_terrain;

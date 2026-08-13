@@ -214,34 +214,15 @@ static unsigned terrain_frame_match_percent(
     return samples ? matches * 100 / samples : 0;
 }
 
-static int apply_cursor_teleport(struct mCore *core, const Fe8Profile *profile,
-    Fe8MouseController *mouse, Fe8Snapshot *snapshot, int snapshot_valid) {
-    int cursor_moved;
-    if (!mouse->teleport_requested || !snapshot_valid || snapshot->input_lock != 0)
-        return 0;
-    if (mouse->target_x < 0 || mouse->target_y < 0 ||
-            mouse->target_x >= snapshot->map_width ||
-            mouse->target_y >= snapshot->map_height) {
-        fe8_mouse_cancel(mouse);
-        return 0;
-    }
-    cursor_moved = snapshot->cursor_x != mouse->target_x ||
-        snapshot->cursor_y != mouse->target_y;
-    if (cursor_moved) {
-        core->busWrite16(core, profile->bm_state + 0x14, (uint16_t)mouse->target_x);
-        core->busWrite16(core, profile->bm_state + 0x16, (uint16_t)mouse->target_y);
-    }
-    snapshot->cursor_x = (uint8_t)mouse->target_x;
-    snapshot->cursor_y = (uint8_t)mouse->target_y;
-    mouse->teleport_requested = 0;
-    mouse->retries = 0;
-    mouse->wait_frames = 0;
-    mouse->press_frames = 0;
-    mouse->release_frames = 2;
-    if (cursor_moved)
-        fprintf(stderr, "Mouse cursor synchronized to %d,%d\n",
-            mouse->target_x, mouse->target_y);
-    return 1;
+static int snapshot_path_mode(const Fe8Snapshot *snapshot) {
+    return snapshot && snapshot->active_unit_address != 0 &&
+        (snapshot->game_state_bits & (1u << 1)) != 0;
+}
+
+static void set_mouse_map_target(Fe8MouseController *mouse,
+    const Fe8Snapshot *snapshot, int x, int y, int confirm) {
+    (void)snapshot;
+    fe8_mouse_set_target(mouse, x, y, confirm);
 }
 
 static void pace_frame(uint64_t *deadline, uint64_t period, uint64_t frequency) {
@@ -445,6 +426,9 @@ int main(int argc, char **argv) {
     int pointer_tile_valid = 0;
     int pointer_tile_x = 0;
     int pointer_tile_y = 0;
+    int pointer_canvas_valid = 0;
+    int pointer_canvas_x = 0;
+    int pointer_canvas_y = 0;
     int16_t previous_camera_x = 0;
     int16_t previous_camera_y = 0;
     int exit_code = EXIT_FAILURE;
@@ -567,8 +551,31 @@ int main(int argc, char **argv) {
             map_state.camera_y = snapshot.camera_y;
             fe8_viewport_clamp_pan(
                 &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
-            apply_cursor_teleport(core, profile, &mouse, &snapshot,
-                snapshot_valid && visual_profile_active);
+            if (pointer_canvas_valid && !pan.dragging &&
+                    visual_profile_active && snapshot.input_lock == 0 &&
+                    !mouse.confirm) {
+                int map_x;
+                int map_y;
+                if (fe8_canvas_to_map_tile(&map_state, viewport,
+                        pointer_canvas_x, pointer_canvas_y, &map_x, &map_y)) {
+                    pointer_tile_valid = 1;
+                    pointer_tile_x = map_x;
+                    pointer_tile_y = map_y;
+                    if (snapshot.cursor_x != map_x || snapshot.cursor_y != map_y ||
+                            snapshot.cursor_display_x != map_x * 16 ||
+                            snapshot.cursor_display_y != map_y * 16)
+                        set_mouse_map_target(&mouse, &snapshot, map_x, map_y, 0);
+                } else {
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
+                }
+            }
+            if (mouse.stalled) {
+                fprintf(stderr, "Mouse path cancelled after rejected native input; move the pointer to retry\n");
+                fe8_mouse_cancel(&mouse);
+                pointer_canvas_valid = 0;
+                pointer_tile_valid = 0;
+            }
         }
         if (!large_map_ready && snapshot_valid && visual_profile_active &&
                 snapshot.input_lock == 0 &&
@@ -591,6 +598,7 @@ int main(int argc, char **argv) {
                     event.button.button == SDL_BUTTON_RIGHT) {
                 fe8_mouse_cancel(&mouse);
                 pointer_tile_valid = 0;
+                pointer_canvas_valid = 0;
                 mouse.pulse_key = UINT32_C(1) << FE8_HOST_B;
                 mouse.press_frames = 2;
                 fprintf(stderr, "Mouse right-click: B queued\n");
@@ -605,6 +613,7 @@ int main(int argc, char **argv) {
                             event.button.x, event.button.y, &canvas_x, &canvas_y))
                         continue;
                     if (shift) {
+                        pointer_canvas_valid = 0;
                         pan.dragging = 1;
                         pan.moved = 0;
                         pan.start_canvas_x = canvas_x;
@@ -617,14 +626,18 @@ int main(int argc, char **argv) {
                         int map_y;
                         if (fe8_canvas_to_map_tile(&map_state, viewport,
                                 canvas_x, canvas_y, &map_x, &map_y)) {
+                            pointer_canvas_valid = 1;
+                            pointer_canvas_x = canvas_x;
+                            pointer_canvas_y = canvas_y;
                             pointer_tile_valid = 1;
                             pointer_tile_x = map_x;
                             pointer_tile_y = map_y;
-                            fe8_mouse_set_target(&mouse, map_x, map_y, 1);
+                            set_mouse_map_target(&mouse, &snapshot, map_x, map_y, 1);
                             fprintf(stderr,
-                                "Mouse click: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u\n",
+                                "Mouse click: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u mode=%s\n",
                                 event.button.x, event.button.y, canvas_x, canvas_y,
-                                map_x, map_y, snapshot.cursor_x, snapshot.cursor_y);
+                                map_x, map_y, snapshot.cursor_x, snapshot.cursor_y,
+                                snapshot_path_mode(&snapshot) ? "path" : "idle");
                         }
                     }
                 } else {
@@ -647,6 +660,8 @@ int main(int argc, char **argv) {
                             &snapshot, &viewport, GBA_X, GBA_Y, map_x, map_y);
                 }
                 pan.dragging = 0;
+                pointer_canvas_valid = 0;
+                pointer_tile_valid = 0;
                 fe8_viewport_clamp_pan(
                     &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
                 fprintf(stderr, "Mouse pan: map origin=%d,%d\n",
@@ -658,6 +673,7 @@ int main(int argc, char **argv) {
                 int canvas_y;
                 if (!fe8_host_video_window_to_canvas(&video,
                         event.motion.x, event.motion.y, &canvas_x, &canvas_y)) {
+                    pointer_canvas_valid = 0;
                     pointer_tile_valid = 0;
                 } else if (pan.dragging) {
                     int dx = canvas_x - pan.start_canvas_x;
@@ -670,6 +686,9 @@ int main(int argc, char **argv) {
                 } else {
                     int map_x;
                     int map_y;
+                    pointer_canvas_valid = 1;
+                    pointer_canvas_x = canvas_x;
+                    pointer_canvas_y = canvas_y;
                     if (fe8_canvas_to_map_tile(&map_state, viewport,
                             canvas_x, canvas_y, &map_x, &map_y) &&
                             (!pointer_tile_valid || map_x != pointer_tile_x ||
@@ -677,11 +696,12 @@ int main(int argc, char **argv) {
                         pointer_tile_valid = 1;
                         pointer_tile_x = map_x;
                         pointer_tile_y = map_y;
-                        fe8_mouse_set_target(&mouse, map_x, map_y, 0);
+                        set_mouse_map_target(&mouse, &snapshot, map_x, map_y, 0);
                         fprintf(stderr,
-                            "Mouse move: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u\n",
+                            "Mouse move: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u mode=%s\n",
                             event.motion.x, event.motion.y, canvas_x, canvas_y,
-                            map_x, map_y, snapshot.cursor_x, snapshot.cursor_y);
+                            map_x, map_y, snapshot.cursor_x, snapshot.cursor_y,
+                            snapshot_path_mode(&snapshot) ? "path" : "idle");
                     }
                 }
             } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
@@ -693,6 +713,13 @@ int main(int argc, char **argv) {
                     options.quick_state_path) {
                 host_load_state(core, options.quick_state_path);
             } else {
+                if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                        fe8_host_key_for_scancode(&settings,
+                            event.key.keysym.scancode) != 0) {
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
+                    fe8_mouse_cancel(&mouse);
+                }
                 update_keyboard(&keyboard_keys, &settings, &event);
             }
         }
@@ -779,8 +806,14 @@ int main(int argc, char **argv) {
             }
         }
         /* The emulated frame is authoritative for all UI, overlays, moving
-         * sprites, and selected units. Draw it last over the extended world. */
-        composite_framebuffer(video_buffer, video_stride, canvas, GBA_X, GBA_Y);
+         * sprites, and selected units. While the extended world is active it
+         * must use the exact same movable origin as terrain, pointer mapping,
+         * and host-rendered units; a fixed center creates seams and an
+         * apparent one-tile mouse offset whenever the map is centered or
+         * panned. Outside a validated map, retain the normal centered frame. */
+        composite_framebuffer(video_buffer, video_stride, canvas,
+            extension_active ? viewport.gba_x : GBA_X,
+            extension_active ? viewport.gba_y : GBA_Y);
         if (!fe8_host_video_present(&video, canvas)) {
             fprintf(stderr, "Video presentation failed: %s\n", SDL_GetError());
             running = 0;

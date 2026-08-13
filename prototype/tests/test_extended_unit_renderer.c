@@ -37,6 +37,10 @@ int main(void) {
     snapshot.map_height = 4;
     snapshot.cursor_x = 0;
     snapshot.cursor_y = 0;
+    snapshot.cursor_target_x = 0;
+    snapshot.cursor_target_y = 0;
+    snapshot.cursor_display_x = 0;
+    snapshot.cursor_display_y = 0;
     snapshot.visible_unit_count = 1;
     snapshot.visible_units[0] = (Fe8VisibleUnit){
         0x81, 0x80, 1, 1, 0, UINT32_C(0x02000100)};
@@ -49,6 +53,21 @@ int main(void) {
         output, 64, 0) == 1);
     assert(output[24 * 64 + 24] == UINT32_C(0xFF00FF00));
     assert(output[0] != 0); /* Host cursor is visible independently of OAM. */
+
+    /* The extended cursor follows FE8's animated pixel position, not the
+     * logical tile that advances before the visible sprite arrives. */
+    memset(output, 0, sizeof(output));
+    snapshot.visible_unit_count = 0;
+    snapshot.cursor_x = 3;
+    snapshot.cursor_y = 2;
+    snapshot.cursor_target_x = 48;
+    snapshot.cursor_target_y = 32;
+    snapshot.cursor_display_x = 20;
+    snapshot.cursor_display_y = 12;
+    assert(fe8_render_extended_units(&memory, &snapshot, viewport,
+        output, 64, 0) == 0);
+    assert(output[12 * 64 + 20] != 0);
+    assert(output[32 * 64 + 48] == 0);
     puts("extended unit renderer tests passed");
     return 0;
 }

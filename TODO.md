@@ -20,7 +20,7 @@
 ## Compatibility
 
 - [x] Provide Retina-correct mouse cursor movement, A/B clicks, and host panning
-  on the `mouse` branch, with a validated cursor-teleport fallback.
+  on the `mouse` branch, with safe cancellation after rejected native input.
 - Add versioned profiles for FE8-derived ROM hacks that relocate renderer data.
 - Maintain regression checkpoints for retail FE8U and Sacred Echoes.
 - Render transient units, effects, weather, and range overlays beyond the
