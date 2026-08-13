@@ -100,11 +100,13 @@ int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
         window_x, window_y, canvas_x, canvas_y);
 }
 
-int fe8_host_video_adjust_zoom(Fe8HostVideo *video, double wheel_delta) {
+int fe8_host_video_adjust_zoom(
+    Fe8HostVideo *video, double wheel_delta, double sensitivity) {
     Fe8HostVideoSdl *backend = video ? video->backend : NULL;
     if (!backend || !backend->renderer)
         return 0;
-    if (!fe8_display_scaling_adjust(&video->scaling, wheel_delta))
+    if (!fe8_display_scaling_adjust(
+            &video->scaling, wheel_delta, sensitivity))
         return 0;
     return apply_layout(video, backend);
 }

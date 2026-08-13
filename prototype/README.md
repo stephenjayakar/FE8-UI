@@ -63,8 +63,8 @@ storage on first launch. Removing a row only removes the library reference; it
 does not delete the ROM or that game's saves.
 
 **Settings → Settings…** is available from both the library and a running game.
-Audio, VSync, extended rendering, video shader, and every keyboard binding are
-global and apply to all imported games.
+Audio, VSync, extended rendering, video shader, zoom sensitivity, and every
+keyboard binding are global and apply to all imported games.
 
 The Settings window also has a global **Hotkeys** section. Hold **Space** to run
 at 4× speed; audio and VSync resume automatically when it is released. **F5**
@@ -91,8 +91,10 @@ frontend.
 
 The extended logical canvas is at least 480×320 and adapts to the drawable's
 aspect ratio. The window starts maximized and uses nearest-neighbor sampling to
-preserve hard pixel edges. Scroll over the canvas for gradual zoom (about 0.5%
-per wheel unit). Zoom stays anchored to the map position beneath the pointer;
+preserve hard pixel edges. Scroll over the canvas for gradual zoom. **Settings →
+Settings… → Zoom sensitivity** provides a continuous Low–High slider from 0.5%
+to 3% per wheel unit; the default is **Low**, matching the original 0.5% rate.
+Zoom stays anchored to the map position beneath the pointer;
 the extended terrain and units are re-rendered for each new canvas size instead
 of cropping an enlarged 480×320 snapshot. Scrolling back out restores the full
 extended view. Escape or the window close button exits.
@@ -106,7 +108,7 @@ Command-comma) to toggle audio, VSync, or the extended renderer and select a
 video preset. **Off** is the default sharp, unfiltered presentation; **CRT (TV
 Mode)** adds mGBA's subtle horizontal blend and scanlines; **Scanlines** keeps
 the pixels sharp while darkening alternating lines. The shader processes the
-entire 480×320 host canvas, including the extended map, and can be changed live.
+entire dynamic host canvas, including the extended map, and can be changed live.
 
 To rebind a GBA button, click its current binding and press the desired key;
 Escape cancels capture. Standalone modifier keys—including left/right Shift,

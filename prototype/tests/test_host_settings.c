@@ -10,6 +10,12 @@ int main(void) {
     assert(settings.extensions_enabled);
     assert(settings.mouse_enabled);
     assert(settings.shader == FE8_HOST_SHADER_OFF);
+    assert(settings.zoom_sensitivity == FE8_HOST_ZOOM_SENSITIVITY_LOW);
+    assert(fe8_host_clamp_zoom_sensitivity(0.0) ==
+        FE8_HOST_ZOOM_SENSITIVITY_LOW);
+    assert(fe8_host_clamp_zoom_sensitivity(1.0) ==
+        FE8_HOST_ZOOM_SENSITIVITY_HIGH);
+    assert(fe8_host_clamp_zoom_sensitivity(0.0125) == 0.0125);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_SPEED_UP] == SDL_SCANCODE_SPACE);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_SAVE] == SDL_SCANCODE_F5);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_LOAD] == SDL_SCANCODE_F8);

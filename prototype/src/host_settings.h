@@ -32,6 +32,9 @@ enum Fe8HostHotkey {
     FE8_HOST_HOTKEY_COUNT
 };
 
+#define FE8_HOST_ZOOM_SENSITIVITY_LOW 0.005
+#define FE8_HOST_ZOOM_SENSITIVITY_HIGH 0.030
+
 typedef struct Fe8HostSettings {
     SDL_Scancode bindings[FE8_HOST_BUTTON_COUNT];
     SDL_Scancode hotkeys[FE8_HOST_HOTKEY_COUNT];
@@ -40,6 +43,7 @@ typedef struct Fe8HostSettings {
     int extensions_enabled;
     int mouse_enabled;
     enum Fe8HostShader shader;
+    double zoom_sensitivity;
     unsigned revision;
 } Fe8HostSettings;
 
@@ -51,5 +55,6 @@ uint32_t fe8_host_hotkey_for_scancode(
 const char *fe8_host_button_name(enum Fe8HostButton button);
 const char *fe8_host_hotkey_name(enum Fe8HostHotkey hotkey);
 const char *fe8_host_shader_name(enum Fe8HostShader shader);
+double fe8_host_clamp_zoom_sensitivity(double sensitivity);
 
 #endif

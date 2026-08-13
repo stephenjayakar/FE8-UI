@@ -28,6 +28,15 @@ void fe8_host_settings_init(Fe8HostSettings *settings) {
     settings->extensions_enabled = 1;
     settings->mouse_enabled = 1;
     settings->shader = FE8_HOST_SHADER_OFF;
+    settings->zoom_sensitivity = FE8_HOST_ZOOM_SENSITIVITY_LOW;
+}
+
+double fe8_host_clamp_zoom_sensitivity(double sensitivity) {
+    if (sensitivity < FE8_HOST_ZOOM_SENSITIVITY_LOW)
+        return FE8_HOST_ZOOM_SENSITIVITY_LOW;
+    if (sensitivity > FE8_HOST_ZOOM_SENSITIVITY_HIGH)
+        return FE8_HOST_ZOOM_SENSITIVITY_HIGH;
+    return sensitivity;
 }
 
 uint32_t fe8_host_hotkey_for_scancode(

@@ -57,22 +57,22 @@ int fe8_display_scaling_resize(Fe8DisplayScaling *scaling,
     return calculate_layout(scaling);
 }
 
-int fe8_display_scaling_adjust(Fe8DisplayScaling *scaling, double wheel_delta) {
+int fe8_display_scaling_adjust(Fe8DisplayScaling *scaling,
+    double wheel_delta, double sensitivity) {
     double old_zoom;
     double factor = 1.0;
     double magnitude;
-    if (!scaling || wheel_delta == 0.0)
+    if (!scaling || wheel_delta == 0.0 || sensitivity <= 0.0)
         return 0;
     old_zoom = scaling->zoom_factor;
-    /* Half a percent per wheel unit keeps trackpad gestures responsive but gradual. Avoid
-     * libm for this tiny exponent by multiplying once per whole/fractional
-     * unit; SDL precise wheel deltas are normally well below one. */
+    /* Avoid libm for this small exponent by multiplying once per
+     * whole/fractional unit; SDL precise wheel deltas are normally below one. */
     magnitude = wheel_delta < 0.0 ? -wheel_delta : wheel_delta;
     while (magnitude >= 1.0) {
-        factor *= 1.005;
+        factor *= 1.0 + sensitivity;
         magnitude -= 1.0;
     }
-    factor *= 1.0 + 0.005 * magnitude;
+    factor *= 1.0 + sensitivity * magnitude;
     if (wheel_delta > 0.0)
         scaling->zoom_factor *= factor;
     else

@@ -8,6 +8,7 @@ static NSString *const kVSyncKey = @"FE8VSyncEnabled";
 static NSString *const kExtensionsKey = @"FE8ExtensionsEnabled";
 static NSString *const kMouseKey = @"FE8MouseEnabled";
 static NSString *const kShaderKey = @"FE8ShaderMode";
+static NSString *const kZoomSensitivityKey = @"FE8ZoomSensitivity";
 
 enum { FE8_HOTKEY_TAG_BASE = 100 };
 
@@ -93,6 +94,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) NSMutableArray<NSButton *> *bindingButtons;
 @property(nonatomic, strong) NSButton *listeningButton;
+@property(nonatomic, strong) NSTextField *zoomSensitivityValue;
 @property(nonatomic, strong) id keyMonitor;
 @property(nonatomic, assign) void *stateContext;
 @property(nonatomic, assign) Fe8HostStateCallback saveState;
@@ -194,6 +196,23 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     [NSUserDefaults.standardUserDefaults setInteger:shader forKey:kShaderKey];
 }
 
+- (NSString *)zoomSensitivityTitle:(double)sensitivity {
+    NSString *level = sensitivity <= 0.006 ? @"Low" :
+        (sensitivity <= 0.018 ? @"Medium" : @"High");
+    return [NSString stringWithFormat:@"%@ · %.1f%%", level, sensitivity * 100.0];
+}
+
+- (void)zoomSensitivityChanged:(NSSlider *)sender {
+    double sensitivity = fe8_host_clamp_zoom_sensitivity(
+        sender.doubleValue / 100.0);
+    self.settings->zoom_sensitivity = sensitivity;
+    self.zoomSensitivityValue.stringValue =
+        [self zoomSensitivityTitle:sensitivity];
+    ++self.settings->revision;
+    [NSUserDefaults.standardUserDefaults setDouble:sensitivity
+        forKey:kZoomSensitivityKey];
+}
+
 - (instancetype)initWithSettings:(Fe8HostSettings *)settings
     stateContext:(void *)stateContext
     saveState:(Fe8HostStateCallback)saveState
@@ -209,7 +228,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.quickStatePath = quickStatePath;
     self.bindingButtons = [NSMutableArray array];
     self.window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 430, 710)
+        initWithContentRect:NSMakeRect(0, 0, 430, 760)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
         backing:NSBackingStoreBuffered defer:NO];
     self.window.title = @"FE8 Frontend Settings";
@@ -228,7 +247,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     NSInteger i;
     for (i = 0; i < (NSInteger)optionNames.count; ++i) {
         NSButton *check = [[NSButton alloc]
-            initWithFrame:NSMakeRect(24, 665 - i * 30, 380, 24)];
+            initWithFrame:NSMakeRect(24, 715 - i * 30, 380, 24)];
         check.buttonType = NSButtonTypeSwitch;
         check.title = optionNames[i];
         check.state = optionValues[i] ? NSControlStateValueOn : NSControlStateValueOff;
@@ -239,10 +258,10 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     }
 
     NSTextField *shaderLabel = [NSTextField labelWithString:@"Video shader"];
-    shaderLabel.frame = NSMakeRect(30, 529, 90, 24);
+    shaderLabel.frame = NSMakeRect(30, 579, 105, 24);
     [content addSubview:shaderLabel];
     NSPopUpButton *shaderPopup = [[NSPopUpButton alloc]
-        initWithFrame:NSMakeRect(130, 525, 265, 28) pullsDown:NO];
+        initWithFrame:NSMakeRect(150, 575, 245, 28) pullsDown:NO];
     for (i = 0; i < FE8_HOST_SHADER_COUNT; ++i)
         [shaderPopup addItemWithTitle:[NSString stringWithUTF8String:
             fe8_host_shader_name((enum Fe8HostShader)i)]];
@@ -250,6 +269,25 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     shaderPopup.target = self;
     shaderPopup.action = @selector(shaderChanged:);
     [content addSubview:shaderPopup];
+
+    NSTextField *zoomLabel = [NSTextField labelWithString:@"Zoom sensitivity"];
+    zoomLabel.frame = NSMakeRect(30, 539, 115, 24);
+    [content addSubview:zoomLabel];
+    NSSlider *zoomSlider = [NSSlider sliderWithValue:
+        settings->zoom_sensitivity * 100.0
+        minValue:FE8_HOST_ZOOM_SENSITIVITY_LOW * 100.0
+        maxValue:FE8_HOST_ZOOM_SENSITIVITY_HIGH * 100.0
+        target:self action:@selector(zoomSensitivityChanged:)];
+    zoomSlider.frame = NSMakeRect(150, 539, 150, 24);
+    zoomSlider.continuous = YES;
+    zoomSlider.numberOfTickMarks = 6;
+    zoomSlider.allowsTickMarkValuesOnly = NO;
+    [content addSubview:zoomSlider];
+    self.zoomSensitivityValue = [NSTextField labelWithString:
+        [self zoomSensitivityTitle:settings->zoom_sensitivity]];
+    self.zoomSensitivityValue.frame = NSMakeRect(307, 539, 95, 24);
+    self.zoomSensitivityValue.alignment = NSTextAlignmentRight;
+    [content addSubview:self.zoomSensitivityValue];
 
     NSTextField *heading = [NSTextField labelWithString:@"Keyboard controls"];
     heading.frame = NSMakeRect(24, 495, 380, 24);
@@ -382,6 +420,7 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
             kExtensionsKey: @YES,
             kMouseKey: @YES,
             kShaderKey: @(FE8_HOST_SHADER_OFF),
+            kZoomSensitivityKey: @(FE8_HOST_ZOOM_SENSITIVITY_LOW),
         }];
         settings->audio_enabled = [defaults boolForKey:kAudioKey];
         settings->vsync_enabled = [defaults boolForKey:kVSyncKey];
@@ -390,6 +429,8 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
         NSInteger shader = [defaults integerForKey:kShaderKey];
         settings->shader = shader >= 0 && shader < FE8_HOST_SHADER_COUNT ?
             (enum Fe8HostShader)shader : FE8_HOST_SHADER_OFF;
+        settings->zoom_sensitivity = fe8_host_clamp_zoom_sensitivity(
+            [defaults doubleForKey:kZoomSensitivityKey]);
         for (int button = 0; button < FE8_HOST_BUTTON_COUNT; ++button) {
             NSString *key = bindingKey((enum Fe8HostButton)button);
             if ([defaults objectForKey:key])

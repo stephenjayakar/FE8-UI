@@ -624,12 +624,13 @@ int main(int argc, char **argv) {
             previous_camera_valid = 0;
             settings_revision = settings.revision;
             frame_deadline = SDL_GetPerformanceCounter();
-            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s\n",
+            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s zoom=%.1f%%\n",
                 settings.audio_enabled ? "on" : "off",
                 video.vsync_active ? "on" : "off",
                 settings.extensions_enabled ? "on" : "off",
                 settings.mouse_enabled ? "on" : "off",
-                fe8_host_shader_name(video.shader));
+                fe8_host_shader_name(video.shader),
+                settings.zoom_sensitivity * 100.0);
         }
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         if (snapshot_valid) {
@@ -744,7 +745,8 @@ int main(int argc, char **argv) {
                     old_world_x = snapshot.camera_x + old_canvas_x - viewport.gba_x;
                     old_world_y = snapshot.camera_y + old_canvas_y - viewport.gba_y;
                 }
-                if (fe8_host_video_adjust_zoom(&video, wheel_delta)) {
+                if (fe8_host_video_adjust_zoom(
+                        &video, wheel_delta, settings.zoom_sensitivity)) {
                     int canvas_x;
                     int canvas_y;
                     if (!resize_canvas(&canvas, &canvas_width, &canvas_height,

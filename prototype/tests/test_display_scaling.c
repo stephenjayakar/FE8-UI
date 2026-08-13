@@ -12,16 +12,19 @@ int main(void) {
     assert(scaling.canvas_width == 513);
     assert(scaling.canvas_height == 320);
 
-    assert(fe8_display_scaling_adjust(&scaling, 1.0));
+    assert(fe8_display_scaling_adjust(&scaling, 1.0, 0.005));
     assert(scaling.zoom_factor > 1.004 && scaling.zoom_factor < 1.006);
     assert(scaling.canvas_width == 510);
     assert(scaling.canvas_height == 319);
-    assert(fe8_display_scaling_adjust(&scaling, 0.5));
+    assert(fe8_display_scaling_adjust(&scaling, 0.5, 0.005));
     assert(scaling.zoom_factor > 1.007 && scaling.zoom_factor < 1.008);
-    assert(fe8_display_scaling_adjust(&scaling, -99.0));
+    assert(fe8_display_scaling_adjust(&scaling, -99.0, 0.005));
     assert(scaling.zoom_factor == 1.0);
     assert(scaling.canvas_width == 513);
     assert(scaling.canvas_height == 320);
+
+    assert(fe8_display_scaling_adjust(&scaling, 1.0, 0.03));
+    assert(scaling.zoom_factor > 1.029 && scaling.zoom_factor < 1.031);
 
     puts("display scaling tests passed");
     return 0;

@@ -20,6 +20,7 @@ void fe8_display_scaling_init(Fe8DisplayScaling *scaling,
     int minimum_view_width, int minimum_view_height);
 int fe8_display_scaling_resize(Fe8DisplayScaling *scaling,
     int drawable_width, int drawable_height);
-int fe8_display_scaling_adjust(Fe8DisplayScaling *scaling, double wheel_delta);
+int fe8_display_scaling_adjust(Fe8DisplayScaling *scaling,
+    double wheel_delta, double sensitivity);
 
 #endif
