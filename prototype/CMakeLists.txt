@@ -48,8 +48,35 @@ add_executable(fe8-mgba-sdl
     src/fe8_profile.c
     src/extended_map_renderer.c
     src/extended_unit_renderer.c
-    src/mouse_controller.c
-    src/viewport_controller.c)
+    src/host_audio.c
+    src/host_settings.c)
+
+if(APPLE)
+    enable_language(OBJC)
+    set_target_properties(fe8-mgba-sdl PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "FE8 Extended Frontend"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.feuniverse.fe8-extended-frontend"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1")
+    target_sources(fe8-mgba-sdl PRIVATE
+        src/host_video_gl.c
+        src/macos_library.m
+        src/macos_settings.m
+        ${mgba_SOURCE_DIR}/src/platform/opengl/gles2.c)
+    target_include_directories(fe8-mgba-sdl PRIVATE
+        ${mgba_SOURCE_DIR}/src/platform/opengl)
+    target_compile_definitions(fe8-mgba-sdl PRIVATE BUILD_GLES3 GL_SILENCE_DEPRECATION)
+    target_link_libraries(fe8-mgba-sdl PRIVATE
+        "-framework Cocoa"
+        "-framework OpenGL"
+        "-framework UniformTypeIdentifiers")
+else()
+    target_sources(fe8-mgba-sdl PRIVATE
+        src/host_video_sdl.c
+        src/macos_library_stub.c
+        src/macos_settings_stub.c)
+endif()
 target_compile_features(fe8-mgba-sdl PRIVATE c_std_11)
 target_include_directories(fe8-mgba-sdl PRIVATE src)
 # libmGBA's public struct layout is feature-macro dependent. Its static target
