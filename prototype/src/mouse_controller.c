@@ -4,6 +4,7 @@
 
 enum {
     FE8_KEY_A = 0,
+    FE8_KEY_B = 1,
     FE8_KEY_RIGHT = 4,
     FE8_KEY_LEFT = 5,
     FE8_KEY_UP = 6,
@@ -37,13 +38,13 @@ uint32_t fe8_mouse_update(
     uint32_t result = 0;
     /* Direct pulses (especially right-click B) must work while map input is
        locked by a menu or transition. */
+    if (mouse->release_frames > 0) {
+        --mouse->release_frames;
+        return mouse->active ? UINT32_C(1) << FE8_KEY_B : 0;
+    }
     if (mouse->press_frames > 0) {
         --mouse->press_frames;
         return mouse->pulse_key;
-    }
-    if (mouse->release_frames > 0) {
-        --mouse->release_frames;
-        return 0;
     }
     if (!snapshot_valid) {
         fe8_mouse_cancel(mouse);
@@ -73,10 +74,10 @@ uint32_t fe8_mouse_update(
             mouse->wait_frames = 0;
             mouse->retries = 0;
             mouse->release_frames = 1;
-            return 0;
+            return UINT32_C(1) << FE8_KEY_B;
         }
         if (++mouse->wait_frames <= (logical_arrived ? 90 : 16))
-            return 0;
+            return UINT32_C(1) << FE8_KEY_B;
         mouse->wait_frames = 0;
         if (logical_arrived || ++mouse->retries > 3) {
             fprintf(stderr, "Mouse path stalled: cursor animation/input stopped at %u,%u (%d,%d px); target=%d,%d\n",
@@ -87,12 +88,12 @@ uint32_t fe8_mouse_update(
             return 0;
         }
         mouse->release_frames = 1;
-        return mouse->pulse_key;
+        return mouse->pulse_key | (UINT32_C(1) << FE8_KEY_B);
     }
     if (snapshot->cursor_x == mouse->target_x && snapshot->cursor_y == mouse->target_y) {
         if (snapshot->cursor_display_x != mouse->target_x * 16 ||
                 snapshot->cursor_display_y != mouse->target_y * 16)
-            return 0;
+            return UINT32_C(1) << FE8_KEY_B;
         mouse->active = 0;
         if (!mouse->confirm) {
             mouse->confirm = 0;
@@ -101,6 +102,7 @@ uint32_t fe8_mouse_update(
         mouse->confirm = 0;
         result = UINT32_C(1) << FE8_KEY_A;
         fprintf(stderr, "Mouse confirm: A at %d,%d\n", mouse->target_x, mouse->target_y);
+        return result; /* Release fast-move B before confirming. */
     } else if (snapshot->cursor_x < mouse->target_x) {
         result = UINT32_C(1) << FE8_KEY_RIGHT;
         mouse->issued_x = snapshot->cursor_x + 1;
@@ -122,5 +124,5 @@ uint32_t fe8_mouse_update(
     mouse->step_active = 1;
     mouse->wait_frames = 0;
     mouse->release_frames = 1;
-    return result;
+    return result | (UINT32_C(1) << FE8_KEY_B);
 }

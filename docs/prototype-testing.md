@@ -95,6 +95,12 @@ normal FE8 cursor steps and wait for both the logical cursor and its displayed
 animation to arrive. If a step is repeatedly ignored, the path must cancel and
 wait for fresh pointer motion; the frontend must not write emulated cursor state.
 
+Mouse-driven travel should hold B for FE8's native fast-cursor behavior in both
+idle and selected-unit path modes. Verify that a destination click releases B
+before emitting A. While a long path is still moving, right-click and confirm
+the forced B release/new press cancels the selection rather than being mistaken
+for the already-held acceleration button.
+
 In **Settings → Settings…**, verify **Enable mouse controls** defaults on. The
 game canvas should replace the macOS arrow with the large blue-and-gold pointer,
 while the Settings window itself retains the normal system pointer. Turning the

@@ -657,6 +657,9 @@ int main(int argc, char **argv) {
                 pointer_canvas_valid = 0;
                 mouse.pulse_key = UINT32_C(1) << FE8_HOST_B;
                 mouse.press_frames = 2;
+                /* Fast mouse travel already holds B. Force a release first so
+                 * FE8 observes right-click as a new cancel press. */
+                mouse.release_frames = 2;
                 fprintf(stderr, "Mouse right-click: B queued\n");
             } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                     event.button.button == SDL_BUTTON_LEFT && settings.mouse_enabled) {
