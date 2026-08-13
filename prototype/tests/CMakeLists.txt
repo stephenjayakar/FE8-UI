@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.16)
+project(fe8_profile_tests C)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+add_executable(test_fe8_profile
+    test_fe8_profile.c
+    ../src/fe8_profile.c)
+target_include_directories(test_fe8_profile PRIVATE ../src)
+
+add_executable(test_extended_map_renderer
+    test_extended_map_renderer.c
+    ../src/extended_map_renderer.c)
+target_include_directories(test_extended_map_renderer PRIVATE ../src)
+
+add_executable(test_extended_unit_renderer
+    test_extended_unit_renderer.c
+    ../src/extended_unit_renderer.c)
+target_include_directories(test_extended_unit_renderer PRIVATE ../src)
+
+find_package(SDL2 CONFIG QUIET)
+if(TARGET SDL2::SDL2)
+    set(FE8_TEST_SDL_TARGET SDL2::SDL2)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+    set(FE8_TEST_SDL_TARGET PkgConfig::SDL2)
+endif()
+
+add_executable(test_host_settings
+    test_host_settings.c
+    ../src/host_settings.c)
+target_include_directories(test_host_settings PRIVATE ../src)
+target_link_libraries(test_host_settings PRIVATE ${FE8_TEST_SDL_TARGET})
+
+enable_testing()
+add_test(NAME fe8_profile COMMAND test_fe8_profile)
+add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
+add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)
+add_test(NAME host_settings COMMAND test_host_settings)
