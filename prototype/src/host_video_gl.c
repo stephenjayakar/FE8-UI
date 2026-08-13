@@ -1,6 +1,7 @@
 #include "host_video.h"
 
 #include "gles2.h"
+#include "pointer_mapping.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -186,6 +187,21 @@ int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
     backend->renderer.d.drawFrame(&backend->renderer.d);
     SDL_GL_SwapWindow(video->window);
     return glGetError() == GL_NO_ERROR;
+}
+
+int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
+    int window_x, int window_y, int *canvas_x, int *canvas_y) {
+    int window_width;
+    int window_height;
+    int drawable_width;
+    int drawable_height;
+    if (!video || !video->window)
+        return 0;
+    SDL_GetWindowSize(video->window, &window_width, &window_height);
+    SDL_GL_GetDrawableSize(video->window, &drawable_width, &drawable_height);
+    return fe8_pointer_window_to_canvas(window_width, window_height,
+        drawable_width, drawable_height, video->canvas_width, video->canvas_height,
+        window_x, window_y, canvas_x, canvas_y);
 }
 
 void fe8_host_video_log_status(const Fe8HostVideo *video) {

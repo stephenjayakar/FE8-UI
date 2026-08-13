@@ -80,9 +80,19 @@ frame should remain intact in the center, including menus, selected or moving
 units, range overlays, and every other FE8 UI element. Extended terrain and
 standing units should remain visible outside it.
 
-Mouse controls and independent panning are deliberately absent from this
-renderer-only branch. Their current implementation and tests are preserved on
-the Git branch `mouse`.
+On the `mouse` branch, move the native pointer across several known map tiles
+and compare each `Mouse move:` log's window, canvas, tile, and FE8 cursor values.
+Left-click must reach the logged tile and print `Mouse confirm: A`; right-click
+must print `Mouse right-click: B queued` and visibly cancel the current action.
+Repeat on a Retina display and after resizing the window. Black letterbox areas
+must not produce map clicks. During dialogue or menus, map movement and cursor
+teleportation must remain disabled; left/right click should still act as A/B.
+
+Hold Shift and drag to pan the host viewport, then Shift-click a tile to
+recenter it. The extended terrain should move without corrupting FE8's camera,
+and the log should report the new map origin. If simulated D-pad pulses are not
+acknowledged after four retries, the log should report a validated cursor
+teleport and still reach the requested tile.
 
 To time the real frame limiter while capturing, add `--realtime`. A 120-frame
 capture should take approximately 2.0 seconds at the reported 59.728 fps.

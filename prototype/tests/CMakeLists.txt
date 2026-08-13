@@ -19,6 +19,22 @@ add_executable(test_extended_unit_renderer
     ../src/extended_unit_renderer.c)
 target_include_directories(test_extended_unit_renderer PRIVATE ../src)
 
+add_executable(test_mouse_controller
+    test_mouse_controller.c
+    ../src/mouse_controller.c)
+target_include_directories(test_mouse_controller PRIVATE ../src)
+
+add_executable(test_pointer_mapping
+    test_pointer_mapping.c
+    ../src/pointer_mapping.c)
+target_include_directories(test_pointer_mapping PRIVATE ../src)
+
+add_executable(test_viewport_controller
+    test_viewport_controller.c
+    ../src/viewport_controller.c
+    ../src/extended_map_renderer.c)
+target_include_directories(test_viewport_controller PRIVATE ../src)
+
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
     set(FE8_TEST_SDL_TARGET SDL2::SDL2)
@@ -38,4 +54,7 @@ enable_testing()
 add_test(NAME fe8_profile COMMAND test_fe8_profile)
 add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
 add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)
+add_test(NAME mouse_controller COMMAND test_mouse_controller)
+add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
+add_test(NAME viewport_controller COMMAND test_viewport_controller)
 add_test(NAME host_settings COMMAND test_host_settings)

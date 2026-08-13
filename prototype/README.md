@@ -109,8 +109,19 @@ The macOS **State** menu provides **Quick Save State**, **Quick Load State**,
 /path/to/checkpoint.ss`, F5 saves that checkpoint and F8 loads it. Library
 launches supply each game's isolated checkpoint automatically.
 
-This branch is intentionally renderer-only. The experimental mouse controls
-and independent host panning are preserved on the Git branch `mouse`.
+On the `mouse` branch, pointer motion over a validated tactical map moves FE8's
+map cursor. Left-click moves to the latched tile and presses A; right-click
+presses B. Pointer coordinates are converted through the actual window,
+high-DPI drawable, letterboxed 480×320 canvas, and current extended-map
+viewport, so Retina scaling does not alter tile selection. Directional input is
+attempted first; if FE8 ignores repeated D-pad pulses, the frontend writes only
+the validated cursor coordinates as a compatibility fallback. Mouse map input
+is disabled during dialogue and cutscenes, while left/right click continue to
+act as A/B for native UI.
+
+Hold Shift and drag with the left button to pan the extended map. A Shift-click
+without dragging recenters the host viewport on that tile. Panning changes only
+the host view and does not mutate FE8's camera.
 
 Keyboard bindings:
 

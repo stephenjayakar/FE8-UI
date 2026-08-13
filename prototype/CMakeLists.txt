@@ -48,6 +48,9 @@ add_executable(fe8-mgba-sdl
     src/fe8_profile.c
     src/extended_map_renderer.c
     src/extended_unit_renderer.c
+    src/mouse_controller.c
+    src/pointer_mapping.c
+    src/viewport_controller.c
     src/host_audio.c
     src/host_settings.c)
 

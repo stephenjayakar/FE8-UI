@@ -15,6 +15,7 @@ void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm) 
     mouse->target_x = x;
     mouse->target_y = y;
     mouse->confirm = confirm;
+    mouse->teleport_requested = 0;
 }
 
 void fe8_mouse_cancel(Fe8MouseController *mouse) {
@@ -23,6 +24,7 @@ void fe8_mouse_cancel(Fe8MouseController *mouse) {
     mouse->release_frames = 0;
     mouse->wait_frames = 0;
     mouse->blocked_frames = 0;
+    mouse->teleport_requested = 0;
 }
 
 uint32_t fe8_mouse_update(
@@ -42,6 +44,8 @@ uint32_t fe8_mouse_update(
         fe8_mouse_cancel(mouse);
         return 0;
     }
+    if (!mouse->active)
+        return 0;
     if (snapshot->input_lock != 0) {
         if (++mouse->blocked_frames > 300) {
             fprintf(stderr, "Mouse path cancelled: FE8 input remained locked\n");
@@ -50,8 +54,6 @@ uint32_t fe8_mouse_update(
         return 0;
     }
     mouse->blocked_frames = 0;
-    if (!mouse->active)
-        return 0;
     if (mouse->wait_frames > 0) {
         if (snapshot->cursor_x != mouse->issued_x || snapshot->cursor_y != mouse->issued_y) {
             mouse->wait_frames = 0;
@@ -63,8 +65,12 @@ uint32_t fe8_mouse_update(
         if (mouse->wait_frames > 0)
             return 0;
         if (++mouse->retries > 3) {
-            fprintf(stderr, "Mouse path cancelled: FE8 cursor did not acknowledge input\n");
-            mouse->active = 0;
+            fprintf(stderr, "Mouse path fallback: requesting cursor teleport to %d,%d\n",
+                mouse->target_x, mouse->target_y);
+            mouse->teleport_requested = 1;
+            mouse->wait_frames = 0;
+            mouse->press_frames = 0;
+            mouse->release_frames = 0;
             return 0;
         }
     }

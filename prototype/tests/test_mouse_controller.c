@@ -61,6 +61,18 @@ int main(void) {
     snapshot.input_lock = 1;
     assert(fe8_mouse_update(&mouse, &snapshot, 1) == KEY_B);
     assert(fe8_mouse_update(&mouse, &snapshot, 0) == KEY_B);
+
+    memset(&mouse, 0, sizeof(mouse));
+    memset(&snapshot, 0, sizeof(snapshot));
+    snapshot.map_width = 10;
+    snapshot.map_height = 10;
+    fe8_mouse_set_target(&mouse, 4, 0, 0);
+    for (int frame = 0; frame < 100 && !mouse.teleport_requested; ++frame)
+        (void)fe8_mouse_update(&mouse, &snapshot, 1);
+    assert(mouse.teleport_requested);
+    assert(mouse.active && mouse.target_x == 4 && mouse.target_y == 0);
+    fe8_mouse_set_target(&mouse, 2, 2, 0);
+    assert(!mouse.teleport_requested);
     puts("mouse controller tests passed");
     return 0;
 }
