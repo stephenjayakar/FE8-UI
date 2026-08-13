@@ -11,7 +11,9 @@ enum {
     KEY_DOWN = 1 << 7,
 };
 
-static void complete_animated_step(Fe8MouseController *mouse, Fe8Snapshot *snapshot) {
+static uint32_t complete_animated_step(
+    Fe8MouseController *mouse, Fe8Snapshot *snapshot) {
+    uint32_t keys = 0;
     snapshot->cursor_x = (uint8_t)mouse->issued_x;
     snapshot->cursor_y = (uint8_t)mouse->issued_y;
     snapshot->cursor_target_x = (int16_t)(mouse->issued_x * 16);
@@ -19,17 +21,19 @@ static void complete_animated_step(Fe8MouseController *mouse, Fe8Snapshot *snaps
     while (snapshot->cursor_display_x != snapshot->cursor_target_x ||
             snapshot->cursor_display_y != snapshot->cursor_target_y) {
         if (snapshot->cursor_display_x < snapshot->cursor_target_x)
-            snapshot->cursor_display_x += 4;
+            snapshot->cursor_display_x += 8;
         else if (snapshot->cursor_display_x > snapshot->cursor_target_x)
-            snapshot->cursor_display_x -= 4;
+            snapshot->cursor_display_x -= 8;
         if (snapshot->cursor_display_y < snapshot->cursor_target_y)
-            snapshot->cursor_display_y += 4;
+            snapshot->cursor_display_y += 8;
         else if (snapshot->cursor_display_y > snapshot->cursor_target_y)
-            snapshot->cursor_display_y -= 4;
-        assert(fe8_mouse_update(mouse, snapshot, 1) == KEY_B);
+            snapshot->cursor_display_y -= 8;
+        keys = fe8_mouse_update(mouse, snapshot, 1);
+        if (snapshot->cursor_display_x != snapshot->cursor_target_x ||
+                snapshot->cursor_display_y != snapshot->cursor_target_y)
+            assert(keys == KEY_B);
     }
-    assert(fe8_mouse_update(mouse, snapshot, 1) == KEY_B);
-    assert(!mouse->step_active);
+    return keys;
 }
 
 int main(void) {
@@ -45,14 +49,11 @@ int main(void) {
     keys = fe8_mouse_update(&mouse, &snapshot, 1);
     assert(keys == (KEY_RIGHT | KEY_B));
     assert(mouse.step_active && mouse.issued_x == 1 && mouse.issued_y == 0);
-    complete_animated_step(&mouse, &snapshot);
-    keys = fe8_mouse_update(&mouse, &snapshot, 1);
+    keys = complete_animated_step(&mouse, &snapshot);
     assert(keys == (KEY_RIGHT | KEY_B));
-    complete_animated_step(&mouse, &snapshot);
-    keys = fe8_mouse_update(&mouse, &snapshot, 1);
+    keys = complete_animated_step(&mouse, &snapshot);
     assert(keys == (KEY_DOWN | KEY_B));
-    complete_animated_step(&mouse, &snapshot);
-    keys = fe8_mouse_update(&mouse, &snapshot, 1);
+    keys = complete_animated_step(&mouse, &snapshot);
     assert(keys == KEY_A);
     assert(!mouse.active);
 

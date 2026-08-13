@@ -73,22 +73,25 @@ uint32_t fe8_mouse_update(
             mouse->step_active = 0;
             mouse->wait_frames = 0;
             mouse->retries = 0;
+            /* The preceding animation frame contained B without a direction,
+             * so the next direction is already a fresh FE8 key edge. Continue
+             * immediately instead of inserting two redundant settling frames. */
+        }
+        if (mouse->step_active) {
+            if (++mouse->wait_frames <= (logical_arrived ? 90 : 16))
+                return UINT32_C(1) << FE8_KEY_B;
+            mouse->wait_frames = 0;
+            if (logical_arrived || ++mouse->retries > 3) {
+                fprintf(stderr, "Mouse path stalled: cursor animation/input stopped at %u,%u (%d,%d px); target=%d,%d\n",
+                    snapshot->cursor_x, snapshot->cursor_y,
+                    snapshot->cursor_display_x, snapshot->cursor_display_y,
+                    mouse->target_x, mouse->target_y);
+                mouse->stalled = 1;
+                return 0;
+            }
             mouse->release_frames = 1;
-            return UINT32_C(1) << FE8_KEY_B;
+            return mouse->pulse_key | (UINT32_C(1) << FE8_KEY_B);
         }
-        if (++mouse->wait_frames <= (logical_arrived ? 90 : 16))
-            return UINT32_C(1) << FE8_KEY_B;
-        mouse->wait_frames = 0;
-        if (logical_arrived || ++mouse->retries > 3) {
-            fprintf(stderr, "Mouse path stalled: cursor animation/input stopped at %u,%u (%d,%d px); target=%d,%d\n",
-                snapshot->cursor_x, snapshot->cursor_y,
-                snapshot->cursor_display_x, snapshot->cursor_display_y,
-                mouse->target_x, mouse->target_y);
-            mouse->stalled = 1;
-            return 0;
-        }
-        mouse->release_frames = 1;
-        return mouse->pulse_key | (UINT32_C(1) << FE8_KEY_B);
     }
     if (snapshot->cursor_x == mouse->target_x && snapshot->cursor_y == mouse->target_y) {
         if (snapshot->cursor_display_x != mouse->target_x * 16 ||

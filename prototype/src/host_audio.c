@@ -39,8 +39,35 @@ int fe8_host_audio_init(Fe8HostAudio *audio, struct mCore *core) {
         audio->device = 0;
         return 0;
     }
+    audio->core_rate = core_rate;
     fprintf(stderr, "Audio: core=%u Hz output=%d Hz channels=%u\n",
         core_rate, audio->obtained.freq, audio->obtained.channels);
+    return 1;
+}
+
+static int update_core_rate(Fe8HostAudio *audio, unsigned core_rate,
+    struct mAudioBuffer *source) {
+    SDL_AudioStream *stream;
+    if (core_rate == audio->core_rate)
+        return 1;
+    stream = SDL_NewAudioStream(AUDIO_S16SYS, 2, (int)core_rate,
+        audio->obtained.format, audio->obtained.channels, audio->obtained.freq);
+    if (!stream) {
+        fprintf(stderr, "Unable to follow core audio rate %u Hz: %s\n",
+            core_rate, SDL_GetError());
+        return 0;
+    }
+    if (audio->enabled)
+        SDL_PauseAudioDevice(audio->device, 1);
+    SDL_ClearQueuedAudio(audio->device);
+    SDL_FreeAudioStream(audio->stream);
+    audio->stream = stream;
+    mAudioBufferClear(source);
+    fprintf(stderr, "Audio: core rate changed %u -> %u Hz; converter reset\n",
+        audio->core_rate, core_rate);
+    audio->core_rate = core_rate;
+    if (audio->enabled)
+        SDL_PauseAudioDevice(audio->device, 0);
     return 1;
 }
 
@@ -68,6 +95,9 @@ void fe8_host_audio_drain(Fe8HostAudio *audio) {
     if (!audio->device || !audio->enabled)
         return;
     source = audio->core->getAudioBuffer(audio->core);
+    if (!update_core_rate(audio,
+            audio->core->audioSampleRate(audio->core), source))
+        return;
     while ((available = mAudioBufferAvailable(source)) != 0) {
         size_t frames = available > AUDIO_CHUNK_FRAMES ? AUDIO_CHUNK_FRAMES : available;
         size_t sample;

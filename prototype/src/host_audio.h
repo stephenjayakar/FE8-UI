@@ -11,6 +11,7 @@ typedef struct Fe8HostAudio {
     SDL_AudioStream *stream;
     SDL_AudioSpec obtained;
     struct mCore *core;
+    unsigned core_rate;
     int enabled;
     uint64_t frames_queued;
     uint16_t peak_sample;
