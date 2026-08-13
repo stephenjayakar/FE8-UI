@@ -89,9 +89,13 @@ when testing: mGBA may write normal game progress back to this file.
 `--no-extensions` leaves the 480×320 canvas letterboxed and runs as an ordinary
 frontend.
 
-The logical canvas is 480×320. The window starts maximized, preserves that 3:2
-aspect ratio with letterboxing as needed, and uses nearest-neighbor scaling to
-preserve pixel art. Escape or the window close button exits.
+The extended logical canvas is at least 480×320 and adapts to the drawable's
+aspect ratio. The window starts maximized and uses nearest-neighbor sampling to
+preserve hard pixel edges. Scroll over the canvas for gradual zoom (about 0.5%
+per wheel unit). Zoom stays anchored to the map position beneath the pointer;
+the extended terrain and units are re-rendered for each new canvas size instead
+of cropping an enlarged 480×320 snapshot. Scrolling back out restores the full
+extended view. Escape or the window close button exits.
 Emulation is paced from libmGBA's GBA timing (59.728 fps), independently of a
 60 Hz or 120 Hz display refresh rate.
 
@@ -115,7 +119,7 @@ The macOS **State** menu provides **Quick Save State**, **Quick Load State**,
 that checkpoint. Library launches supply each game's isolated checkpoint
 automatically.
 
-On the `mouse` branch, pointer motion over a validated tactical map moves FE8's
+Pointer motion over a validated tactical map moves FE8's
 map cursor. Left-click moves to the latched tile and presses A; right-click
 presses B. Pointer coordinates are converted through the actual window,
 high-DPI drawable, letterboxed 480×320 canvas, and current extended-map
@@ -195,7 +199,9 @@ interactive checkpoint is also saved for repeatable tests.
 `fe8_profile.c` recognizes and validates FE8 memory. `extended_map_renderer.c`
 decodes the full logical metatile map, tile flips, 4bpp graphics, palettes, and
 fog. `extended_unit_renderer.c` reconstructs standing sprites from validated
-unit handles, OBJ VRAM, and OBJ palettes. `frame_alignment.c` absorbs the
+unit handles, OBJ VRAM, and OBJ palettes. `display_scaling.c` converts smooth
+wheel zoom into a dynamic host-canvas size while preserving the pointer's map
+anchor. `frame_alignment.c` absorbs the
 one-frame difference between FE8's camera state and its PPU scroll during a
 pan, keeping the native frame locked to the reconstructed terrain. `main.c`
 handles the host camera, HUD composition, frame pacing, and keyboard-to-GBA input. On macOS,

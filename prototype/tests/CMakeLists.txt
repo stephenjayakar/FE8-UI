@@ -40,6 +40,11 @@ add_executable(test_viewport_controller
     ../src/extended_map_renderer.c)
 target_include_directories(test_viewport_controller PRIVATE ../src)
 
+add_executable(test_display_scaling
+    test_display_scaling.c
+    ../src/display_scaling.c)
+target_include_directories(test_display_scaling PRIVATE ../src)
+
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
     set(FE8_TEST_SDL_TARGET SDL2::SDL2)
@@ -68,5 +73,6 @@ add_test(NAME frame_alignment COMMAND test_frame_alignment)
 add_test(NAME mouse_controller COMMAND test_mouse_controller)
 add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
 add_test(NAME viewport_controller COMMAND test_viewport_controller)
+add_test(NAME display_scaling COMMAND test_display_scaling)
 add_test(NAME host_settings COMMAND test_host_settings)
 add_test(NAME host_cursor COMMAND test_host_cursor)
