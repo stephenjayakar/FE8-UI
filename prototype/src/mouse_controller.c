@@ -15,12 +15,9 @@ void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm) 
     mouse->target_x = x;
     mouse->target_y = y;
     mouse->confirm = confirm;
-    mouse->teleport_requested = 0;
-}
-
-void fe8_mouse_teleport_to(Fe8MouseController *mouse, int x, int y, int confirm) {
-    fe8_mouse_set_target(mouse, x, y, confirm);
-    mouse->teleport_requested = 1;
+    /* Keep an already-requested fallback armed while motion updates its
+     * destination. Otherwise a steady stream of pointer events can cancel the
+     * fallback every frame and leave the visible cursor behind the mouse. */
 }
 
 void fe8_mouse_cancel(Fe8MouseController *mouse) {
@@ -50,8 +47,6 @@ uint32_t fe8_mouse_update(
         return 0;
     }
     if (!mouse->active)
-        return 0;
-    if (mouse->teleport_requested)
         return 0;
     if (snapshot->input_lock != 0) {
         if (++mouse->blocked_frames > 300) {

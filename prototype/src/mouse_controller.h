@@ -22,7 +22,6 @@ typedef struct Fe8MouseController {
 } Fe8MouseController;
 
 void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm);
-void fe8_mouse_teleport_to(Fe8MouseController *mouse, int x, int y, int confirm);
 void fe8_mouse_cancel(Fe8MouseController *mouse);
 uint32_t fe8_mouse_update(
     Fe8MouseController *mouse, const Fe8Snapshot *snapshot, int snapshot_valid);
