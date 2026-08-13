@@ -1,4 +1,22 @@
-# Fire Emblem: The Sacred Stones
+# FE8 Extended Frontend and Sacred Stones Decompilation
+
+> [!IMPORTANT]
+> This repository is a derivative fork of the
+> [FireEmblemUniverse/fireemblem8u](https://github.com/FireEmblemUniverse/fireemblem8u)
+> decompilation of *Fire Emblem: The Sacred Stones* (U). It retains that
+> project's reconstructed game source and history, and adds the native
+> libmGBA-based extended frontend in [`prototype/`](prototype/README.md).
+> The frontend is intended for legally obtained ROMs and compatible ROM hacks;
+> no Nintendo game data is distributed with this repository.
+
+## Extended frontend
+
+The frontend adds a macOS game library, isolated saves and save states,
+resizable extended-map rendering, mouse controls, shaders, smooth zoom, and
+configurable hotkeys while libmGBA runs the original game or compatible ROM
+hacks. See the [frontend README](prototype/README.md) for building and usage.
+
+## Original decompilation project
 
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 
