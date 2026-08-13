@@ -46,6 +46,7 @@ endif()
 add_executable(fe8-mgba-sdl
     src/main.c
     src/fe8_profile.c
+    src/frame_alignment.c
     src/extended_map_renderer.c
     src/extended_unit_renderer.c
     src/mouse_controller.c

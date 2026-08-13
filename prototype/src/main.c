@@ -11,6 +11,7 @@
 #include "extended_map_renderer.h"
 #include "extended_unit_renderer.h"
 #include "fe8_profile.h"
+#include "frame_alignment.h"
 #include "host_audio.h"
 #include "host_cursor.h"
 #include "host_settings.h"
@@ -161,29 +162,18 @@ static uint8_t core_read8(void *context, uint32_t address) {
 }
 
 static void composite_framebuffer(
-    const mColor *source, size_t source_stride, Fe8HostPixel *canvas,
+    const Fe8HostPixel *source, size_t source_stride, Fe8HostPixel *canvas,
     int destination_x, int destination_y) {
     unsigned y;
     for (y = 0; y < GBA_HEIGHT; ++y) {
         unsigned x;
-        const mColor *source_row = source + y * source_stride;
+        const Fe8HostPixel *source_row = source + y * source_stride;
         for (x = 0; x < GBA_WIDTH; ++x) {
             int canvas_x = destination_x + (int)x;
             int canvas_y = destination_y + (int)y;
-            mColor pixel = source_row[x];
-#ifdef COLOR_16_BIT
-            uint32_t red = M_R8(pixel);
-            uint32_t green = M_G8(pixel);
-            uint32_t blue = M_B8(pixel);
-#else
-            uint32_t red = pixel & 0xFF;
-            uint32_t green = (pixel >> 8) & 0xFF;
-            uint32_t blue = (pixel >> 16) & 0xFF;
-#endif
             if (canvas_x >= 0 && canvas_y >= 0 &&
                     canvas_x < CANVAS_WIDTH && canvas_y < CANVAS_HEIGHT)
-                canvas[(size_t)canvas_y * CANVAS_WIDTH + canvas_x] =
-                    UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;
+                canvas[(size_t)canvas_y * CANVAS_WIDTH + canvas_x] = source_row[x];
         }
     }
 }
@@ -201,31 +191,15 @@ static Fe8HostPixel host_pixel_from_mcolor(mColor pixel) {
     return UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;
 }
 
-static unsigned terrain_frame_match_percent(
-    const mColor *frame, size_t stride, const Fe8HostPixel *canvas,
-    Fe8ExtendedViewport viewport) {
-    unsigned matches = 0;
-    unsigned samples = 0;
+static void convert_framebuffer(
+    const mColor *source, size_t source_stride, Fe8HostPixel *destination) {
     unsigned y;
-    /* Sample every other pixel. UI and sprites legitimately differ, but a
-     * compatible terrain renderer still matches a substantial part of the
-     * canonical background exactly. */
-    for (y = 0; y < GBA_HEIGHT; y += 2) {
+    for (y = 0; y < GBA_HEIGHT; ++y) {
         unsigned x;
-        for (x = 0; x < GBA_WIDTH; x += 2) {
-            Fe8HostPixel expected = host_pixel_from_mcolor(frame[y * stride + x]);
-            int canvas_x = viewport.gba_x + (int)x;
-            int canvas_y = viewport.gba_y + (int)y;
-            Fe8HostPixel rendered;
-            if (canvas_x < 0 || canvas_y < 0 ||
-                    canvas_x >= CANVAS_WIDTH || canvas_y >= CANVAS_HEIGHT)
-                continue;
-            rendered = canvas[(size_t)canvas_y * CANVAS_WIDTH + canvas_x];
-            matches += expected == rendered;
-            ++samples;
-        }
+        for (x = 0; x < GBA_WIDTH; ++x)
+            destination[(size_t)y * GBA_WIDTH + x] =
+                host_pixel_from_mcolor(source[(size_t)y * source_stride + x]);
     }
-    return samples ? matches * 100 / samples : 0;
 }
 
 static int snapshot_path_mode(const Fe8Snapshot *snapshot) {
@@ -427,6 +401,7 @@ int main(int argc, char **argv) {
     Fe8MouseController mouse = {0};
     struct pan_controller pan = {0};
     mColor *video_buffer = NULL;
+    Fe8HostPixel *host_frame = NULL;
     Fe8HostPixel *canvas = NULL;
     uint32_t keyboard_keys = 0;
     uint32_t hotkeys_down = 0;
@@ -504,8 +479,9 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
     video_buffer = calloc((size_t)GBA_HEIGHT * video_stride, sizeof(*video_buffer));
+    host_frame = malloc((size_t)GBA_WIDTH * GBA_HEIGHT * sizeof(*host_frame));
     canvas = malloc((size_t)CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(*canvas));
-    if (!video_buffer || !canvas)
+    if (!video_buffer || !host_frame || !canvas)
         goto cleanup;
     core->setVideoBuffer(core, video_buffer, video_stride);
     if (options.save_path && !load_save(core, options.save_path))
@@ -832,11 +808,13 @@ int main(int argc, char **argv) {
             fe8_mouse_update(&mouse, &snapshot,
                 settings.mouse_enabled && snapshot_valid && visual_profile_active));
         core->runFrame(core);
+        convert_framebuffer(video_buffer, video_stride, host_frame);
         if (audio_initialized)
             fe8_host_audio_drain(&audio);
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         extension_active = 0;
         rendered_units = 0;
+        Fe8FramePlacement frame_placement = {GBA_X, GBA_Y, 0};
         if (snapshot_valid) {
             fe8_viewport_clamp_pan(
                 &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
@@ -852,12 +830,15 @@ int main(int argc, char **argv) {
             extension_active = fe8_render_extended_terrain(
                 &render_memory, &map_state, viewport, canvas, CANVAS_WIDTH);
             if (extension_active) {
-                unsigned match = terrain_frame_match_percent(
-                    video_buffer, video_stride, canvas, viewport);
-                int frame_compatible = match >= 15;
                 int camera_moving = previous_camera_valid &&
                     (snapshot.camera_x != previous_camera_x ||
                      snapshot.camera_y != previous_camera_y);
+                frame_placement = fe8_align_frame_to_terrain(
+                    host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
+                    canvas, CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH,
+                    viewport.gba_x, viewport.gba_y, camera_moving ? 8 : 0);
+                unsigned match = frame_placement.match_percent;
+                int frame_compatible = match >= 15;
                 int visual_changed = 0;
                 if (frame_compatible) {
                     ++visual_good_frames;
@@ -909,13 +890,13 @@ int main(int argc, char **argv) {
         }
         /* The emulated frame is authoritative for all UI, overlays, moving
          * sprites, and selected units. While the extended world is active it
-         * must use the exact same movable origin as terrain, pointer mapping,
-         * and host-rendered units; a fixed center creates seams and an
-         * apparent one-tile mouse offset whenever the map is centered or
+         * follows the movable viewport, corrected during camera motion for
+         * FE8's one-frame PPU scroll delay. A fixed center creates seams and
+         * an apparent one-tile mouse offset whenever the map is centered or
          * panned. Outside a validated map, retain the normal centered frame. */
-        composite_framebuffer(video_buffer, video_stride, canvas,
-            extension_active ? viewport.gba_x : GBA_X,
-            extension_active ? viewport.gba_y : GBA_Y);
+        composite_framebuffer(host_frame, GBA_WIDTH, canvas,
+            extension_active ? frame_placement.x : GBA_X,
+            extension_active ? frame_placement.y : GBA_Y);
         if (settings.mouse_enabled && host_pointer_visible)
             fe8_host_draw_mouse_cursor(canvas, CANVAS_WIDTH,
                 CANVAS_WIDTH, CANVAS_HEIGHT,
@@ -969,6 +950,7 @@ cleanup:
     if (logger.d.filter)
         mStandardLoggerDeinit(&logger);
     free(canvas);
+    free(host_frame);
     free(video_buffer);
     return exit_code;
 }

@@ -19,6 +19,11 @@ add_executable(test_extended_unit_renderer
     ../src/extended_unit_renderer.c)
 target_include_directories(test_extended_unit_renderer PRIVATE ../src)
 
+add_executable(test_frame_alignment
+    test_frame_alignment.c
+    ../src/frame_alignment.c)
+target_include_directories(test_frame_alignment PRIVATE ../src)
+
 add_executable(test_mouse_controller
     test_mouse_controller.c
     ../src/mouse_controller.c)
@@ -59,6 +64,7 @@ enable_testing()
 add_test(NAME fe8_profile COMMAND test_fe8_profile)
 add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
 add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)
+add_test(NAME frame_alignment COMMAND test_frame_alignment)
 add_test(NAME mouse_controller COMMAND test_mouse_controller)
 add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
 add_test(NAME viewport_controller COMMAND test_viewport_controller)

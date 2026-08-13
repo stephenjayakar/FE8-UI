@@ -195,8 +195,10 @@ interactive checkpoint is also saved for repeatable tests.
 `fe8_profile.c` recognizes and validates FE8 memory. `extended_map_renderer.c`
 decodes the full logical metatile map, tile flips, 4bpp graphics, palettes, and
 fog. `extended_unit_renderer.c` reconstructs standing sprites from validated
-unit handles, OBJ VRAM, and OBJ palettes. `main.c` handles the host camera, HUD
-composition, frame pacing, and keyboard-to-GBA input. On macOS,
+unit handles, OBJ VRAM, and OBJ palettes. `frame_alignment.c` absorbs the
+one-frame difference between FE8's camera state and its PPU scroll during a
+pan, keeping the native frame locked to the reconstructed terrain. `main.c`
+handles the host camera, HUD composition, frame pacing, and keyboard-to-GBA input. On macOS,
 `host_video_gl.c` presents that canvas using mGBA's `mGLES2Context` and shader
 pass implementation; other platforms retain the SDL renderer fallback. The
 modules communicate through callback-based byte readers rather than private
