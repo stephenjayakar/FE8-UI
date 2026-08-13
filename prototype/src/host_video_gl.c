@@ -182,6 +182,14 @@ int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
         backend->renderer.d.contextResized(&backend->renderer.d,
             (unsigned)width, (unsigned)height, 0, 0);
     }
+    /* mGLES2ContextClear clears its offscreen render target, not framebuffer
+     * zero. Clear the macOS drawable as well so pixels from the old viewport
+     * cannot survive in newly exposed letterbox bars after a resize. glClear
+     * covers the drawable regardless of the current content viewport. */
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(0.f, 0.f, 0.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
     backend->renderer.d.clear(&backend->renderer.d);
     backend->renderer.d.setImage(&backend->renderer.d, VIDEO_LAYER_IMAGE, pixels);
     backend->renderer.d.drawFrame(&backend->renderer.d);
