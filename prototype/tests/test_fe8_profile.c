@@ -46,6 +46,14 @@ static void put_rom(uint32_t address, const char *text) {
         rom[address++ - ROM_BASE] = (uint8_t)*text++;
 }
 
+static void put_rom32(uint32_t address, uint32_t value) {
+    assert(address >= ROM_BASE && address - ROM_BASE + 4 <= ROM_SIZE);
+    rom[address - ROM_BASE] = (uint8_t)value;
+    rom[address + 1 - ROM_BASE] = (uint8_t)(value >> 8);
+    rom[address + 2 - ROM_BASE] = (uint8_t)(value >> 16);
+    rom[address + 3 - ROM_BASE] = (uint8_t)(value >> 24);
+}
+
 static void setup_header(void) {
     memset(rom, 0, sizeof(rom));
     put_rom(UINT32_C(0x080000A0), "FIREEMBLEM2E");
@@ -112,7 +120,9 @@ static void setup_state(void) {
     put32(profile->blue_units + 0x3C, UINT32_C(0x02031000));
 
     /* Unit 0x81 is an enemy; faction values must not be swapped with NPCs. */
-    put32(profile->red_units, UINT32_C(0x08000000));
+    put32(profile->red_units, UINT32_C(0x08000040));
+    put32(profile->red_units + 4, UINT32_C(0x08000070));
+    put_rom32(UINT32_C(0x08000040) + 0x28, UINT32_C(1) << 15);
     put8(profile->red_units + 0x0B, 0x81);
     put32(profile->red_units + 0x0C, 0);
     put8(profile->red_units + 0x10, 3);
@@ -152,6 +162,7 @@ static void test_snapshot(void) {
     assert(snapshot.visible_units[0].map_sprite_handle == UINT32_C(0x02031000));
     assert(snapshot.visible_units[1].unit_id == 0x81);
     assert(snapshot.visible_units[1].faction == 0x80);
+    assert((snapshot.visible_units[1].attributes & (UINT32_C(1) << 15)) != 0);
 }
 
 static void test_rejects_bad_rows_and_dimensions(void) {

@@ -6,6 +6,9 @@ enum {
     OBJ_TILE_BYTES = 32,
     OBJ_TILE_ROW_STRIDE = 32,
     MAP_TILE_SIZE = 16,
+    UNIT_STATE_RESCUING = 1 << 4,
+    CHARACTER_ATTRIBUTE_BOSS = 1 << 15,
+    BOSS_ICON_TILE = 0x10,
 };
 
 static uint16_t read16(const Fe8MemoryView *memory, uint32_t address) {
@@ -128,6 +131,23 @@ unsigned fe8_render_extended_units(
             left += (animation_frame >> 1) & 2;
         draw_obj(memory, pixels, stride_pixels, viewport.width, viewport.height,
             left, top, width, height, oam2 & 0x3FF, (oam2 >> 12) & 0xF);
+        /* FE8's PutUnitSpriteIconsOam draws the boss marker as a separate
+         * blinking 8x8 OBJ at tile-relative (+9, +7), using OBJ tile 0x10
+         * and palette zero. The native framebuffer supplies it inside the
+         * GBA viewport; reconstruct it here for units in the extended area. */
+        if (unit->faction != 0 &&
+                (unit->attributes & CHARACTER_ATTRIBUTE_BOSS) != 0 &&
+                (unit->state & UNIT_STATE_RESCUING) == 0 &&
+                animation_frame % 32 < 20) {
+            int tile_left = unit->x * MAP_TILE_SIZE - snapshot->camera_x +
+                viewport.gba_x;
+            int tile_top = unit->y * MAP_TILE_SIZE - snapshot->camera_y +
+                viewport.gba_y;
+            draw_obj(memory, pixels, stride_pixels,
+                viewport.width, viewport.height,
+                tile_left + 9, tile_top + 7, 8, 8,
+                BOSS_ICON_TILE, 0);
+        }
         ++rendered;
     }
     draw_cursor(pixels, stride_pixels, viewport.width, viewport.height,

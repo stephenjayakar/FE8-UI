@@ -67,6 +67,7 @@ typedef struct Fe8VisibleUnit {
     int8_t x;
     int8_t y;
     uint32_t state;
+    uint32_t attributes;
     uint32_t map_sprite_handle;
 } Fe8VisibleUnit;
 

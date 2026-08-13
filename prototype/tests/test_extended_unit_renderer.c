@@ -43,7 +43,7 @@ int main(void) {
     snapshot.cursor_display_y = 0;
     snapshot.visible_unit_count = 1;
     snapshot.visible_units[0] = (Fe8VisibleUnit){
-        0x81, 0x80, 1, 1, 0, UINT32_C(0x02000100)};
+        0x81, 0x80, 1, 1, 0, 0, UINT32_C(0x02000100)};
     put16(ewram, 0x108, (uint16_t)(0x80 | (13 << 12)));
     ewram[0x10B] = 0;
     for (i = 0; i < sizeof(tiles) / sizeof(tiles[0]); ++i)
@@ -53,6 +53,19 @@ int main(void) {
         output, 64, 0) == 1);
     assert(output[24 * 64 + 24] == UINT32_C(0xFF00FF00));
     assert(output[0] != 0); /* Host cursor is visible independently of OAM. */
+
+    /* Enemy bosses get FE8's blinking 8x8 OBJ marker in extended space. */
+    memset(output, 0, sizeof(output));
+    snapshot.visible_units[0].attributes = UINT32_C(1) << 15;
+    memset(vram + 0x10000 + 0x10 * 32, 0x22, 32);
+    put16(palette, 0x200 + 2 * 2, 0x001F);
+    assert(fe8_render_extended_units(&memory, &snapshot, viewport,
+        output, 64, 0) == 1);
+    assert(output[23 * 64 + 25] == UINT32_C(0xFF0000FF));
+    memset(output, 0, sizeof(output));
+    assert(fe8_render_extended_units(&memory, &snapshot, viewport,
+        output, 64, 20) == 1);
+    assert(output[23 * 64 + 25] == UINT32_C(0xFF00FF00));
 
     /* The extended cursor follows FE8's animated pixel position, not the
      * logical tile that advances before the visible sprite arrives. */
