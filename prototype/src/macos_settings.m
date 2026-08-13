@@ -6,6 +6,7 @@
 static NSString *const kAudioKey = @"FE8AudioEnabled";
 static NSString *const kVSyncKey = @"FE8VSyncEnabled";
 static NSString *const kExtensionsKey = @"FE8ExtensionsEnabled";
+static NSString *const kMouseKey = @"FE8MouseEnabled";
 static NSString *const kShaderKey = @"FE8ShaderMode";
 
 static NSString *bindingKey(enum Fe8HostButton button) {
@@ -152,11 +153,13 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     case 0: self.settings->audio_enabled = enabled; break;
     case 1: self.settings->vsync_enabled = enabled; break;
     case 2: self.settings->extensions_enabled = enabled; break;
+    case 3: self.settings->mouse_enabled = enabled; break;
     default: return;
     }
     ++self.settings->revision;
     NSString *key = sender.tag == 0 ? kAudioKey :
-        (sender.tag == 1 ? kVSyncKey : kExtensionsKey);
+        (sender.tag == 1 ? kVSyncKey :
+        (sender.tag == 2 ? kExtensionsKey : kMouseKey));
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:key];
 }
 
@@ -184,7 +187,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.quickStatePath = quickStatePath;
     self.bindingButtons = [NSMutableArray array];
     self.window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 430, 560)
+        initWithContentRect:NSMakeRect(0, 0, 430, 590)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
         backing:NSBackingStoreBuffered defer:NO];
     self.window.title = @"FE8 Frontend Settings";
@@ -193,15 +196,17 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 
     NSView *content = self.window.contentView;
     NSArray<NSString *> *optionNames = @[
-        @"Enable audio", @"Synchronize presentation (VSync)", @"Enable extended renderer"
+        @"Enable audio", @"Synchronize presentation (VSync)",
+        @"Enable extended renderer", @"Enable mouse controls"
     ];
     int optionValues[] = {
-        settings->audio_enabled, settings->vsync_enabled, settings->extensions_enabled
+        settings->audio_enabled, settings->vsync_enabled,
+        settings->extensions_enabled, settings->mouse_enabled
     };
     NSInteger i;
     for (i = 0; i < (NSInteger)optionNames.count; ++i) {
         NSButton *check = [[NSButton alloc]
-            initWithFrame:NSMakeRect(24, 515 - i * 30, 380, 24)];
+            initWithFrame:NSMakeRect(24, 545 - i * 30, 380, 24)];
         check.buttonType = NSButtonTypeSwitch;
         check.title = optionNames[i];
         check.state = optionValues[i] ? NSControlStateValueOn : NSControlStateValueOff;
@@ -333,11 +338,13 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
             kAudioKey: @YES,
             kVSyncKey: @YES,
             kExtensionsKey: @YES,
+            kMouseKey: @YES,
             kShaderKey: @(FE8_HOST_SHADER_OFF),
         }];
         settings->audio_enabled = [defaults boolForKey:kAudioKey];
         settings->vsync_enabled = [defaults boolForKey:kVSyncKey];
         settings->extensions_enabled = [defaults boolForKey:kExtensionsKey];
+        settings->mouse_enabled = [defaults boolForKey:kMouseKey];
         NSInteger shader = [defaults integerForKey:kShaderKey];
         settings->shader = shader >= 0 && shader < FE8_HOST_SHADER_COUNT ?
             (enum Fe8HostShader)shader : FE8_HOST_SHADER_OFF;

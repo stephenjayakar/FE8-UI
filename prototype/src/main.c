@@ -12,6 +12,7 @@
 #include "extended_unit_renderer.h"
 #include "fe8_profile.h"
 #include "host_audio.h"
+#include "host_cursor.h"
 #include "host_settings.h"
 #include "host_video.h"
 #include "macos_library.h"
@@ -419,6 +420,7 @@ int main(int argc, char **argv) {
     uint64_t frame_period = 0;
     uint64_t performance_frequency = 0;
     unsigned settings_revision = 0;
+    int applied_mouse_enabled = 0;
     int visual_profile_active = 0;
     unsigned visual_good_frames = 0;
     unsigned visual_bad_frames = 0;
@@ -429,6 +431,10 @@ int main(int argc, char **argv) {
     int pointer_canvas_valid = 0;
     int pointer_canvas_x = 0;
     int pointer_canvas_y = 0;
+    int host_pointer_visible = 0;
+    int host_pointer_canvas_x = 0;
+    int host_pointer_canvas_y = 0;
+    int system_cursor_hidden = 0;
     int16_t previous_camera_x = 0;
     int16_t previous_camera_y = 0;
     int exit_code = EXIT_FAILURE;
@@ -497,6 +503,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Video setup failed: %s\n", SDL_GetError());
         goto cleanup;
     }
+    applied_mouse_enabled = settings.mouse_enabled;
     if (!fe8_host_video_set_shader(&video, settings.shader)) {
         fprintf(stderr, "Unable to enable shader '%s'; using Off\n",
             fe8_host_shader_name(settings.shader));
@@ -523,6 +530,18 @@ int main(int argc, char **argv) {
         SDL_Event event;
         if (settings.revision != settings_revision) {
             keyboard_keys = 0;
+            if (settings.mouse_enabled != applied_mouse_enabled) {
+                fe8_mouse_cancel(&mouse);
+                pan.dragging = 0;
+                pointer_canvas_valid = 0;
+                pointer_tile_valid = 0;
+                host_pointer_visible = 0;
+                if (!settings.mouse_enabled && system_cursor_hidden) {
+                    SDL_ShowCursor(SDL_ENABLE);
+                    system_cursor_hidden = 0;
+                }
+                applied_mouse_enabled = settings.mouse_enabled;
+            }
             if (audio_initialized)
                 fe8_host_audio_set_enabled(&audio, settings.audio_enabled);
             if (!fe8_host_video_set_vsync(&video, settings.vsync_enabled))
@@ -537,10 +556,11 @@ int main(int argc, char **argv) {
             previous_camera_valid = 0;
             settings_revision = settings.revision;
             frame_deadline = SDL_GetPerformanceCounter();
-            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s shader=%s\n",
+            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s\n",
                 settings.audio_enabled ? "on" : "off",
                 video.vsync_active ? "on" : "off",
                 settings.extensions_enabled ? "on" : "off",
+                settings.mouse_enabled ? "on" : "off",
                 fe8_host_shader_name(video.shader));
         }
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
@@ -551,7 +571,7 @@ int main(int argc, char **argv) {
             map_state.camera_y = snapshot.camera_y;
             fe8_viewport_clamp_pan(
                 &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
-            if (pointer_canvas_valid && !pan.dragging &&
+            if (settings.mouse_enabled && pointer_canvas_valid && !pan.dragging &&
                     visual_profile_active && snapshot.input_lock == 0 &&
                     !mouse.confirm) {
                 int map_x;
@@ -591,11 +611,47 @@ int main(int argc, char **argv) {
             large_map_ready_frames = 0;
         }
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_MOUSEMOTION) {
+                if (settings.mouse_enabled && fe8_host_video_window_to_canvas(
+                        &video, event.motion.x, event.motion.y,
+                        &host_pointer_canvas_x, &host_pointer_canvas_y)) {
+                    host_pointer_visible = 1;
+                    if (!system_cursor_hidden) {
+                        SDL_ShowCursor(SDL_DISABLE);
+                        system_cursor_hidden = 1;
+                    }
+                } else {
+                    host_pointer_visible = 0;
+                    if (system_cursor_hidden) {
+                        SDL_ShowCursor(SDL_ENABLE);
+                        system_cursor_hidden = 0;
+                    }
+                }
+            } else if (event.type == SDL_WINDOWEVENT &&
+                    event.window.event == SDL_WINDOWEVENT_LEAVE) {
+                host_pointer_visible = 0;
+                if (system_cursor_hidden) {
+                    SDL_ShowCursor(SDL_ENABLE);
+                    system_cursor_hidden = 0;
+                }
+            } else if (event.type == SDL_WINDOWEVENT &&
+                    event.window.event == SDL_WINDOWEVENT_ENTER &&
+                    settings.mouse_enabled) {
+                int window_x;
+                int window_y;
+                SDL_GetMouseState(&window_x, &window_y);
+                if (fe8_host_video_window_to_canvas(&video, window_x, window_y,
+                        &host_pointer_canvas_x, &host_pointer_canvas_y)) {
+                    host_pointer_visible = 1;
+                    SDL_ShowCursor(SDL_DISABLE);
+                    system_cursor_hidden = 1;
+                }
+            }
             if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
                     event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)) {
                 running = 0;
             } else if (event.type == SDL_MOUSEBUTTONDOWN &&
-                    event.button.button == SDL_BUTTON_RIGHT) {
+                    event.button.button == SDL_BUTTON_RIGHT && settings.mouse_enabled) {
                 fe8_mouse_cancel(&mouse);
                 pointer_tile_valid = 0;
                 pointer_canvas_valid = 0;
@@ -603,7 +659,7 @@ int main(int argc, char **argv) {
                 mouse.press_frames = 2;
                 fprintf(stderr, "Mouse right-click: B queued\n");
             } else if (event.type == SDL_MOUSEBUTTONDOWN &&
-                    event.button.button == SDL_BUTTON_LEFT) {
+                    event.button.button == SDL_BUTTON_LEFT && settings.mouse_enabled) {
                 int canvas_x;
                 int canvas_y;
                 int shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
@@ -647,7 +703,8 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "Mouse left-click: A queued for native UI\n");
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP &&
-                    event.button.button == SDL_BUTTON_LEFT && pan.dragging) {
+                    event.button.button == SDL_BUTTON_LEFT && pan.dragging &&
+                    settings.mouse_enabled) {
                 int canvas_x;
                 int canvas_y;
                 if (!pan.moved && fe8_host_video_window_to_canvas(&video,
@@ -667,7 +724,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Mouse pan: map origin=%d,%d\n",
                     snapshot.camera_x - viewport.gba_x,
                     snapshot.camera_y - viewport.gba_y);
-            } else if (event.type == SDL_MOUSEMOTION && snapshot_valid &&
+            } else if (event.type == SDL_MOUSEMOTION && settings.mouse_enabled &&
+                    snapshot_valid &&
                     visual_profile_active && snapshot.input_lock == 0) {
                 int canvas_x;
                 int canvas_y;
@@ -728,7 +786,7 @@ int main(int argc, char **argv) {
         core->setKeys(core, keyboard_keys |
             (options.auto_continue && !large_map_ready ? scripted_continue_keys(frame_count) : 0) |
             fe8_mouse_update(&mouse, &snapshot,
-                snapshot_valid && visual_profile_active));
+                settings.mouse_enabled && snapshot_valid && visual_profile_active));
         core->runFrame(core);
         if (audio_initialized)
             fe8_host_audio_drain(&audio);
@@ -814,6 +872,10 @@ int main(int argc, char **argv) {
         composite_framebuffer(video_buffer, video_stride, canvas,
             extension_active ? viewport.gba_x : GBA_X,
             extension_active ? viewport.gba_y : GBA_Y);
+        if (settings.mouse_enabled && host_pointer_visible)
+            fe8_host_draw_mouse_cursor(canvas, CANVAS_WIDTH,
+                CANVAS_WIDTH, CANVAS_HEIGHT,
+                host_pointer_canvas_x, host_pointer_canvas_y);
         if (!fe8_host_video_present(&video, canvas)) {
             fprintf(stderr, "Video presentation failed: %s\n", SDL_GetError());
             running = 0;
@@ -850,6 +912,8 @@ int main(int argc, char **argv) {
 cleanup:
     if (audio_initialized)
         fe8_host_audio_deinit(&audio);
+    if (system_cursor_hidden)
+        SDL_ShowCursor(SDL_ENABLE);
     fe8_host_video_deinit(&video);
     if (sdl_initialized)
         SDL_Quit();

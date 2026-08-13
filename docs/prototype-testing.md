@@ -95,6 +95,13 @@ normal FE8 cursor steps and wait for both the logical cursor and its displayed
 animation to arrive. If a step is repeatedly ignored, the path must cancel and
 wait for fresh pointer motion; the frontend must not write emulated cursor state.
 
+In **Settings → Settings…**, verify **Enable mouse controls** defaults on. The
+game canvas should replace the macOS arrow with the large blue-and-gold pointer,
+while the Settings window itself retains the normal system pointer. Turning the
+option off must immediately restore the system pointer, cancel pending movement,
+and make map/UI clicks inert; turning it back on must restore mouse behavior and
+the themed pointer. Relaunch once to verify the global preference persists.
+
 To time the real frame limiter while capturing, add `--realtime`. A 120-frame
 capture should take approximately 2.0 seconds at the reported 59.728 fps.
 

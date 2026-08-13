@@ -8,6 +8,7 @@ int main(void) {
     assert(settings.audio_enabled);
     assert(settings.vsync_enabled);
     assert(settings.extensions_enabled);
+    assert(settings.mouse_enabled);
     assert(settings.shader == FE8_HOST_SHADER_OFF);
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_Z) ==
         (UINT32_C(1) << FE8_HOST_A));

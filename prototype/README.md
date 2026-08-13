@@ -122,6 +122,12 @@ the same movable viewport origin, preventing cursor offsets and edge seams.
 Mouse map input is disabled during dialogue and cutscenes, while left/right
 click continue to act as A/B for native UI.
 
+Mouse controls are enabled by default and can be toggled globally under
+**Settings → Settings… → Enable mouse controls**. When enabled, the game canvas
+uses a large blue-and-gold tactician pointer with an exact tip hotspot. Disabling
+the option immediately cancels pending mouse input and restores the normal macOS
+pointer; the preference also applies to games launched later from the library.
+
 Hold Shift and drag with the left button to pan the extended map. A Shift-click
 without dragging recenters the host viewport on that tile. Panning changes only
 the host view and does not mutate FE8's camera.

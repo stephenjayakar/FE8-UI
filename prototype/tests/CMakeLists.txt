@@ -50,6 +50,11 @@ add_executable(test_host_settings
 target_include_directories(test_host_settings PRIVATE ../src)
 target_link_libraries(test_host_settings PRIVATE ${FE8_TEST_SDL_TARGET})
 
+add_executable(test_host_cursor
+    test_host_cursor.c
+    ../src/host_cursor.c)
+target_include_directories(test_host_cursor PRIVATE ../src)
+
 enable_testing()
 add_test(NAME fe8_profile COMMAND test_fe8_profile)
 add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
@@ -58,3 +63,4 @@ add_test(NAME mouse_controller COMMAND test_mouse_controller)
 add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
 add_test(NAME viewport_controller COMMAND test_viewport_controller)
 add_test(NAME host_settings COMMAND test_host_settings)
+add_test(NAME host_cursor COMMAND test_host_cursor)
