@@ -1,4 +1,5 @@
 #include "host_video.h"
+#include "pointer_mapping.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,6 +63,22 @@ int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
     SDL_RenderCopy(backend->renderer, backend->texture, NULL, NULL);
     SDL_RenderPresent(backend->renderer);
     return 1;
+}
+
+int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
+    int window_x, int window_y, int *canvas_x, int *canvas_y) {
+    const Fe8HostVideoSdl *backend = video ? video->backend : NULL;
+    int window_width;
+    int window_height;
+    int output_width;
+    int output_height;
+    if (!backend || !backend->renderer)
+        return 0;
+    SDL_GetWindowSize(video->window, &window_width, &window_height);
+    SDL_GetRendererOutputSize(backend->renderer, &output_width, &output_height);
+    return fe8_pointer_window_to_canvas(window_width, window_height,
+        output_width, output_height, video->canvas_width, video->canvas_height,
+        window_x, window_y, canvas_x, canvas_y);
 }
 
 void fe8_host_video_log_status(const Fe8HostVideo *video) {

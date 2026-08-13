@@ -40,6 +40,7 @@ typedef struct Fe8Profile {
     uint32_t blue_units;
     uint32_t red_units;
     uint32_t green_units;
+    uint32_t active_unit;
 } Fe8Profile;
 
 enum {
@@ -78,6 +79,12 @@ typedef struct Fe8Snapshot {
     int16_t camera_max_y;
     uint8_t cursor_x;
     uint8_t cursor_y;
+    int16_t cursor_target_x;
+    int16_t cursor_target_y;
+    int16_t cursor_display_x;
+    int16_t cursor_display_y;
+    uint32_t active_unit_address;
+    uint8_t game_state_bits;
     uint8_t input_lock;
     uint8_t chapter;
     uint8_t phase;

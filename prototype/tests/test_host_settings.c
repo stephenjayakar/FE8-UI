@@ -8,6 +8,7 @@ int main(void) {
     assert(settings.audio_enabled);
     assert(settings.vsync_enabled);
     assert(settings.extensions_enabled);
+    assert(settings.mouse_enabled);
     assert(settings.shader == FE8_HOST_SHADER_OFF);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_SPEED_UP] == SDL_SCANCODE_SPACE);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_SAVE] == SDL_SCANCODE_F5);

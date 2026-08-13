@@ -115,8 +115,31 @@ The macOS **State** menu provides **Quick Save State**, **Quick Load State**,
 that checkpoint. Library launches supply each game's isolated checkpoint
 automatically.
 
-This branch is intentionally renderer-only. The experimental mouse controls
-and independent host panning are preserved on the Git branch `mouse`.
+On the `mouse` branch, pointer motion over a validated tactical map moves FE8's
+map cursor. Left-click moves to the latched tile and presses A; right-click
+presses B. Pointer coordinates are converted through the actual window,
+high-DPI drawable, letterboxed 480×320 canvas, and current extended-map
+viewport, so Retina scaling does not alter tile selection. Cursor movement uses
+FE8's normal D-pad path while holding B for the game's native fast-cursor mode,
+so its camera and cursor animation stay synchronized without the sluggish
+default travel speed. B is released before an A confirmation, and right-click
+forces a fresh B press so cancellation remains reliable. If FE8 rejects the
+same step repeatedly, mouse pathing cancels safely and waits for fresh pointer
+motion; it never writes or teleports cursor state. The
+authoritative mGBA frame, host cursor, terrain, units, and hit-testing all share
+the same movable viewport origin, preventing cursor offsets and edge seams.
+Mouse map input is disabled during dialogue and cutscenes, while left/right
+click continue to act as A/B for native UI.
+
+Mouse controls are enabled by default and can be toggled globally under
+**Settings → Settings… → Enable mouse controls**. When enabled, the game canvas
+uses a large blue-and-gold tactician pointer with an exact tip hotspot. Disabling
+the option immediately cancels pending mouse input and restores the normal macOS
+pointer; the preference also applies to games launched later from the library.
+
+Hold Shift and drag with the left button to pan the extended map. A Shift-click
+without dragging recenters the host viewport on that tile. Panning changes only
+the host view and does not mutate FE8's camera.
 
 Keyboard bindings:
 

@@ -12,10 +12,13 @@
 #include "extended_unit_renderer.h"
 #include "fe8_profile.h"
 #include "host_audio.h"
+#include "host_cursor.h"
 #include "host_settings.h"
 #include "host_video.h"
 #include "macos_library.h"
 #include "macos_settings.h"
+#include "mouse_controller.h"
+#include "viewport_controller.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -47,6 +50,17 @@ struct fe8_options {
     int auto_continue;
     int seek_large_map;
     int realtime;
+};
+
+struct pan_controller {
+    int x;
+    int y;
+    int dragging;
+    int moved;
+    int start_canvas_x;
+    int start_canvas_y;
+    int start_pan_x;
+    int start_pan_y;
 };
 
 static void usage(const char *program) {
@@ -188,7 +202,8 @@ static Fe8HostPixel host_pixel_from_mcolor(mColor pixel) {
 }
 
 static unsigned terrain_frame_match_percent(
-    const mColor *frame, size_t stride, const Fe8HostPixel *canvas) {
+    const mColor *frame, size_t stride, const Fe8HostPixel *canvas,
+    Fe8ExtendedViewport viewport) {
     unsigned matches = 0;
     unsigned samples = 0;
     unsigned y;
@@ -199,13 +214,29 @@ static unsigned terrain_frame_match_percent(
         unsigned x;
         for (x = 0; x < GBA_WIDTH; x += 2) {
             Fe8HostPixel expected = host_pixel_from_mcolor(frame[y * stride + x]);
-            Fe8HostPixel rendered = canvas[(size_t)(GBA_Y + (int)y) * CANVAS_WIDTH +
-                GBA_X + (int)x];
+            int canvas_x = viewport.gba_x + (int)x;
+            int canvas_y = viewport.gba_y + (int)y;
+            Fe8HostPixel rendered;
+            if (canvas_x < 0 || canvas_y < 0 ||
+                    canvas_x >= CANVAS_WIDTH || canvas_y >= CANVAS_HEIGHT)
+                continue;
+            rendered = canvas[(size_t)canvas_y * CANVAS_WIDTH + canvas_x];
             matches += expected == rendered;
             ++samples;
         }
     }
     return samples ? matches * 100 / samples : 0;
+}
+
+static int snapshot_path_mode(const Fe8Snapshot *snapshot) {
+    return snapshot && snapshot->active_unit_address != 0 &&
+        (snapshot->game_state_bits & (1u << 1)) != 0;
+}
+
+static void set_mouse_map_target(Fe8MouseController *mouse,
+    const Fe8Snapshot *snapshot, int x, int y, int confirm) {
+    (void)snapshot;
+    fe8_mouse_set_target(mouse, x, y, confirm);
 }
 
 static void pace_frame(uint64_t *deadline, uint64_t period, uint64_t frequency) {
@@ -393,6 +424,8 @@ int main(int argc, char **argv) {
     Fe8HostSettings settings;
     Fe8HostAudio audio = {0};
     Fe8HostVideo video = {0};
+    Fe8MouseController mouse = {0};
+    struct pan_controller pan = {0};
     mColor *video_buffer = NULL;
     Fe8HostPixel *canvas = NULL;
     uint32_t keyboard_keys = 0;
@@ -417,11 +450,22 @@ int main(int argc, char **argv) {
     uint64_t frame_period = 0;
     uint64_t performance_frequency = 0;
     unsigned settings_revision = 0;
+    int applied_mouse_enabled = 0;
     int visual_profile_active = 0;
     int speed_up_active = 0;
     unsigned visual_good_frames = 0;
     unsigned visual_bad_frames = 0;
     int previous_camera_valid = 0;
+    int pointer_tile_valid = 0;
+    int pointer_tile_x = 0;
+    int pointer_tile_y = 0;
+    int pointer_canvas_valid = 0;
+    int pointer_canvas_x = 0;
+    int pointer_canvas_y = 0;
+    int host_pointer_visible = 0;
+    int host_pointer_canvas_x = 0;
+    int host_pointer_canvas_y = 0;
+    int system_cursor_hidden = 0;
     int16_t previous_camera_x = 0;
     int16_t previous_camera_y = 0;
     int exit_code = EXIT_FAILURE;
@@ -490,6 +534,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Video setup failed: %s\n", SDL_GetError());
         goto cleanup;
     }
+    applied_mouse_enabled = settings.mouse_enabled;
     if (!fe8_host_video_set_shader(&video, settings.shader)) {
         fprintf(stderr, "Unable to enable shader '%s'; using Off\n",
             fe8_host_shader_name(settings.shader));
@@ -519,6 +564,18 @@ int main(int argc, char **argv) {
             hotkeys_down = 0;
             set_speed_up_mode(0, &speed_up_active, &video, &audio,
                 audio_initialized, &settings, &frame_deadline);
+            if (settings.mouse_enabled != applied_mouse_enabled) {
+                fe8_mouse_cancel(&mouse);
+                pan.dragging = 0;
+                pointer_canvas_valid = 0;
+                pointer_tile_valid = 0;
+                host_pointer_visible = 0;
+                if (!settings.mouse_enabled && system_cursor_hidden) {
+                    SDL_ShowCursor(SDL_ENABLE);
+                    system_cursor_hidden = 0;
+                }
+                applied_mouse_enabled = settings.mouse_enabled;
+            }
             if (audio_initialized)
                 fe8_host_audio_set_enabled(&audio, settings.audio_enabled);
             if (!fe8_host_video_set_vsync(&video, settings.vsync_enabled))
@@ -533,14 +590,49 @@ int main(int argc, char **argv) {
             previous_camera_valid = 0;
             settings_revision = settings.revision;
             frame_deadline = SDL_GetPerformanceCounter();
-            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s shader=%s\n",
+            fprintf(stderr, "Settings applied: audio=%s VSync=%s extensions=%s mouse=%s shader=%s\n",
                 settings.audio_enabled ? "on" : "off",
                 video.vsync_active ? "on" : "off",
                 settings.extensions_enabled ? "on" : "off",
+                settings.mouse_enabled ? "on" : "off",
                 fe8_host_shader_name(video.shader));
         }
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
-        if (!large_map_ready && snapshot_valid && snapshot.input_lock == 0 &&
+        if (snapshot_valid) {
+            map_state.map_width = snapshot.map_width;
+            map_state.map_height = snapshot.map_height;
+            map_state.camera_x = snapshot.camera_x;
+            map_state.camera_y = snapshot.camera_y;
+            fe8_viewport_clamp_pan(
+                &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+            if (settings.mouse_enabled && pointer_canvas_valid && !pan.dragging &&
+                    visual_profile_active && snapshot.input_lock == 0 &&
+                    !mouse.confirm) {
+                int map_x;
+                int map_y;
+                if (fe8_canvas_to_map_tile(&map_state, viewport,
+                        pointer_canvas_x, pointer_canvas_y, &map_x, &map_y)) {
+                    pointer_tile_valid = 1;
+                    pointer_tile_x = map_x;
+                    pointer_tile_y = map_y;
+                    if (snapshot.cursor_x != map_x || snapshot.cursor_y != map_y ||
+                            snapshot.cursor_display_x != map_x * 16 ||
+                            snapshot.cursor_display_y != map_y * 16)
+                        set_mouse_map_target(&mouse, &snapshot, map_x, map_y, 0);
+                } else {
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
+                }
+            }
+            if (mouse.stalled) {
+                fprintf(stderr, "Mouse path cancelled after rejected native input; move the pointer to retry\n");
+                fe8_mouse_cancel(&mouse);
+                pointer_canvas_valid = 0;
+                pointer_tile_valid = 0;
+            }
+        }
+        if (!large_map_ready && snapshot_valid && visual_profile_active &&
+                snapshot.input_lock == 0 &&
                 (snapshot.map_width > 15 || snapshot.map_height > 10)) {
             if (large_map_ready_frames < 60)
                 ++large_map_ready_frames;
@@ -553,9 +645,160 @@ int main(int argc, char **argv) {
             large_map_ready_frames = 0;
         }
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_MOUSEMOTION) {
+                if (settings.mouse_enabled && fe8_host_video_window_to_canvas(
+                        &video, event.motion.x, event.motion.y,
+                        &host_pointer_canvas_x, &host_pointer_canvas_y)) {
+                    host_pointer_visible = 1;
+                    if (!system_cursor_hidden) {
+                        SDL_ShowCursor(SDL_DISABLE);
+                        system_cursor_hidden = 1;
+                    }
+                } else {
+                    host_pointer_visible = 0;
+                    if (system_cursor_hidden) {
+                        SDL_ShowCursor(SDL_ENABLE);
+                        system_cursor_hidden = 0;
+                    }
+                }
+            } else if (event.type == SDL_WINDOWEVENT &&
+                    event.window.event == SDL_WINDOWEVENT_LEAVE) {
+                host_pointer_visible = 0;
+                if (system_cursor_hidden) {
+                    SDL_ShowCursor(SDL_ENABLE);
+                    system_cursor_hidden = 0;
+                }
+            } else if (event.type == SDL_WINDOWEVENT &&
+                    event.window.event == SDL_WINDOWEVENT_ENTER &&
+                    settings.mouse_enabled) {
+                int window_x;
+                int window_y;
+                SDL_GetMouseState(&window_x, &window_y);
+                if (fe8_host_video_window_to_canvas(&video, window_x, window_y,
+                        &host_pointer_canvas_x, &host_pointer_canvas_y)) {
+                    host_pointer_visible = 1;
+                    SDL_ShowCursor(SDL_DISABLE);
+                    system_cursor_hidden = 1;
+                }
+            }
             if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
                     event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)) {
                 running = 0;
+            } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                    event.button.button == SDL_BUTTON_RIGHT && settings.mouse_enabled) {
+                fe8_mouse_cancel(&mouse);
+                pointer_tile_valid = 0;
+                pointer_canvas_valid = 0;
+                mouse.pulse_key = UINT32_C(1) << FE8_HOST_B;
+                mouse.press_frames = 2;
+                /* Fast mouse travel already holds B. Force a release first so
+                 * FE8 observes right-click as a new cancel press. */
+                mouse.release_frames = 2;
+                fprintf(stderr, "Mouse right-click: B queued\n");
+            } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                    event.button.button == SDL_BUTTON_LEFT && settings.mouse_enabled) {
+                int canvas_x;
+                int canvas_y;
+                int shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+                if (snapshot_valid && visual_profile_active &&
+                        snapshot.input_lock == 0) {
+                    if (!fe8_host_video_window_to_canvas(&video,
+                            event.button.x, event.button.y, &canvas_x, &canvas_y))
+                        continue;
+                    if (shift) {
+                        pointer_canvas_valid = 0;
+                        pan.dragging = 1;
+                        pan.moved = 0;
+                        pan.start_canvas_x = canvas_x;
+                        pan.start_canvas_y = canvas_y;
+                        pan.start_pan_x = pan.x;
+                        pan.start_pan_y = pan.y;
+                        fe8_mouse_cancel(&mouse);
+                    } else {
+                        int map_x;
+                        int map_y;
+                        if (fe8_canvas_to_map_tile(&map_state, viewport,
+                                canvas_x, canvas_y, &map_x, &map_y)) {
+                            pointer_canvas_valid = 1;
+                            pointer_canvas_x = canvas_x;
+                            pointer_canvas_y = canvas_y;
+                            pointer_tile_valid = 1;
+                            pointer_tile_x = map_x;
+                            pointer_tile_y = map_y;
+                            set_mouse_map_target(&mouse, &snapshot, map_x, map_y, 1);
+                            fprintf(stderr,
+                                "Mouse click: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u mode=%s\n",
+                                event.button.x, event.button.y, canvas_x, canvas_y,
+                                map_x, map_y, snapshot.cursor_x, snapshot.cursor_y,
+                                snapshot_path_mode(&snapshot) ? "path" : "idle");
+                        }
+                    }
+                } else {
+                    fe8_mouse_cancel(&mouse);
+                    mouse.pulse_key = UINT32_C(1) << FE8_HOST_A;
+                    mouse.press_frames = 2;
+                    fprintf(stderr, "Mouse left-click: A queued for native UI\n");
+                }
+            } else if (event.type == SDL_MOUSEBUTTONUP &&
+                    event.button.button == SDL_BUTTON_LEFT && pan.dragging &&
+                    settings.mouse_enabled) {
+                int canvas_x;
+                int canvas_y;
+                if (!pan.moved && fe8_host_video_window_to_canvas(&video,
+                        event.button.x, event.button.y, &canvas_x, &canvas_y)) {
+                    int map_x;
+                    int map_y;
+                    if (fe8_canvas_to_map_tile(&map_state, viewport,
+                            canvas_x, canvas_y, &map_x, &map_y))
+                        fe8_viewport_recenter_on_tile(&pan.x, &pan.y,
+                            &snapshot, &viewport, GBA_X, GBA_Y, map_x, map_y);
+                }
+                pan.dragging = 0;
+                pointer_canvas_valid = 0;
+                pointer_tile_valid = 0;
+                fe8_viewport_clamp_pan(
+                    &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+                fprintf(stderr, "Mouse pan: map origin=%d,%d\n",
+                    snapshot.camera_x - viewport.gba_x,
+                    snapshot.camera_y - viewport.gba_y);
+            } else if (event.type == SDL_MOUSEMOTION && settings.mouse_enabled &&
+                    snapshot_valid &&
+                    visual_profile_active && snapshot.input_lock == 0) {
+                int canvas_x;
+                int canvas_y;
+                if (!fe8_host_video_window_to_canvas(&video,
+                        event.motion.x, event.motion.y, &canvas_x, &canvas_y)) {
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
+                } else if (pan.dragging) {
+                    int dx = canvas_x - pan.start_canvas_x;
+                    int dy = canvas_y - pan.start_canvas_y;
+                    pan.x = pan.start_pan_x - dx;
+                    pan.y = pan.start_pan_y - dy;
+                    pan.moved = pan.moved || abs(dx) >= 2 || abs(dy) >= 2;
+                    fe8_viewport_clamp_pan(
+                        &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
+                } else {
+                    int map_x;
+                    int map_y;
+                    pointer_canvas_valid = 1;
+                    pointer_canvas_x = canvas_x;
+                    pointer_canvas_y = canvas_y;
+                    if (fe8_canvas_to_map_tile(&map_state, viewport,
+                            canvas_x, canvas_y, &map_x, &map_y) &&
+                            (!pointer_tile_valid || map_x != pointer_tile_x ||
+                             map_y != pointer_tile_y)) {
+                        pointer_tile_valid = 1;
+                        pointer_tile_x = map_x;
+                        pointer_tile_y = map_y;
+                        set_mouse_map_target(&mouse, &snapshot, map_x, map_y, 0);
+                        fprintf(stderr,
+                            "Mouse move: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u mode=%s\n",
+                            event.motion.x, event.motion.y, canvas_x, canvas_y,
+                            map_x, map_y, snapshot.cursor_x, snapshot.cursor_y,
+                            snapshot_path_mode(&snapshot) ? "path" : "idle");
+                    }
+                }
             } else {
                 uint32_t pressed_hotkeys = event.type == SDL_KEYDOWN && !event.key.repeat ?
                     fe8_host_hotkey_for_scancode(&settings,
@@ -567,6 +810,13 @@ int main(int argc, char **argv) {
                         (pressed_hotkeys & (UINT32_C(1) << FE8_HOST_HOTKEY_QUICK_LOAD)))
                     host_load_state(core, options.quick_state_path);
                 update_hotkeys(&hotkeys_down, &settings, &event);
+                if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                        fe8_host_key_for_scancode(&settings,
+                            event.key.keysym.scancode) != 0) {
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
+                    fe8_mouse_cancel(&mouse);
+                }
                 update_keyboard(&keyboard_keys, &settings, &event);
                 set_speed_up_mode(
                     (hotkeys_down &
@@ -578,7 +828,9 @@ int main(int argc, char **argv) {
 
         ++frame_count;
         core->setKeys(core, keyboard_keys |
-            (options.auto_continue && !large_map_ready ? scripted_continue_keys(frame_count) : 0));
+            (options.auto_continue && !large_map_ready ? scripted_continue_keys(frame_count) : 0) |
+            fe8_mouse_update(&mouse, &snapshot,
+                settings.mouse_enabled && snapshot_valid && visual_profile_active));
         core->runFrame(core);
         if (audio_initialized)
             fe8_host_audio_drain(&audio);
@@ -586,6 +838,8 @@ int main(int argc, char **argv) {
         extension_active = 0;
         rendered_units = 0;
         if (snapshot_valid) {
+            fe8_viewport_clamp_pan(
+                &pan.x, &pan.y, &snapshot, &viewport, GBA_X, GBA_Y);
             map_state.map_width = snapshot.map_width;
             map_state.map_height = snapshot.map_height;
             map_state.camera_x = snapshot.camera_x;
@@ -599,7 +853,7 @@ int main(int argc, char **argv) {
                 &render_memory, &map_state, viewport, canvas, CANVAS_WIDTH);
             if (extension_active) {
                 unsigned match = terrain_frame_match_percent(
-                    video_buffer, video_stride, canvas);
+                    video_buffer, video_stride, canvas, viewport);
                 int frame_compatible = match >= 15;
                 int camera_moving = previous_camera_valid &&
                     (snapshot.camera_x != previous_camera_x ||
@@ -655,12 +909,17 @@ int main(int argc, char **argv) {
         }
         /* The emulated frame is authoritative for all UI, overlays, moving
          * sprites, and selected units. While the extended world is active it
-         * must use the same movable origin as the reconstructed terrain and
-         * host-rendered units; a fixed center creates seams whenever a small
-         * map is centered or the host viewport is panned. */
+         * must use the exact same movable origin as terrain, pointer mapping,
+         * and host-rendered units; a fixed center creates seams and an
+         * apparent one-tile mouse offset whenever the map is centered or
+         * panned. Outside a validated map, retain the normal centered frame. */
         composite_framebuffer(video_buffer, video_stride, canvas,
             extension_active ? viewport.gba_x : GBA_X,
             extension_active ? viewport.gba_y : GBA_Y);
+        if (settings.mouse_enabled && host_pointer_visible)
+            fe8_host_draw_mouse_cursor(canvas, CANVAS_WIDTH,
+                CANVAS_WIDTH, CANVAS_HEIGHT,
+                host_pointer_canvas_x, host_pointer_canvas_y);
         if (!fe8_host_video_present(&video, canvas)) {
             fprintf(stderr, "Video presentation failed: %s\n", SDL_GetError());
             running = 0;
@@ -699,6 +958,8 @@ int main(int argc, char **argv) {
 cleanup:
     if (audio_initialized)
         fe8_host_audio_deinit(&audio);
+    if (system_cursor_hidden)
+        SDL_ShowCursor(SDL_ENABLE);
     fe8_host_video_deinit(&video);
     if (sdl_initialized)
         SDL_Quit();

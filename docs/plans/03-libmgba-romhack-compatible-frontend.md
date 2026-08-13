@@ -89,7 +89,8 @@ outside the project.
 - Maintain a target tile and send paced D-pad taps through libmGBA.
 - Observe the real cursor after every tap; re-plan or cancel if the game rejects
   movement, opens a menu, scrolls, or starts an event.
-- Send `A` only for an explicit click. Never write cursor coordinates directly.
+- Send `A` only for an explicit click. Never write cursor coordinates directly;
+  cancel and wait for fresh pointer motion after repeatedly rejected input.
 
 ### Phase 5: richer exterior composition
 
@@ -140,4 +141,3 @@ The safe baseline and retail terrain prototype are days-to-weeks. Mouse pathing
 and one or two exact hack profiles add weeks. Broad compatibility is an ongoing
 profile-and-regression effort, while complete exterior reproduction of every
 custom engine effect may be impossible without hack-specific adapters.
-

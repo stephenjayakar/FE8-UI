@@ -131,8 +131,8 @@ unsigned fe8_render_extended_units(
         ++rendered;
     }
     draw_cursor(pixels, stride_pixels, viewport.width, viewport.height,
-        snapshot->cursor_x * MAP_TILE_SIZE - snapshot->camera_x + viewport.gba_x,
-        snapshot->cursor_y * MAP_TILE_SIZE - snapshot->camera_y + viewport.gba_y,
+        snapshot->cursor_display_x - snapshot->camera_x + viewport.gba_x,
+        snapshot->cursor_display_y - snapshot->camera_y + viewport.gba_y,
         animation_frame);
     return rendered;
 }

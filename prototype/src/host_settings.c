@@ -26,6 +26,7 @@ void fe8_host_settings_init(Fe8HostSettings *settings) {
     settings->audio_enabled = 1;
     settings->vsync_enabled = 1;
     settings->extensions_enabled = 1;
+    settings->mouse_enabled = 1;
     settings->shader = FE8_HOST_SHADER_OFF;
 }
 

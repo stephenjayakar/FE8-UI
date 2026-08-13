@@ -38,6 +38,7 @@ typedef struct Fe8HostSettings {
     int audio_enabled;
     int vsync_enabled;
     int extensions_enabled;
+    int mouse_enabled;
     enum Fe8HostShader shader;
     unsigned revision;
 } Fe8HostSettings;
