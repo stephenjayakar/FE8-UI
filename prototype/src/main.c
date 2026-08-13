@@ -614,7 +614,7 @@ int main(int argc, char **argv) {
                             pointer_tile_valid = 1;
                             pointer_tile_x = map_x;
                             pointer_tile_y = map_y;
-                            fe8_mouse_set_target(&mouse, map_x, map_y, 1);
+                            fe8_mouse_teleport_to(&mouse, map_x, map_y, 1);
                             fprintf(stderr,
                                 "Mouse click: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u\n",
                                 event.button.x, event.button.y, canvas_x, canvas_y,
@@ -671,7 +671,7 @@ int main(int argc, char **argv) {
                         pointer_tile_valid = 1;
                         pointer_tile_x = map_x;
                         pointer_tile_y = map_y;
-                        fe8_mouse_set_target(&mouse, map_x, map_y, 0);
+                        fe8_mouse_teleport_to(&mouse, map_x, map_y, 0);
                         fprintf(stderr,
                             "Mouse move: window=%d,%d canvas=%d,%d tile=%d,%d cursor=%u,%u\n",
                             event.motion.x, event.motion.y, canvas_x, canvas_y,

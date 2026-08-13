@@ -18,6 +18,11 @@ void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm) 
     mouse->teleport_requested = 0;
 }
 
+void fe8_mouse_teleport_to(Fe8MouseController *mouse, int x, int y, int confirm) {
+    fe8_mouse_set_target(mouse, x, y, confirm);
+    mouse->teleport_requested = 1;
+}
+
 void fe8_mouse_cancel(Fe8MouseController *mouse) {
     mouse->active = 0;
     mouse->press_frames = 0;
@@ -45,6 +50,8 @@ uint32_t fe8_mouse_update(
         return 0;
     }
     if (!mouse->active)
+        return 0;
+    if (mouse->teleport_requested)
         return 0;
     if (snapshot->input_lock != 0) {
         if (++mouse->blocked_frames > 300) {

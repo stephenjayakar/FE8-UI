@@ -73,6 +73,11 @@ int main(void) {
     assert(mouse.active && mouse.target_x == 4 && mouse.target_y == 0);
     fe8_mouse_set_target(&mouse, 2, 2, 0);
     assert(!mouse.teleport_requested);
+
+    fe8_mouse_teleport_to(&mouse, 7, 6, 1);
+    assert(mouse.active && mouse.teleport_requested);
+    assert(mouse.target_x == 7 && mouse.target_y == 6 && mouse.confirm);
+    assert(fe8_mouse_update(&mouse, &snapshot, 1) == 0);
     puts("mouse controller tests passed");
     return 0;
 }
