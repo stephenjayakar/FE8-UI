@@ -42,6 +42,8 @@ int main(void) {
         .tileset_config = 0x02001000,
         .tile_graphics = 0x06008000,
         .palette = 0x05000000,
+        .normal_palette_bank_offset = 11,
+        .fog_palette_bank_offset = 6,
     };
     Fe8ExtendedViewport viewport = {32, 16, 0, 0};
     Fe8HostPixel output[32 * 16];
@@ -64,6 +66,11 @@ int main(void) {
     assert(fe8_render_extended_terrain(&memory, &state, viewport, output, 32));
     assert(output[0] == UINT32_C(0xFF0000FF));
     assert(output[31] == UINT32_C(0xFF0000FF));
+    put16(palette, (6 * 16 + 1) * 2, 0x7C00);
+    state.normal_palette_bank_offset = 6;
+    assert(fe8_render_extended_terrain(&memory, &state, viewport, output, 32));
+    assert(output[0] == UINT32_C(0xFFFF0000));
+    assert(output[31] == UINT32_C(0xFFFF0000));
     assert(fe8_canvas_to_map_tile(&state, viewport, 20, 8, &map_x, &map_y));
     assert(map_x == 1 && map_y == 0);
     assert(!fe8_canvas_to_map_tile(&state, viewport, 40, 8, &map_x, &map_y));

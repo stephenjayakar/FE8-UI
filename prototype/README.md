@@ -162,7 +162,11 @@ Keyboard bindings:
 
 Retail FE8U and FE8U-derived hacks with the standard `BE8E` header are allowed
 to attempt the retail-layout profile. Every pointer, dimension, row table, and
-cursor coordinate is validated each frame before the extension activates.
+cursor coordinate is validated each frame before the extension activates. The
+frontend first tries FE8's normal terrain palette layout, then probes the other
+GBA palette-bank offsets when the decoded geometry matches but its colors do
+not. The selected offset is validated against the canonical mGBA frame and is
+rediscovered after a game mode invalidates it.
 
 This was tested end-to-end on a retail FE8U 28×24 tactical map. A visual
 compatibility check compares host-decoded terrain with the canonical frame
@@ -177,6 +181,14 @@ structures resident while repurposing VRAM; the per-frame visual gate falls
 back to the canonical GBA view for those scenes and automatically restores the
 extension when player-phase map rendering resumes.
 
+Pokémblem (tested ROM hash documented below) was tested on its 24×20
+free-roaming overworld. Its metatile
+map and actors retain FE8-compatible structures, but its normal terrain
+palettes use bank offset 6 instead of FE8's offset 11. The adaptive palette
+profile detects that layout at runtime, enabling the existing terrain and unit
+renderers without a ROM-specific address table. See
+[`../docs/pokemblem-compatibility.md`](../docs/pokemblem-compatibility.md).
+
 The prototype draws terrain, fog, standing unit map sprites, and a host cursor
 across the extended canvas. The canonical mGBA frame is always composited last
 over the center, so FE8 menus, selected units, map animations, range/movement
@@ -188,12 +200,15 @@ These options exist for repeatable local testing and do not touch ROM data:
 
 ```sh
 --capture /tmp/frame.bmp --capture-after 120
+--capture-terrain /tmp/terrain-only.bmp --capture-after 120
 --auto-continue
 --seek-large-map
 --state-out /tmp/large-map.ss
 ```
 
 `--auto-continue` sends a small scripted set of normal A/Start inputs.
+`--capture-terrain` saves the host-decoded terrain before the canonical frame,
+units, and UI are composited, which is useful for diagnosing new ROM hacks.
 `--seek-large-map` waits for a validated map larger than 15×10 (or stops after a
 bounded timeout) before capturing. When `--state-out` is supplied, that large,
 interactive checkpoint is also saved for repeatable tests.
