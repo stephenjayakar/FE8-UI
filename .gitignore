@@ -1,0 +1,24 @@
+# Build products
+/build/
+/build-*/
+/cmake-build-*/
+*.app
+*.dSYM/
+*.o
+*.a
+*.dylib
+
+# User-supplied games and runtime data
+*.gba
+*.sav
+*.ss
+*.ss[0-9]
+
+# Tool and editor state
+.DS_Store
+._*
+__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+*.swp
