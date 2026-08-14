@@ -41,6 +41,7 @@ typedef struct Fe8Profile {
     uint32_t red_units;
     uint32_t green_units;
     uint32_t active_unit;
+    uint32_t sms_handle_array;
 } Fe8Profile;
 
 enum {
@@ -48,6 +49,7 @@ enum {
     FE8_MAX_MAP_HEIGHT = 64,
     FE8_MAX_MAP_CELLS = FE8_MAX_MAP_WIDTH * FE8_MAX_MAP_HEIGHT,
     FE8_MAX_VISIBLE_UNITS = 128,
+    FE8_MAX_MAP_SPRITES = 99,
 };
 
 enum Fe8SnapshotFlags {
@@ -59,6 +61,7 @@ enum Fe8SnapshotFlags {
     FE8_SNAPSHOT_HIDDEN = 1u << 5,
     FE8_SNAPSHOT_OTHER = 1u << 6,
     FE8_SNAPSHOT_UNITS = 1u << 7,
+    FE8_SNAPSHOT_MAP_SPRITES = 1u << 8,
 };
 
 typedef struct Fe8VisibleUnit {
@@ -70,6 +73,13 @@ typedef struct Fe8VisibleUnit {
     uint32_t attributes;
     uint32_t map_sprite_handle;
 } Fe8VisibleUnit;
+
+typedef struct Fe8VisibleMapSprite {
+    int16_t x_display;
+    int16_t y_display;
+    uint16_t oam2;
+    uint8_t config;
+} Fe8VisibleMapSprite;
 
 typedef struct Fe8Snapshot {
     uint16_t map_width;
@@ -104,6 +114,8 @@ typedef struct Fe8Snapshot {
 
     uint16_t visible_unit_count;
     Fe8VisibleUnit visible_units[FE8_MAX_VISIBLE_UNITS];
+    uint16_t map_sprite_count;
+    Fe8VisibleMapSprite map_sprites[FE8_MAX_MAP_SPRITES];
 } Fe8Snapshot;
 
 /* Returns the fixed profile for the unmodified FE8U retail executable. */

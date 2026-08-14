@@ -182,15 +182,16 @@ back to the canonical GBA view for those scenes and automatically restores the
 extension when player-phase map rendering resumes.
 
 Pokémblem (tested ROM hash documented below) was tested on its 24×20
-free-roaming overworld. Its metatile
-map and actors retain FE8-compatible structures, but its normal terrain
+free-roaming overworld. Its metatile map and actors retain FE8-compatible
+structures, but its normal terrain
 palettes use bank offset 6 instead of FE8's offset 11. The adaptive palette
 profile detects that layout at runtime, enabling the existing terrain and unit
 renderers without a ROM-specific address table. See
 [`../docs/pokemblem-compatibility.md`](../docs/pokemblem-compatibility.md).
 
-The prototype draws terrain, fog, standing unit map sprites, and a host cursor
-across the extended canvas. The canonical mGBA frame is always composited last
+The prototype draws terrain, fog, FE8's complete standing SMS list (units,
+traps, and world-space map effects), and a host cursor across the extended
+canvas. The canonical mGBA frame is always composited last
 over the center, so FE8 menus, selected units, map animations, range/movement
 overlays, and transient moving-unit animations remain visible and authoritative.
 

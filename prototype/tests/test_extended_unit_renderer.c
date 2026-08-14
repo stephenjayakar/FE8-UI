@@ -54,6 +54,18 @@ int main(void) {
     assert(output[24 * 64 + 24] == UINT32_C(0xFF00FF00));
     assert(output[0] != 0); /* Host cursor is visible independently of OAM. */
 
+    /* The complete SMS list includes non-unit world effects. Render it in
+     * preference to reconstructing only handles referenced by unit structs. */
+    memset(output, 0, sizeof(output));
+    snapshot.flags |= FE8_SNAPSHOT_MAP_SPRITES;
+    snapshot.map_sprite_count = 1;
+    snapshot.map_sprites[0] = (Fe8VisibleMapSprite){32, 16, 0xD080, 0};
+    assert(fe8_render_extended_units(&memory, &snapshot, viewport,
+        output, 64, 0) == 1);
+    assert(output[16 * 64 + 32] == UINT32_C(0xFF00FF00));
+    assert(output[24 * 64 + 24] == 0);
+    snapshot.flags &= ~FE8_SNAPSHOT_MAP_SPRITES;
+
     /* Enemy bosses get FE8's blinking 8x8 OBJ marker in extended space. */
     memset(output, 0, sizeof(output));
     snapshot.visible_units[0].attributes = UINT32_C(1) << 15;

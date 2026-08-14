@@ -443,7 +443,7 @@ int main(int argc, char **argv) {
     int family_match = 0;
     int snapshot_valid = 0;
     int extension_active = 0;
-    unsigned rendered_units = 0;
+    unsigned rendered_map_sprites = 0;
     int reported_profile = 0;
     unsigned frame_count = 0;
     unsigned large_map_ready_frames = 0;
@@ -942,7 +942,7 @@ int main(int argc, char **argv) {
             fe8_host_audio_drain(&audio);
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         extension_active = 0;
-        rendered_units = 0;
+        rendered_map_sprites = 0;
         Fe8FramePlacement frame_placement = {gba_x, gba_y, 0};
         if (snapshot_valid) {
             fe8_viewport_clamp_pan(
@@ -1074,7 +1074,7 @@ int main(int argc, char **argv) {
             previous_camera_y = snapshot.camera_y;
             previous_camera_valid = 1;
             if (extension_active)
-                rendered_units = fe8_render_extended_units(&render_memory, &snapshot, viewport,
+                rendered_map_sprites = fe8_render_extended_units(&render_memory, &snapshot, viewport,
                     canvas, canvas_width, frame_count);
         } else {
             previous_camera_valid = 0;
@@ -1123,10 +1123,11 @@ int main(int argc, char **argv) {
                     options.capture_path, canvas, canvas_width, canvas_height))
                 fprintf(stderr, "Unable to save capture '%s': %s\n", options.capture_path, SDL_GetError());
             else
-                fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u, units=%u)\n",
+                fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u, sprites=%u)\n",
                     options.capture_path, extension_active ? "yes" : "no",
                     snapshot_valid ? snapshot.map_width : 0,
-                    snapshot_valid ? snapshot.map_height : 0, rendered_units);
+                    snapshot_valid ? snapshot.map_height : 0,
+                    rendered_map_sprites);
             if (snapshot_valid)
                 fprintf(stderr, "Final FE8 cursor: %u,%u\n", snapshot.cursor_x, snapshot.cursor_y);
             running = 0;
