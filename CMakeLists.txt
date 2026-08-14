@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(fe8_extended_frontend LANGUAGES C)
+project(fe8_extended_frontend VERSION 0.0.1 LANGUAGES C)
 
 option(FE8_BUILD_TESTS "Build frontend unit tests" ON)
 
@@ -57,16 +57,26 @@ add_executable(fe8-mgba-sdl
 
 if(APPLE)
     enable_language(OBJC)
+    set_source_files_properties(
+        LICENSE
+        THIRD_PARTY_NOTICES.md
+        PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_source_files_properties(
+        third_party/mgba/LICENSE
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/ThirdParty/mGBA")
     set_target_properties(fe8-mgba-sdl PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "FE8 Extended Frontend"
         MACOSX_BUNDLE_GUI_IDENTIFIER "org.feuniverse.fe8-extended-frontend"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION "1")
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_gl.c
         app/src/macos_library.m
         app/src/macos_settings.m
+        LICENSE
+        THIRD_PARTY_NOTICES.md
+        third_party/mgba/LICENSE
         ${FE8_MGBA_SOURCE_DIR}/src/platform/opengl/gles2.c)
     target_include_directories(fe8-mgba-sdl PRIVATE
         ${FE8_MGBA_SOURCE_DIR}/src/platform/opengl)
