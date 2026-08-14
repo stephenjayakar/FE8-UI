@@ -43,6 +43,7 @@ struct fe8_options {
     const char *state_path;
     const char *save_path;
     const char *capture_path;
+    const char *terrain_capture_path;
     const char *state_out_path;
     const char *quick_state_path;
     int extensions;
@@ -66,7 +67,8 @@ struct pan_controller {
 static void usage(const char *program) {
     fprintf(stderr,
         "Usage: %s --rom GAME.gba [--state STATE.ss] [--save GAME.sav]\n"
-        "       [--capture OUTPUT.bmp] [--capture-after FRAMES]\n"
+        "       [--capture OUTPUT.bmp] [--capture-terrain OUTPUT.bmp]\n"
+        "       [--capture-after FRAMES]\n"
         "       [--auto-continue] [--seek-large-map]\n"
         "       [--state-out MAP_STATE.ss] [--quick-state QUICK_STATE.ss]\n"
         "       [--realtime]\n"
@@ -88,6 +90,8 @@ static int parse_options(int argc, char **argv, struct fe8_options *options) {
             destination = &options->save_path;
         else if (strcmp(argv[i], "--capture") == 0)
             destination = &options->capture_path;
+        else if (strcmp(argv[i], "--capture-terrain") == 0)
+            destination = &options->terrain_capture_path;
         else if (strcmp(argv[i], "--state-out") == 0)
             destination = &options->state_out_path;
         else if (strcmp(argv[i], "--quick-state") == 0)
@@ -439,18 +443,21 @@ int main(int argc, char **argv) {
     int family_match = 0;
     int snapshot_valid = 0;
     int extension_active = 0;
-    unsigned rendered_units = 0;
+    unsigned rendered_map_sprites = 0;
     int reported_profile = 0;
     unsigned frame_count = 0;
     unsigned large_map_ready_frames = 0;
     int large_map_ready = 0;
     int state_out_saved = 0;
+    int terrain_capture_saved = 0;
     uint64_t frame_deadline = 0;
     uint64_t frame_period = 0;
     uint64_t performance_frequency = 0;
     unsigned settings_revision = 0;
     int applied_mouse_enabled = 0;
     int visual_profile_active = 0;
+    int terrain_palette_offset = -1;
+    unsigned next_terrain_profile_probe = 0;
     int speed_up_active = 0;
     unsigned visual_good_frames = 0;
     unsigned visual_bad_frames = 0;
@@ -935,7 +942,7 @@ int main(int argc, char **argv) {
             fe8_host_audio_drain(&audio);
         snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
         extension_active = 0;
-        rendered_units = 0;
+        rendered_map_sprites = 0;
         Fe8FramePlacement frame_placement = {gba_x, gba_y, 0};
         if (snapshot_valid) {
             fe8_viewport_clamp_pan(
@@ -949,6 +956,10 @@ int main(int argc, char **argv) {
             map_state.tileset_config = profile->tileset_config;
             map_state.tile_graphics = UINT32_C(0x06008000);
             map_state.palette = UINT32_C(0x05000000);
+            map_state.normal_palette_bank_offset = terrain_palette_offset >= 0 ?
+                (uint8_t)terrain_palette_offset : 11;
+            map_state.fog_palette_bank_offset =
+                (uint8_t)((map_state.normal_palette_bank_offset + 11) & 0xF);
             extension_active = fe8_render_extended_terrain(
                 &render_memory, &map_state, viewport, canvas, canvas_width);
             if (extension_active) {
@@ -959,6 +970,71 @@ int main(int argc, char **argv) {
                     host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
                     canvas, canvas_width, canvas_height, canvas_width,
                     viewport.gba_x, viewport.gba_y, camera_moving ? 8 : 0);
+                if (terrain_palette_offset < 0 &&
+                        frame_placement.match_percent < 15 &&
+                        frame_count >= next_terrain_profile_probe) {
+                    Fe8FramePlacement best_placement = frame_placement;
+                    int best_offset = 11;
+                    int last_rendered_offset = 11;
+                    int candidate;
+                    next_terrain_profile_probe = frame_count + 30;
+                    for (candidate = 0; candidate < 16; ++candidate) {
+                        Fe8FramePlacement candidate_placement;
+                        if (candidate == 11)
+                            continue;
+                        map_state.normal_palette_bank_offset = (uint8_t)candidate;
+                        map_state.fog_palette_bank_offset =
+                            (uint8_t)((candidate + 11) & 0xF);
+                        if (!fe8_render_extended_terrain(&render_memory,
+                                &map_state, viewport, canvas, canvas_width))
+                            continue;
+                        last_rendered_offset = candidate;
+                        candidate_placement = fe8_align_frame_to_terrain(
+                            host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
+                            canvas, canvas_width, canvas_height, canvas_width,
+                            viewport.gba_x, viewport.gba_y,
+                            camera_moving ? 8 : 0);
+                        if (candidate_placement.match_percent >
+                                best_placement.match_percent) {
+                            best_placement = candidate_placement;
+                            best_offset = candidate;
+                        }
+                    }
+                    map_state.normal_palette_bank_offset = (uint8_t)best_offset;
+                    map_state.fog_palette_bank_offset =
+                        (uint8_t)((best_offset + 11) & 0xF);
+                    if (last_rendered_offset != best_offset)
+                        fe8_render_extended_terrain(&render_memory,
+                            &map_state, viewport, canvas, canvas_width);
+                    frame_placement = best_placement;
+                    if (best_placement.match_percent >= 15) {
+                        terrain_palette_offset = best_offset;
+                        fprintf(stderr,
+                            "Terrain profile: palette offset %d (visual match %u%%)\n",
+                            best_offset, best_placement.match_percent);
+                    }
+                } else if (terrain_palette_offset < 0 &&
+                        frame_placement.match_percent >= 15) {
+                    terrain_palette_offset = 11;
+                    fprintf(stderr,
+                        "Terrain profile: palette offset 11 (visual match %u%%)\n",
+                        frame_placement.match_percent);
+                }
+                if (options.terrain_capture_path && !terrain_capture_saved &&
+                        frame_count >= options.capture_after) {
+                    if (!save_canvas_bmp(options.terrain_capture_path,
+                            canvas, canvas_width, canvas_height))
+                        fprintf(stderr, "Unable to save terrain capture '%s': %s\n",
+                            options.terrain_capture_path, SDL_GetError());
+                    else
+                        fprintf(stderr,
+                            "Saved terrain capture: %s (map=%ux%u, rows=%08X, config=%08X, palette-offset=%u)\n",
+                            options.terrain_capture_path, snapshot.map_width,
+                            snapshot.map_height, snapshot.base_tile_rows,
+                            map_state.tileset_config,
+                            map_state.normal_palette_bank_offset);
+                    terrain_capture_saved = 1;
+                }
                 unsigned match = frame_placement.match_percent;
                 int frame_compatible = match >= 15;
                 int visual_changed = 0;
@@ -979,6 +1055,8 @@ int main(int argc, char **argv) {
                     visual_good_frames = 0;
                     if (visual_profile_active && visual_bad_frames >= 8) {
                         visual_profile_active = 0;
+                        terrain_palette_offset = -1;
+                        next_terrain_profile_probe = frame_count + 1;
                         visual_changed = 1;
                     }
                 }
@@ -996,7 +1074,7 @@ int main(int argc, char **argv) {
             previous_camera_y = snapshot.camera_y;
             previous_camera_valid = 1;
             if (extension_active)
-                rendered_units = fe8_render_extended_units(&render_memory, &snapshot, viewport,
+                rendered_map_sprites = fe8_render_extended_units(&render_memory, &snapshot, viewport,
                     canvas, canvas_width, frame_count);
         } else {
             previous_camera_valid = 0;
@@ -1045,14 +1123,18 @@ int main(int argc, char **argv) {
                     options.capture_path, canvas, canvas_width, canvas_height))
                 fprintf(stderr, "Unable to save capture '%s': %s\n", options.capture_path, SDL_GetError());
             else
-                fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u, units=%u)\n",
+                fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u, sprites=%u)\n",
                     options.capture_path, extension_active ? "yes" : "no",
                     snapshot_valid ? snapshot.map_width : 0,
-                    snapshot_valid ? snapshot.map_height : 0, rendered_units);
+                    snapshot_valid ? snapshot.map_height : 0,
+                    rendered_map_sprites);
             if (snapshot_valid)
                 fprintf(stderr, "Final FE8 cursor: %u,%u\n", snapshot.cursor_x, snapshot.cursor_y);
             running = 0;
         }
+        if (options.terrain_capture_path && terrain_capture_saved &&
+                !options.capture_path && !options.realtime)
+            running = 0;
         if ((!options.capture_path || options.realtime) && running) {
             unsigned speedup_multiplier = speed_up_active ?
                 fe8_host_speedup_multiplier(settings.speedup_rate) : 1;

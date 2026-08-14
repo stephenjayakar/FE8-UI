@@ -28,6 +28,8 @@ typedef struct Fe8MapRenderState {
     uint32_t tileset_config;
     uint32_t tile_graphics;
     uint32_t palette;
+    uint8_t normal_palette_bank_offset;
+    uint8_t fog_palette_bank_offset;
 } Fe8MapRenderState;
 
 typedef struct Fe8ExtendedViewport {

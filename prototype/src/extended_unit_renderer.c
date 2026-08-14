@@ -91,6 +91,36 @@ static void draw_cursor(
     }
 }
 
+static bool draw_map_sprite(
+    const Fe8MemoryView *memory, const Fe8Snapshot *snapshot,
+    Fe8ExtendedViewport viewport, Fe8HostPixel *pixels, size_t stride_pixels,
+    int x_display, int y_display, uint16_t oam2, uint8_t config,
+    unsigned animation_frame) {
+    int width;
+    int height;
+    int left;
+    int top;
+    if (config & 0x80)
+        return false;
+    switch (config & 0xF) {
+    case 0: case 3: width = 16; height = 16; break;
+    case 1: case 4: width = 16; height = 32; break;
+    case 2: case 5: width = 32; height = 32; break;
+    default: return false;
+    }
+    left = x_display - snapshot->camera_x + viewport.gba_x;
+    top = y_display - snapshot->camera_y + viewport.gba_y;
+    if (width == 32)
+        left -= 8;
+    if (height == 32)
+        top -= 16;
+    if (config & 0x40)
+        left += (animation_frame >> 1) & 2;
+    draw_obj(memory, pixels, stride_pixels, viewport.width, viewport.height,
+        left, top, width, height, oam2 & 0x3FF, (oam2 >> 12) & 0xF);
+    return true;
+}
+
 unsigned fe8_render_extended_units(
     const Fe8MemoryView *memory, const Fe8Snapshot *snapshot,
     Fe8ExtendedViewport viewport, Fe8HostPixel *pixels, size_t stride_pixels,
@@ -100,37 +130,30 @@ unsigned fe8_render_extended_units(
     if (!memory || !memory->read8 || !snapshot || !pixels ||
             stride_pixels < (size_t)viewport.width)
         return 0;
+    if (snapshot->flags & FE8_SNAPSHOT_MAP_SPRITES) {
+        for (i = 0; i < snapshot->map_sprite_count; ++i) {
+            const Fe8VisibleMapSprite *sprite = &snapshot->map_sprites[i];
+            rendered += draw_map_sprite(memory, snapshot, viewport, pixels,
+                stride_pixels, sprite->x_display, sprite->y_display,
+                sprite->oam2, sprite->config, animation_frame);
+        }
+    } else {
+        /* Compatibility fallback for profiles that do not expose FE8's
+         * complete SMS handle list. */
+        for (i = 0; i < snapshot->visible_unit_count; ++i) {
+            const Fe8VisibleUnit *unit = &snapshot->visible_units[i];
+            uint32_t handle = unit->map_sprite_handle;
+            if (!valid_handle(handle))
+                continue;
+            rendered += draw_map_sprite(memory, snapshot, viewport, pixels,
+                stride_pixels, unit->x * MAP_TILE_SIZE,
+                unit->y * MAP_TILE_SIZE, read16(memory, handle + 8),
+                memory->read8(memory->context, handle + 0x0B),
+                animation_frame);
+        }
+    }
     for (i = 0; i < snapshot->visible_unit_count; ++i) {
         const Fe8VisibleUnit *unit = &snapshot->visible_units[i];
-        uint32_t handle = unit->map_sprite_handle;
-        uint16_t oam2;
-        uint8_t config;
-        int width;
-        int height;
-        int left;
-        int top;
-        if (!valid_handle(handle))
-            continue;
-        oam2 = read16(memory, handle + 8);
-        config = memory->read8(memory->context, handle + 0x0B);
-        if (config & 0x80)
-            continue;
-        switch (config & 0xF) {
-        case 0: case 3: width = 16; height = 16; break;
-        case 1: case 4: width = 16; height = 32; break;
-        case 2: case 5: width = 32; height = 32; break;
-        default: continue;
-        }
-        left = unit->x * MAP_TILE_SIZE - snapshot->camera_x + viewport.gba_x;
-        top = unit->y * MAP_TILE_SIZE - snapshot->camera_y + viewport.gba_y;
-        if (width == 32)
-            left -= 8;
-        if (height == 32)
-            top -= 16;
-        if (config & 0x40)
-            left += (animation_frame >> 1) & 2;
-        draw_obj(memory, pixels, stride_pixels, viewport.width, viewport.height,
-            left, top, width, height, oam2 & 0x3FF, (oam2 >> 12) & 0xF);
         /* FE8's PutUnitSpriteIconsOam draws the boss marker as a separate
          * blinking 8x8 OBJ at tile-relative (+9, +7), using OBJ tile 0x10
          * and palette zero. The native framebuffer supplies it inside the
@@ -148,7 +171,6 @@ unsigned fe8_render_extended_units(
                 tile_left + 9, tile_top + 7, 8, 8,
                 BOSS_ICON_TILE, 0);
         }
-        ++rendered;
     }
     draw_cursor(pixels, stride_pixels, viewport.width, viewport.height,
         snapshot->cursor_display_x - snapshot->camera_x + viewport.gba_x,

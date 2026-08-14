@@ -4,7 +4,8 @@
 #include "extended_map_renderer.h"
 #include "fe8_profile.h"
 
-/* Draws standing map sprites and a host-side cursor over extended terrain. */
+/* Draws FE8's complete standing SMS list (units and map-sprite effects),
+ * unit markers, and a host-side cursor over extended terrain. */
 unsigned fe8_render_extended_units(
     const Fe8MemoryView *memory,
     const Fe8Snapshot *snapshot,

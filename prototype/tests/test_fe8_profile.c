@@ -119,6 +119,20 @@ static void setup_state(void) {
     put8(profile->blue_units + 0x11, 2);
     put32(profile->blue_units + 0x3C, UINT32_C(0x02031000));
 
+    /* FE8's linked SMS list includes ordinary units and non-unit map effects
+     * such as Pokemblem's flower traps. */
+    put32(profile->sms_handle_array, profile->sms_handle_array + 12);
+    put32(profile->sms_handle_array + 12, profile->sms_handle_array + 24);
+    put16(profile->sms_handle_array + 12 + 4, 16);
+    put16(profile->sms_handle_array + 12 + 6, 32);
+    put16(profile->sms_handle_array + 12 + 8, 0xD080);
+    put8(profile->sms_handle_array + 12 + 0x0B, 0);
+    put32(profile->sms_handle_array + 24, 0);
+    put16(profile->sms_handle_array + 24 + 4, 48);
+    put16(profile->sms_handle_array + 24 + 6, 16);
+    put16(profile->sms_handle_array + 24 + 8, 0xE0A0);
+    put8(profile->sms_handle_array + 24 + 0x0B, 2);
+
     /* Unit 0x81 is an enemy; faction values must not be swapped with NPCs. */
     put32(profile->red_units, UINT32_C(0x08000040));
     put32(profile->red_units + 4, UINT32_C(0x08000070));
@@ -163,6 +177,13 @@ static void test_snapshot(void) {
     assert(snapshot.visible_units[1].unit_id == 0x81);
     assert(snapshot.visible_units[1].faction == 0x80);
     assert((snapshot.visible_units[1].attributes & (UINT32_C(1) << 15)) != 0);
+    assert((snapshot.flags & FE8_SNAPSHOT_MAP_SPRITES) != 0);
+    assert(snapshot.map_sprite_count == 2);
+    assert(snapshot.map_sprites[0].x_display == 16);
+    assert(snapshot.map_sprites[0].y_display == 32);
+    assert(snapshot.map_sprites[0].oam2 == 0xD080);
+    assert(snapshot.map_sprites[1].x_display == 48);
+    assert(snapshot.map_sprites[1].config == 2);
 }
 
 static void test_rejects_bad_rows_and_dimensions(void) {

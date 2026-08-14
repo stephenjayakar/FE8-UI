@@ -100,8 +100,9 @@ static Fe8HostPixel terrain_pixel(
             if (fog_row >= UINT32_C(0x02000000) && fog_row < UINT32_C(0x02040000))
                 fogged = memory->read8(memory->context, fog_row + (uint32_t)map_x) != 0;
         }
-        /* DisplayBmTile adds palette 6 (fog) or 11 to each config entry. */
-        palette_bank = (((entry >> 12) & 0xF) + (fogged ? 6 : 11)) & 0xF;
+        palette_bank = (((entry >> 12) & 0xF) +
+            (fogged ? state->fog_palette_bank_offset :
+                state->normal_palette_bank_offset)) & 0xF;
     }
 
     packed_address = state->tile_graphics + tile_number * GBA_TILE_BYTES + pixel_y * 4 + pixel_x / 2;

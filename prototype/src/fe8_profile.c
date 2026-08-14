@@ -30,6 +30,7 @@
 #define FE8_RED_UNITS UINT32_C(0x0202CFBC)
 #define FE8_GREEN_UNITS UINT32_C(0x0202DDCC)
 #define FE8_ACTIVE_UNIT UINT32_C(0x03004E50)
+#define FE8_SMS_HANDLE_ARRAY UINT32_C(0x0203A018)
 
 #define FE8_UNIT_SIZE UINT32_C(0x48)
 #define FE8_BLUE_UNIT_COUNT 62u
@@ -48,6 +49,7 @@ static const Fe8Profile s_fe8u_profile = {
     FE8_MAP_MOVEMENT, FE8_MAP_RANGE, FE8_MAP_FOG, FE8_MAP_HIDDEN, FE8_MAP_OTHER,
     FE8_MAP_BASE_TILES, FE8_TILESET_CONFIG,
     FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS, FE8_ACTIVE_UNIT,
+    FE8_SMS_HANDLE_ARRAY,
 };
 
 static bool valid_reader(const Fe8MemoryReader *memory) {
@@ -200,6 +202,52 @@ static void append_units(
     }
 }
 
+static void extract_map_sprites(
+    const Fe8MemoryReader *memory, const Fe8Profile *profile,
+    uint16_t width, uint16_t height, Fe8Snapshot *snapshot) {
+    enum { SMS_HANDLE_SIZE = 12, SMS_HANDLE_COUNT = FE8_MAX_MAP_SPRITES + 1 };
+    uint32_t base = profile->sms_handle_array;
+    uint32_t address;
+    uint32_t visited[FE8_MAX_MAP_SPRITES];
+    unsigned visited_count = 0;
+    if (!valid_ewram(base, SMS_HANDLE_SIZE * SMS_HANDLE_COUNT))
+        return;
+    address = read32(memory, base);
+    if (address == 0) {
+        snapshot->flags |= FE8_SNAPSHOT_MAP_SPRITES;
+        return;
+    }
+    while (address != 0 && visited_count < FE8_MAX_MAP_SPRITES) {
+        int16_t x;
+        int16_t y;
+        unsigned i;
+        if (address < base + SMS_HANDLE_SIZE ||
+                address > base + SMS_HANDLE_SIZE * (SMS_HANDLE_COUNT - 1) ||
+                (address - base) % SMS_HANDLE_SIZE != 0)
+            return;
+        for (i = 0; i < visited_count; ++i)
+            if (visited[i] == address)
+                return;
+        visited[visited_count++] = address;
+        x = (int16_t)read16(memory, address + 4);
+        y = (int16_t)read16(memory, address + 6);
+        if (x >= -32 && y >= -32 && x <= (int)width * 16 + 32 &&
+                y <= (int)height * 16 + 32) {
+            Fe8VisibleMapSprite *sprite =
+                &snapshot->map_sprites[snapshot->map_sprite_count++];
+            sprite->x_display = x;
+            sprite->y_display = y;
+            sprite->oam2 = read16(memory, address + 8);
+            sprite->config = read8(memory, address + 0x0B);
+        }
+        address = read32(memory, address);
+    }
+    if (address == 0)
+        snapshot->flags |= FE8_SNAPSHOT_MAP_SPRITES;
+    else
+        snapshot->map_sprite_count = 0;
+}
+
 bool fe8_extract_snapshot(
     const Fe8MemoryReader *memory, const Fe8Profile *profile, Fe8Snapshot *snapshot) {
     uint16_t width;
@@ -283,5 +331,6 @@ bool fe8_extract_snapshot(
     append_units(memory, profile->green_units, FE8_GREEN_UNIT_COUNT, 0x40, width, height, snapshot);
     if (snapshot->visible_unit_count != 0)
         snapshot->flags |= FE8_SNAPSHOT_UNITS;
+    extract_map_sprites(memory, profile, width, height, snapshot);
     return true;
 }
