@@ -85,6 +85,11 @@ if(APPLE)
         "-framework Cocoa"
         "-framework OpenGL"
         "-framework UniformTypeIdentifiers")
+    add_custom_command(TARGET fe8-mgba-sdl POST_BUILD
+        COMMAND /usr/bin/codesign --force --sign -
+            "$<TARGET_BUNDLE_DIR:fe8-mgba-sdl>"
+        COMMENT "Ad-hoc signing macOS application bundle"
+        VERBATIM)
 else()
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_sdl.c
