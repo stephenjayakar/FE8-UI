@@ -10,6 +10,7 @@
 
 #include "address_space.h"
 #include "extended_map_renderer.h"
+#include "extended_presentation.h"
 #include "extended_unit_renderer.h"
 #include "fe8_profile.h"
 #include "frame_alignment.h"
@@ -476,6 +477,7 @@ int main(int argc, char **argv) {
     Fe8MapRenderState map_state = {0};
     Fe8PaletteMapping palette_mapping = {0};
     Fe8TerrainCache *terrain_cache = NULL;
+    Fe8ExtendedPresentation presentation = {0};
     Fe8ExtendedViewport viewport = {0};
     Fe8HostSettings settings;
     Fe8HostAudio audio = {0};
@@ -485,6 +487,12 @@ int main(int argc, char **argv) {
     mColor *video_buffer = NULL;
     Fe8HostPixel *host_frame = NULL;
     Fe8HostPixel *canvas = NULL;
+    Fe8HostPixel *frozen_canvas = NULL;
+    size_t frozen_canvas_pixels = 0;
+    int frozen_canvas_width = 0;
+    int frozen_canvas_height = 0;
+    int frozen_valid = 0;
+    Fe8FramePlacement frozen_placement = {0};
     int canvas_width = 0;
     int canvas_height = 0;
     int gba_x = GBA_X;
@@ -523,8 +531,6 @@ int main(int argc, char **argv) {
     uint32_t map_identity_config = 0;
     int map_identity_valid = 0;
     int speed_up_active = 0;
-    unsigned visual_good_frames = 0;
-    unsigned visual_bad_frames = 0;
     int previous_camera_valid = 0;
     int pointer_tile_valid = 0;
     int pointer_tile_x = 0;
@@ -651,8 +657,8 @@ int main(int argc, char **argv) {
             fe8_palette_mapping_reset(&palette_mapping);
             fe8_terrain_cache_reset(terrain_cache);
             visual_profile_active = 0;
-            visual_good_frames = 0;
-            visual_bad_frames = 0;
+            fe8_presentation_reset(&presentation);
+            frozen_valid = 0;
             previous_camera_valid = 0;
         }
         if (fe8_host_video_refresh_layout(&video)) {
@@ -666,6 +672,9 @@ int main(int argc, char **argv) {
                 running = 0;
                 break;
             }
+            fe8_presentation_reset(&presentation);
+            visual_profile_active = 0;
+            frozen_valid = 0;
             gba_x = (canvas_width - GBA_WIDTH) / 2;
             gba_y = (canvas_height - GBA_HEIGHT) / 2;
             if (snapshot_valid) {
@@ -710,8 +719,8 @@ int main(int argc, char **argv) {
                     fe8_host_shader_name(settings.shader));
             family_match = settings.extensions_enabled && fe8_detect_fe8u_family(&profile_memory);
             visual_profile_active = 0;
-            visual_good_frames = 0;
-            visual_bad_frames = 0;
+            fe8_presentation_reset(&presentation);
+            frozen_valid = 0;
             previous_camera_valid = 0;
             map_identity_valid = 0;
             fe8_palette_mapping_reset(&palette_mapping);
@@ -849,6 +858,9 @@ int main(int argc, char **argv) {
                         running = 0;
                         break;
                     }
+                    fe8_presentation_reset(&presentation);
+                    visual_profile_active = 0;
+                    frozen_valid = 0;
                     gba_x = (canvas_width - GBA_WIDTH) / 2;
                     gba_y = (canvas_height - GBA_HEIGHT) / 2;
                     pointer_tile_valid = 0;
@@ -1085,35 +1097,99 @@ int main(int argc, char **argv) {
                 fe8_palette_mapping_reset(&palette_mapping);
                 fe8_terrain_cache_reset(terrain_cache);
                 visual_profile_active = 0;
-                visual_good_frames = 0;
-                visual_bad_frames = 0;
+                fe8_presentation_reset(&presentation);
+                frozen_valid = 0;
             }
-            {
+            if (presentation.state == FE8_PRESENTATION_FROZEN && frozen_valid &&
+                    frozen_canvas_width == canvas_width &&
+                    frozen_canvas_height == canvas_height) {
+                Fe8FramePlacement validation;
+                memcpy(canvas, frozen_canvas,
+                    (size_t)canvas_width * canvas_height * sizeof(*canvas));
+                frame_placement = frozen_placement;
+                validation = fe8_align_frame_to_terrain(
+                    host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
+                    frozen_canvas, frozen_canvas_width, frozen_canvas_height,
+                    frozen_canvas_width, frozen_placement.x, frozen_placement.y, 0);
+                fe8_presentation_update(&presentation, true,
+                    validation.match_percent >= 15);
+                visual_profile_active = presentation.state == FE8_PRESENTATION_LIVE;
+                extension_active = 1;
+            } else {
                 unsigned learned = fe8_learn_palette_mapping(
                     &render_memory, &map_state, host_frame, GBA_WIDTH);
+                int terrain_rendered;
+                int frame_compatible = 0;
+                Fe8ExtendedPresentationState previous_state = presentation.state;
                 if (learned)
                     fprintf(stderr,
                         "Terrain palette: learned %u bank%s (normal=%04X fog=%04X)\n",
                         learned, learned == 1 ? "" : "s",
                         palette_mapping.valid_mask[0], palette_mapping.valid_mask[1]);
-            }
-            {
-                uint64_t stage_started = SDL_GetPerformanceCounter();
-                extension_active = fe8_render_extended_terrain(
-                    &render_memory, &map_state, viewport, canvas, canvas_width);
-                perf.terrain += SDL_GetPerformanceCounter() - stage_started;
-            }
-            if (extension_active) {
-                int camera_moving = previous_camera_valid &&
-                    (snapshot.camera_x != previous_camera_x ||
-                     snapshot.camera_y != previous_camera_y);
                 {
+                    uint64_t stage_started = SDL_GetPerformanceCounter();
+                    terrain_rendered = fe8_render_extended_terrain(
+                        &render_memory, &map_state, viewport, canvas, canvas_width);
+                    perf.terrain += SDL_GetPerformanceCounter() - stage_started;
+                }
+                if (terrain_rendered) {
+                    int camera_moving = previous_camera_valid &&
+                        (snapshot.camera_x != previous_camera_x ||
+                         snapshot.camera_y != previous_camera_y);
                     uint64_t stage_started = SDL_GetPerformanceCounter();
                     frame_placement = fe8_align_frame_to_terrain(
                         host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
                         canvas, canvas_width, canvas_height, canvas_width,
                         viewport.gba_x, viewport.gba_y, camera_moving ? 8 : 0);
                     perf.alignment += SDL_GetPerformanceCounter() - stage_started;
+                    frame_compatible = frame_placement.match_percent >= 15;
+                }
+                fe8_presentation_update(&presentation, terrain_rendered,
+                    frame_compatible != 0);
+                visual_profile_active = presentation.state == FE8_PRESENTATION_LIVE;
+                extension_active = visual_profile_active;
+                if (presentation.state == FE8_PRESENTATION_FROZEN && frozen_valid) {
+                    memcpy(canvas, frozen_canvas,
+                        (size_t)canvas_width * canvas_height * sizeof(*canvas));
+                    frame_placement = frozen_placement;
+                    extension_active = 1;
+                } else if (extension_active) {
+                    uint64_t stage_started = SDL_GetPerformanceCounter();
+                    rendered_map_sprites = fe8_render_extended_units(
+                        &render_memory, &snapshot, viewport, canvas,
+                        canvas_width, frame_count);
+                    perf.units += SDL_GetPerformanceCounter() - stage_started;
+                    if (frame_compatible) {
+                        size_t pixels = (size_t)canvas_width * canvas_height;
+                        if (frozen_canvas_pixels < pixels) {
+                            Fe8HostPixel *resized = realloc(frozen_canvas,
+                                pixels * sizeof(*frozen_canvas));
+                            if (resized) {
+                                frozen_canvas = resized;
+                                frozen_canvas_pixels = pixels;
+                            }
+                        }
+                        if (frozen_canvas_pixels >= pixels) {
+                            memcpy(frozen_canvas, canvas,
+                                pixels * sizeof(*frozen_canvas));
+                            frozen_canvas_width = canvas_width;
+                            frozen_canvas_height = canvas_height;
+                            frozen_placement = frame_placement;
+                            frozen_valid = 1;
+                        }
+                    }
+                }
+                if (previous_state != presentation.state)
+                    fprintf(stderr, "Extended renderer %s (visual match %u%%)\n",
+                        presentation.state == FE8_PRESENTATION_LIVE ? "active" :
+                        presentation.state == FE8_PRESENTATION_FROZEN ? "frozen" :
+                        "inactive", frame_placement.match_percent);
+                if (previous_state == FE8_PRESENTATION_LIVE &&
+                        presentation.state == FE8_PRESENTATION_FROZEN) {
+                    fe8_mouse_cancel(&mouse);
+                    pan.dragging = 0;
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
                 }
                 if (options.terrain_capture_path && !terrain_capture_saved &&
                         frame_count >= options.capture_after) {
@@ -1130,50 +1206,24 @@ int main(int argc, char **argv) {
                             palette_mapping.valid_mask[1]);
                     terrain_capture_saved = 1;
                 }
-                unsigned match = frame_placement.match_percent;
-                int frame_compatible = match >= 15;
-                int visual_changed = 0;
-                if (frame_compatible) {
-                    ++visual_good_frames;
-                    visual_bad_frames = 0;
-                    if (!visual_profile_active && visual_good_frames >= 2) {
-                        visual_profile_active = 1;
-                        visual_changed = 1;
-                    }
-                } else if (camera_moving && visual_profile_active) {
-                    /* The reconstructed map and PPU framebuffer can land on
-                     * opposite sides of a camera update for one frame. Keep
-                     * the validated extended view stable for the full pan. */
-                    visual_bad_frames = 0;
-                } else {
-                    ++visual_bad_frames;
-                    visual_good_frames = 0;
-                    if (visual_profile_active && visual_bad_frames >= 8) {
-                        visual_profile_active = 0;
-                        visual_changed = 1;
-                    }
-                }
-                if (visual_changed) {
-                    fprintf(stderr, "Extended renderer %s (visual match %u%%)\n",
-                        visual_profile_active ? "active" : "paused", match);
-                }
-                /* Map structures may remain populated during dialogue and
-                 * cutscenes while VRAM contains unrelated graphics. Fall back
-                 * for those frames, then resume as soon as the tactical PPU
-                 * background and host reconstruction agree. */
-                extension_active = visual_profile_active;
             }
             previous_camera_x = snapshot.camera_x;
             previous_camera_y = snapshot.camera_y;
             previous_camera_valid = 1;
-            if (extension_active) {
-                uint64_t stage_started = SDL_GetPerformanceCounter();
-                rendered_map_sprites = fe8_render_extended_units(&render_memory, &snapshot, viewport,
-                    canvas, canvas_width, frame_count);
-                perf.units += SDL_GetPerformanceCounter() - stage_started;
-            }
         } else {
             previous_camera_valid = 0;
+            if (frozen_valid &&
+                    (presentation.state == FE8_PRESENTATION_LIVE ||
+                     presentation.state == FE8_PRESENTATION_FROZEN) &&
+                    frozen_canvas_width == canvas_width &&
+                    frozen_canvas_height == canvas_height) {
+                fe8_presentation_update(&presentation, true, false);
+                visual_profile_active = 0;
+                memcpy(canvas, frozen_canvas,
+                    (size_t)canvas_width * canvas_height * sizeof(*canvas));
+                frame_placement = frozen_placement;
+                extension_active = 1;
+            }
         }
         if (!extension_active) {
             size_t index;
@@ -1262,6 +1312,7 @@ cleanup:
     if (logger.d.filter)
         mStandardLoggerDeinit(&logger);
     free(canvas);
+    free(frozen_canvas);
     fe8_terrain_cache_destroy(terrain_cache);
     free(host_frame);
     free(video_buffer);

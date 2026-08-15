@@ -21,6 +21,11 @@ add_executable(test_extended_map_renderer
     ../app/src/extended_map_renderer.c)
 target_include_directories(test_extended_map_renderer PRIVATE ../app/src)
 
+add_executable(test_extended_presentation
+    test_extended_presentation.c
+    ../app/src/extended_presentation.c)
+target_include_directories(test_extended_presentation PRIVATE ../app/src)
+
 add_executable(test_extended_unit_renderer
     test_extended_unit_renderer.c
     ../app/src/extended_unit_renderer.c)
@@ -76,6 +81,7 @@ add_test(NAME fe8_profile COMMAND test_fe8_profile)
 add_test(NAME frame_scheduler COMMAND test_frame_scheduler)
 add_test(NAME address_space COMMAND test_address_space)
 add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
+add_test(NAME extended_presentation COMMAND test_extended_presentation)
 add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)
 add_test(NAME frame_alignment COMMAND test_frame_alignment)
 add_test(NAME mouse_controller COMMAND test_mouse_controller)
