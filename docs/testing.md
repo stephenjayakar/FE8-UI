@@ -50,6 +50,9 @@ The window starts maximized and scales the 480×320 logical canvas to the
 largest 3:2 image that fits the display. Black bars are expected when the
 display has a different aspect ratio.
 
+Press Escape during gameplay and confirm the application remains open. Quit
+with Command-Q or the window close button.
+
 ## Verify a large map and canonical UI
 
 Given a save that can enter a tactical map, this finds a validated map larger

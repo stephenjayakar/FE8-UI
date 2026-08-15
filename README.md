@@ -116,7 +116,8 @@ to 3% per wheel unit; the default is **Low**, matching the original 0.5% rate.
 Zoom stays anchored to the map position beneath the pointer;
 the extended terrain and units are re-rendered for each new canvas size instead
 of cropping an enlarged 480×320 snapshot. Scrolling back out restores the full
-extended view. Escape or the window close button exits.
+extended view. Quit with Command-Q or the window close button; Escape does not
+exit a running game.
 Emulation is paced from libmGBA's GBA timing (59.728 fps), independently of a
 60 Hz or 120 Hz display refresh rate.
 

@@ -724,8 +724,7 @@ int main(int argc, char **argv) {
                     system_cursor_hidden = 1;
                 }
             }
-            if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
-                    event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)) {
+            if (event.type == SDL_QUIT) {
                 running = 0;
             } else if (event.type == SDL_MOUSEWHEEL) {
                 int window_x;
