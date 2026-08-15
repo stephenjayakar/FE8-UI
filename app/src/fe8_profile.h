@@ -81,6 +81,26 @@ typedef struct Fe8VisibleMapSprite {
     uint8_t config;
 } Fe8VisibleMapSprite;
 
+typedef struct Fe8LiveState {
+    uint16_t map_width;
+    uint16_t map_height;
+    int16_t camera_x;
+    int16_t camera_y;
+    int16_t camera_max_x;
+    int16_t camera_max_y;
+    uint8_t cursor_x;
+    uint8_t cursor_y;
+    int16_t cursor_target_x;
+    int16_t cursor_target_y;
+    int16_t cursor_display_x;
+    int16_t cursor_display_y;
+    uint32_t active_unit_address;
+    uint8_t game_state_bits;
+    uint8_t input_lock;
+    uint8_t chapter;
+    uint8_t phase;
+} Fe8LiveState;
+
 typedef struct Fe8Snapshot {
     uint16_t map_width;
     uint16_t map_height;
@@ -126,6 +146,11 @@ bool fe8_detect_retail_fe8u(const Fe8MemoryReader *memory);
 
 /* Header-family check for FE8U hacks; structural validation is still required. */
 bool fe8_detect_fe8u_family(const Fe8MemoryReader *memory);
+
+bool fe8_extract_live_state(
+    const Fe8MemoryReader *memory,
+    const Fe8Profile *profile,
+    Fe8LiveState *state);
 
 /* Extracts a coherent, bounds-checked battle-map snapshot. */
 bool fe8_extract_snapshot(

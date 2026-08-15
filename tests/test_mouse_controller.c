@@ -12,7 +12,7 @@ enum {
 };
 
 static uint32_t complete_animated_step(
-    Fe8MouseController *mouse, Fe8Snapshot *snapshot) {
+    Fe8MouseController *mouse, Fe8LiveState *snapshot) {
     uint32_t keys = 0;
     snapshot->cursor_x = (uint8_t)mouse->issued_x;
     snapshot->cursor_y = (uint8_t)mouse->issued_y;
@@ -38,7 +38,7 @@ static uint32_t complete_animated_step(
 
 int main(void) {
     Fe8MouseController mouse;
-    Fe8Snapshot snapshot;
+    Fe8LiveState snapshot;
     uint32_t keys;
     memset(&mouse, 0, sizeof(mouse));
     memset(&snapshot, 0, sizeof(snapshot));

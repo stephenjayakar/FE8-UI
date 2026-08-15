@@ -49,67 +49,49 @@ bool fe8_extended_state_is_sane(const Fe8MapRenderState *state) {
         state->palette < UINT32_C(0x05000400);
 }
 
-static Fe8HostPixel terrain_pixel(
-    const Fe8MemoryView *memory,
-    const Fe8MapRenderState *state,
-    int world_x,
-    int world_y) {
-    int map_x = floor_div(world_x, MAP_TILE_SIZE);
-    int map_y = floor_div(world_y, MAP_TILE_SIZE);
-    int tile_pixel_x;
-    int tile_pixel_y;
-    uint32_t row;
-    uint16_t metatile;
-    unsigned quadrant;
-    uint16_t entry;
-    unsigned pixel_x;
-    unsigned pixel_y;
-    unsigned tile_number;
-    unsigned palette_bank;
-    uint32_t packed_address;
-    uint8_t packed;
-    unsigned color_index;
-    uint16_t color;
-
-    if (map_x < 0 || map_y < 0 || map_x >= state->map_width || map_y >= state->map_height)
-        return UINT32_C(0xFF101418);
-
-    row = read32(memory, state->base_tile_rows + (uint32_t)map_y * 4);
-    if (row < UINT32_C(0x02000000) || row >= UINT32_C(0x02040000))
-        return UINT32_C(0xFFFF00FF);
-    metatile = read16(memory, row + (uint32_t)map_x * 2);
-
-    tile_pixel_x = world_x - map_x * MAP_TILE_SIZE;
-    tile_pixel_y = world_y - map_y * MAP_TILE_SIZE;
-    quadrant = (unsigned)(tile_pixel_x / SUBTILE_SIZE) +
-        (unsigned)(tile_pixel_y / SUBTILE_SIZE) * 2;
-    entry = read16(memory, state->tileset_config + (uint32_t)(metatile + quadrant) * 2);
-
-    pixel_x = (unsigned)tile_pixel_x & 7;
-    pixel_y = (unsigned)tile_pixel_y & 7;
-    if (entry & 0x0400)
-        pixel_x = 7 - pixel_x;
-    if (entry & 0x0800)
-        pixel_y = 7 - pixel_y;
-
-    tile_number = entry & 0x03FF;
-    {
-        bool fogged = false;
-        if (state->fog_rows) {
-            uint32_t fog_row = read32(memory, state->fog_rows + (uint32_t)map_y * 4);
-            if (fog_row >= UINT32_C(0x02000000) && fog_row < UINT32_C(0x02040000))
-                fogged = memory->read8(memory->context, fog_row + (uint32_t)map_x) != 0;
-        }
-        palette_bank = (((entry >> 12) & 0xF) +
-            (fogged ? state->fog_palette_bank_offset :
-                state->normal_palette_bank_offset)) & 0xF;
+static void fill_canvas(Fe8HostPixel *pixels, size_t stride,
+    int width, int height, Fe8HostPixel color) {
+    int y;
+    for (y = 0; y < height; ++y) {
+        int x;
+        for (x = 0; x < width; ++x)
+            pixels[(size_t)y * stride + x] = color;
     }
+}
 
-    packed_address = state->tile_graphics + tile_number * GBA_TILE_BYTES + pixel_y * 4 + pixel_x / 2;
-    packed = memory->read8(memory->context, packed_address);
-    color_index = (pixel_x & 1) ? packed >> 4 : packed & 0xF;
-    color = read16(memory, state->palette + (palette_bank * 16 + color_index) * 2);
-    return gba_color(color);
+static void draw_subtile(const Fe8MemoryView *memory,
+    const Fe8MapRenderState *state, uint16_t entry, bool fogged,
+    int destination_x, int destination_y, Fe8ExtendedViewport viewport,
+    Fe8HostPixel *pixels, size_t stride) {
+    unsigned tile_number = entry & 0x03FF;
+    unsigned palette_bank = (((entry >> 12) & 0xF) +
+        (fogged ? state->fog_palette_bank_offset :
+            state->normal_palette_bank_offset)) & 0xF;
+    unsigned output_y;
+    for (output_y = 0; output_y < SUBTILE_SIZE; ++output_y) {
+        int canvas_y = destination_y + (int)output_y;
+        unsigned source_y = (entry & 0x0800) ? 7 - output_y : output_y;
+        unsigned output_x;
+        if (canvas_y < 0 || canvas_y >= viewport.height)
+            continue;
+        for (output_x = 0; output_x < SUBTILE_SIZE; ++output_x) {
+            int canvas_x = destination_x + (int)output_x;
+            unsigned source_x = (entry & 0x0400) ? 7 - output_x : output_x;
+            uint32_t packed_address;
+            uint8_t packed;
+            unsigned color_index;
+            uint16_t color;
+            if (canvas_x < 0 || canvas_x >= viewport.width)
+                continue;
+            packed_address = state->tile_graphics + tile_number * GBA_TILE_BYTES +
+                source_y * 4 + source_x / 2;
+            packed = memory->read8(memory->context, packed_address);
+            color_index = (source_x & 1) ? packed >> 4 : packed & 0xF;
+            color = read16(memory,
+                state->palette + (palette_bank * 16 + color_index) * 2);
+            pixels[(size_t)canvas_y * stride + canvas_x] = gba_color(color);
+        }
+    }
 }
 
 bool fe8_render_extended_terrain(
@@ -118,18 +100,52 @@ bool fe8_render_extended_terrain(
     Fe8ExtendedViewport viewport,
     Fe8HostPixel *pixels,
     size_t stride_pixels) {
-    int x;
-    int y;
+    int first_map_x;
+    int first_map_y;
+    int last_map_x;
+    int last_map_y;
+    int map_y;
 
     if (!memory || !memory->read8 || !pixels || !fe8_extended_state_is_sane(state) ||
         viewport.width <= 0 || viewport.height <= 0 || stride_pixels < (size_t)viewport.width)
         return false;
 
-    for (y = 0; y < viewport.height; ++y) {
-        int world_y = state->camera_y + y - viewport.gba_y;
-        for (x = 0; x < viewport.width; ++x) {
-            int world_x = state->camera_x + x - viewport.gba_x;
-            pixels[(size_t)y * stride_pixels + x] = terrain_pixel(memory, state, world_x, world_y);
+    fill_canvas(pixels, stride_pixels, viewport.width, viewport.height,
+        UINT32_C(0xFF101418));
+    first_map_x = floor_div(state->camera_x - viewport.gba_x, MAP_TILE_SIZE);
+    first_map_y = floor_div(state->camera_y - viewport.gba_y, MAP_TILE_SIZE);
+    last_map_x = floor_div(state->camera_x + viewport.width - 1 - viewport.gba_x,
+        MAP_TILE_SIZE);
+    last_map_y = floor_div(state->camera_y + viewport.height - 1 - viewport.gba_y,
+        MAP_TILE_SIZE);
+    if (first_map_x < 0) first_map_x = 0;
+    if (first_map_y < 0) first_map_y = 0;
+    if (last_map_x >= state->map_width) last_map_x = state->map_width - 1;
+    if (last_map_y >= state->map_height) last_map_y = state->map_height - 1;
+    for (map_y = first_map_y; map_y <= last_map_y; ++map_y) {
+        uint32_t row = read32(memory,
+            state->base_tile_rows + (uint32_t)map_y * 4);
+        uint32_t fog_row = state->fog_rows ? read32(memory,
+            state->fog_rows + (uint32_t)map_y * 4) : 0;
+        int map_x;
+        if (row < UINT32_C(0x02000000) || row >= UINT32_C(0x02040000))
+            continue;
+        for (map_x = first_map_x; map_x <= last_map_x; ++map_x) {
+            uint16_t metatile = read16(memory, row + (uint32_t)map_x * 2);
+            bool fogged = fog_row >= UINT32_C(0x02000000) &&
+                fog_row < UINT32_C(0x02040000) &&
+                memory->read8(memory->context, fog_row + (uint32_t)map_x) != 0;
+            int tile_x = map_x * MAP_TILE_SIZE - state->camera_x + viewport.gba_x;
+            int tile_y = map_y * MAP_TILE_SIZE - state->camera_y + viewport.gba_y;
+            unsigned quadrant;
+            for (quadrant = 0; quadrant < 4; ++quadrant) {
+                uint16_t entry = read16(memory,
+                    state->tileset_config + (uint32_t)(metatile + quadrant) * 2);
+                draw_subtile(memory, state, entry, fogged,
+                    tile_x + (int)(quadrant & 1) * SUBTILE_SIZE,
+                    tile_y + (int)(quadrant >> 1) * SUBTILE_SIZE,
+                    viewport, pixels, stride_pixels);
+            }
         }
     }
     return true;

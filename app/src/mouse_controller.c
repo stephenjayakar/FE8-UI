@@ -34,7 +34,7 @@ void fe8_mouse_cancel(Fe8MouseController *mouse) {
 }
 
 uint32_t fe8_mouse_update(
-    Fe8MouseController *mouse, const Fe8Snapshot *snapshot, int snapshot_valid) {
+    Fe8MouseController *mouse, const Fe8LiveState *snapshot, int snapshot_valid) {
     uint32_t result = 0;
     /* Direct pulses (especially right-click B) must work while map input is
        locked by a menu or transition. */

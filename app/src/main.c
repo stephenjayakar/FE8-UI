@@ -8,10 +8,12 @@
 #include <mgba-util/image.h>
 #include <mgba-util/vfs.h>
 
+#include "address_space.h"
 #include "extended_map_renderer.h"
 #include "extended_unit_renderer.h"
 #include "fe8_profile.h"
 #include "frame_alignment.h"
+#include "frame_scheduler.h"
 #include "host_audio.h"
 #include "host_cursor.h"
 #include "host_settings.h"
@@ -51,7 +53,20 @@ struct fe8_options {
     int auto_continue;
     int seek_large_map;
     int realtime;
+    int perf_stats;
 };
+
+typedef struct Fe8PerfStats {
+    uint64_t started;
+    uint64_t emulation;
+    uint64_t snapshot;
+    uint64_t terrain;
+    uint64_t alignment;
+    uint64_t units;
+    uint64_t presentation;
+    uint64_t emulated_frames;
+    uint64_t presented_frames;
+} Fe8PerfStats;
 
 struct pan_controller {
     int x;
@@ -71,7 +86,7 @@ static void usage(const char *program) {
         "       [--capture-after FRAMES]\n"
         "       [--auto-continue] [--seek-large-map]\n"
         "       [--state-out MAP_STATE.ss] [--quick-state QUICK_STATE.ss]\n"
-        "       [--realtime]\n"
+        "       [--realtime] [--perf-stats]\n"
         "       [--no-extensions]\n", program);
 }
 
@@ -115,6 +130,9 @@ static int parse_options(int argc, char **argv, struct fe8_options *options) {
             continue;
         } else if (strcmp(argv[i], "--realtime") == 0) {
             options->realtime = 1;
+            continue;
+        } else if (strcmp(argv[i], "--perf-stats") == 0) {
+            options->perf_stats = 1;
             continue;
         }
         else if (strcmp(argv[i], "--no-extensions") == 0) {
@@ -162,6 +180,38 @@ static void update_hotkeys(
 static uint8_t core_read8(void *context, uint32_t address) {
     struct mCore *core = context;
     return core->busRead8(core, address);
+}
+
+static void map_core_memory(Fe8AddressSpace *space, struct mCore *core) {
+    static const uint32_t bases[] = {
+        UINT32_C(0x02000000), UINT32_C(0x03000000), UINT32_C(0x05000000),
+        UINT32_C(0x06000000), UINT32_C(0x08000000),
+    };
+    size_t i;
+    fe8_address_space_init(space, core, core_read8);
+    for (i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i) {
+        size_t size = 0;
+        void *data = mCoreGetMemoryBlock(core, bases[i], &size);
+        if (data && size)
+            fe8_address_space_add(space, bases[i], data, size);
+    }
+}
+
+static double ticks_ms(uint64_t ticks, uint64_t frequency) {
+    return frequency ? (double)ticks * 1000.0 / frequency : 0.0;
+}
+
+static void print_perf_stats(const Fe8PerfStats *stats, uint64_t frequency) {
+    double seconds = (double)(SDL_GetPerformanceCounter() - stats->started) / frequency;
+    fprintf(stderr,
+        "Performance: emulation=%.2fms snapshot=%.2fms terrain=%.2fms "
+        "alignment=%.2fms units=%.2fms upload/swap=%.2fms "
+        "effective=%.2ffps presentation=%.2ffps\n",
+        ticks_ms(stats->emulation, frequency), ticks_ms(stats->snapshot, frequency),
+        ticks_ms(stats->terrain, frequency), ticks_ms(stats->alignment, frequency),
+        ticks_ms(stats->units, frequency), ticks_ms(stats->presentation, frequency),
+        seconds > 0 ? stats->emulated_frames / seconds : 0.0,
+        seconds > 0 ? stats->presented_frames / seconds : 0.0);
 }
 
 static void composite_framebuffer(
@@ -416,6 +466,8 @@ int main(int argc, char **argv) {
     const Fe8Profile *profile = fe8u_profile();
     Fe8MemoryReader profile_memory;
     Fe8MemoryView render_memory;
+    Fe8AddressSpace address_space;
+    Fe8LiveState live_state = {0};
     Fe8Snapshot snapshot;
     Fe8MapRenderState map_state = {0};
     Fe8ExtendedViewport viewport = {0};
@@ -442,6 +494,7 @@ int main(int argc, char **argv) {
     int audio_initialized = 0;
     int family_match = 0;
     int snapshot_valid = 0;
+    int live_state_valid = 0;
     int extension_active = 0;
     unsigned rendered_map_sprites = 0;
     int reported_profile = 0;
@@ -476,6 +529,7 @@ int main(int argc, char **argv) {
     int16_t previous_camera_y = 0;
     int exit_code = EXIT_FAILURE;
     struct mStandardLogger logger = {0};
+    Fe8PerfStats perf = {0};
 
     if (argc == 1)
         return fe8_macos_run_library(argv[0]);
@@ -521,10 +575,11 @@ int main(int argc, char **argv) {
     if (options.state_path && !load_state(core, options.state_path))
         goto cleanup;
 
-    profile_memory.context = core;
-    profile_memory.read8 = core_read8;
-    render_memory.context = core;
-    render_memory.read8 = core_read8;
+    map_core_memory(&address_space, core);
+    profile_memory.context = &address_space;
+    profile_memory.read8 = fe8_address_space_read8;
+    render_memory.context = &address_space;
+    render_memory.read8 = fe8_address_space_read8;
     family_match = settings.extensions_enabled && fe8_detect_fe8u_family(&profile_memory);
     fprintf(stderr, "FE8 extensions: %s\n", family_match ?
         (fe8_detect_retail_fe8u(&profile_memory) ? "retail-layout profile" : "FE8U-family structural profile") :
@@ -536,7 +591,8 @@ int main(int argc, char **argv) {
     }
     sdl_initialized = 1;
     if (!fe8_host_video_init(&video, "FE8 Extended Frontend",
-            CANVAS_WIDTH, CANVAS_HEIGHT, settings.vsync_enabled)) {
+            CANVAS_WIDTH, CANVAS_HEIGHT,
+            settings.vsync_enabled && (!options.capture_path || options.realtime))) {
         fprintf(stderr, "Video setup failed: %s\n", SDL_GetError());
         goto cleanup;
     }
@@ -560,6 +616,7 @@ int main(int argc, char **argv) {
     }
     settings_revision = settings.revision;
     performance_frequency = SDL_GetPerformanceFrequency();
+    perf.started = SDL_GetPerformanceCounter();
     frame_period = (uint64_t)((double)performance_frequency * core->frameCycles(core) /
         core->frequency(core) + 0.5);
     frame_deadline = SDL_GetPerformanceCounter();
@@ -568,6 +625,11 @@ int main(int argc, char **argv) {
         (double)core->frequency(core) / core->frameCycles(core),
         video.vsync_active ? "enabled" : "disabled",
         fe8_host_shader_name(video.shader));
+
+    live_state_valid = family_match &&
+        fe8_extract_live_state(&profile_memory, profile, &live_state);
+    snapshot_valid = family_match &&
+        fe8_extract_snapshot(&profile_memory, profile, &snapshot);
 
     while (running) {
         SDL_Event event;
@@ -640,7 +702,8 @@ int main(int argc, char **argv) {
                 settings.zoom_sensitivity * 100.0,
                 fe8_host_speedup_name(settings.speedup_rate));
         }
-        snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
+        live_state_valid = family_match &&
+            fe8_extract_live_state(&profile_memory, profile, &live_state);
         if (snapshot_valid) {
             map_state.map_width = snapshot.map_width;
             map_state.map_height = snapshot.map_height;
@@ -930,16 +993,42 @@ int main(int argc, char **argv) {
             }
         }
 
-        ++frame_count;
-        core->setKeys(core, keyboard_keys |
-            (options.auto_continue && !large_map_ready ? scripted_continue_keys(frame_count) : 0) |
-            fe8_mouse_update(&mouse, &snapshot,
-                settings.mouse_enabled && snapshot_valid && visual_profile_active));
-        core->runFrame(core);
+        {
+            unsigned multiplier = speed_up_active ?
+                fe8_host_speedup_multiplier(settings.speedup_rate) : 1;
+            unsigned batch_limit = fe8_scheduler_batch_limit(
+                speed_up_active != 0, multiplier);
+            uint64_t batch_started = SDL_GetPerformanceCounter();
+            unsigned batch_index;
+            for (batch_index = 0; batch_index < batch_limit; ++batch_index) {
+                uint64_t stage_started = SDL_GetPerformanceCounter();
+                ++frame_count;
+                core->setKeys(core, keyboard_keys |
+                    (options.auto_continue && !large_map_ready ?
+                        scripted_continue_keys(frame_count) : 0) |
+                    fe8_mouse_update(&mouse, &live_state,
+                        settings.mouse_enabled && live_state_valid &&
+                        visual_profile_active));
+                core->runFrame(core);
+                perf.emulation += SDL_GetPerformanceCounter() - stage_started;
+                ++perf.emulated_frames;
+                live_state_valid = family_match &&
+                    fe8_extract_live_state(&profile_memory, profile, &live_state);
+                if (!multiplier && fe8_scheduler_unlimited_should_present(
+                        batch_index + 1, SDL_GetPerformanceCounter() - batch_started,
+                        performance_frequency))
+                    break;
+            }
+        }
         convert_framebuffer(video_buffer, video_stride, host_frame);
         if (audio_initialized)
             fe8_host_audio_drain(&audio);
-        snapshot_valid = family_match && fe8_extract_snapshot(&profile_memory, profile, &snapshot);
+        {
+            uint64_t stage_started = SDL_GetPerformanceCounter();
+            snapshot_valid = family_match &&
+                fe8_extract_snapshot(&profile_memory, profile, &snapshot);
+            perf.snapshot += SDL_GetPerformanceCounter() - stage_started;
+        }
         extension_active = 0;
         rendered_map_sprites = 0;
         Fe8FramePlacement frame_placement = {gba_x, gba_y, 0};
@@ -959,16 +1048,24 @@ int main(int argc, char **argv) {
                 (uint8_t)terrain_palette_offset : 11;
             map_state.fog_palette_bank_offset =
                 (uint8_t)((map_state.normal_palette_bank_offset + 11) & 0xF);
-            extension_active = fe8_render_extended_terrain(
-                &render_memory, &map_state, viewport, canvas, canvas_width);
+            {
+                uint64_t stage_started = SDL_GetPerformanceCounter();
+                extension_active = fe8_render_extended_terrain(
+                    &render_memory, &map_state, viewport, canvas, canvas_width);
+                perf.terrain += SDL_GetPerformanceCounter() - stage_started;
+            }
             if (extension_active) {
                 int camera_moving = previous_camera_valid &&
                     (snapshot.camera_x != previous_camera_x ||
                      snapshot.camera_y != previous_camera_y);
-                frame_placement = fe8_align_frame_to_terrain(
-                    host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
-                    canvas, canvas_width, canvas_height, canvas_width,
-                    viewport.gba_x, viewport.gba_y, camera_moving ? 8 : 0);
+                {
+                    uint64_t stage_started = SDL_GetPerformanceCounter();
+                    frame_placement = fe8_align_frame_to_terrain(
+                        host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
+                        canvas, canvas_width, canvas_height, canvas_width,
+                        viewport.gba_x, viewport.gba_y, camera_moving ? 8 : 0);
+                    perf.alignment += SDL_GetPerformanceCounter() - stage_started;
+                }
                 if (terrain_palette_offset < 0 &&
                         frame_placement.match_percent < 15 &&
                         frame_count >= next_terrain_profile_probe) {
@@ -1072,9 +1169,12 @@ int main(int argc, char **argv) {
             previous_camera_x = snapshot.camera_x;
             previous_camera_y = snapshot.camera_y;
             previous_camera_valid = 1;
-            if (extension_active)
+            if (extension_active) {
+                uint64_t stage_started = SDL_GetPerformanceCounter();
                 rendered_map_sprites = fe8_render_extended_units(&render_memory, &snapshot, viewport,
                     canvas, canvas_width, frame_count);
+                perf.units += SDL_GetPerformanceCounter() - stage_started;
+            }
         } else {
             previous_camera_valid = 0;
         }
@@ -1101,9 +1201,15 @@ int main(int argc, char **argv) {
             fe8_host_draw_mouse_cursor(canvas, canvas_width,
                 canvas_width, canvas_height,
                 host_pointer_canvas_x, host_pointer_canvas_y);
-        if (!fe8_host_video_present(&video, canvas)) {
+        {
+            uint64_t stage_started = SDL_GetPerformanceCounter();
+            int presented = fe8_host_video_present(&video, canvas);
+            perf.presentation += SDL_GetPerformanceCounter() - stage_started;
+            ++perf.presented_frames;
+            if (!presented) {
             fprintf(stderr, "Video presentation failed: %s\n", SDL_GetError());
             running = 0;
+            }
         }
         if (large_map_ready && options.state_out_path && !state_out_saved) {
             if (save_state(core, options.state_out_path)) {
@@ -1138,14 +1244,14 @@ int main(int argc, char **argv) {
             unsigned speedup_multiplier = speed_up_active ?
                 fe8_host_speedup_multiplier(settings.speedup_rate) : 1;
             if (speedup_multiplier != 0)
-                pace_frame(&frame_deadline,
-                    frame_period / speedup_multiplier,
-                    performance_frequency);
+                pace_frame(&frame_deadline, frame_period, performance_frequency);
         }
     }
     exit_code = EXIT_SUCCESS;
 
 cleanup:
+    if (options.perf_stats && perf.started)
+        print_perf_stats(&perf, performance_frequency);
     if (audio_initialized)
         fe8_host_audio_deinit(&audio);
     if (system_cursor_hidden)

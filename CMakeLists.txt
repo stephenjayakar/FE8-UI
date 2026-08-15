@@ -43,8 +43,10 @@ endif()
 
 add_executable(fe8-mgba-sdl
     app/src/main.c
+    app/src/address_space.c
     app/src/fe8_profile.c
     app/src/frame_alignment.c
+    app/src/frame_scheduler.c
     app/src/extended_map_renderer.c
     app/src/extended_unit_renderer.c
     app/src/mouse_controller.c

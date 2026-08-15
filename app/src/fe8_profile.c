@@ -248,51 +248,73 @@ static void extract_map_sprites(
         snapshot->map_sprite_count = 0;
 }
 
+bool fe8_extract_live_state(
+    const Fe8MemoryReader *memory, const Fe8Profile *profile, Fe8LiveState *state) {
+    uint16_t width;
+    uint16_t height;
+    if (!valid_reader(memory) || !profile || !state ||
+            !valid_ewram(profile->bm_state, 0x2C) ||
+            !valid_ewram(profile->play_state, 0x14) ||
+            !valid_ewram(profile->map_size, 4))
+        return false;
+    memset(state, 0, sizeof(*state));
+    width = read16(memory, profile->map_size);
+    height = read16(memory, profile->map_size + 2);
+    if (width == 0 || height == 0 || width > FE8_MAX_MAP_WIDTH || height > FE8_MAX_MAP_HEIGHT)
+        return false;
+    state->map_width = width;
+    state->map_height = height;
+    state->camera_x = (int16_t)read16(memory, profile->bm_state + 0x0C);
+    state->camera_y = (int16_t)read16(memory, profile->bm_state + 0x0E);
+    state->camera_max_x = (int16_t)read16(memory, profile->bm_state + 0x28);
+    state->camera_max_y = (int16_t)read16(memory, profile->bm_state + 0x2A);
+    state->cursor_x = (uint8_t)read16(memory, profile->bm_state + 0x14);
+    state->cursor_y = (uint8_t)read16(memory, profile->bm_state + 0x16);
+    state->cursor_target_x = (int16_t)read16(memory, profile->bm_state + 0x1C);
+    state->cursor_target_y = (int16_t)read16(memory, profile->bm_state + 0x1E);
+    state->cursor_display_x = (int16_t)read16(memory, profile->bm_state + 0x20);
+    state->cursor_display_y = (int16_t)read16(memory, profile->bm_state + 0x22);
+    state->active_unit_address = read32(memory, profile->active_unit);
+    state->game_state_bits = read8(memory, profile->bm_state + 0x04);
+    state->input_lock = read8(memory, profile->bm_state + 0x01);
+    state->chapter = read8(memory, profile->play_state + 0x0E);
+    state->phase = read8(memory, profile->play_state + 0x0F);
+    if (state->active_unit_address != 0 &&
+            !valid_ewram(state->active_unit_address, FE8_UNIT_SIZE))
+        return false;
+    return state->cursor_x < width && state->cursor_y < height &&
+        state->cursor_target_x >= 0 && state->cursor_target_y >= 0 &&
+        state->cursor_display_x >= 0 && state->cursor_display_y >= 0 &&
+        state->cursor_target_x <= (int)(width - 1) * 16 &&
+        state->cursor_target_y <= (int)(height - 1) * 16 &&
+        state->cursor_display_x <= (int)(width - 1) * 16 &&
+        state->cursor_display_y <= (int)(height - 1) * 16;
+}
+
 bool fe8_extract_snapshot(
     const Fe8MemoryReader *memory, const Fe8Profile *profile, Fe8Snapshot *snapshot) {
+    Fe8LiveState live;
     uint16_t width;
     uint16_t height;
     uint32_t map_handles[7];
     uint8_t *map_destinations[7];
     uint32_t map_flags[7];
     uint32_t i;
-    if (!valid_reader(memory) || !profile || !snapshot ||
-        !valid_ewram(profile->bm_state, 0x2C) || !valid_ewram(profile->play_state, 0x14) ||
-        !valid_ewram(profile->map_size, 4))
+    if (!snapshot || !fe8_extract_live_state(memory, profile, &live))
         return false;
     memset(snapshot, 0, sizeof(*snapshot));
-    width = read16(memory, profile->map_size);
-    height = read16(memory, profile->map_size + 2);
-    if (width == 0 || height == 0 || width > FE8_MAX_MAP_WIDTH || height > FE8_MAX_MAP_HEIGHT)
-        return false;
-    snapshot->map_width = width;
-    snapshot->map_height = height;
-    snapshot->camera_x = (int16_t)read16(memory, profile->bm_state + 0x0C);
-    snapshot->camera_y = (int16_t)read16(memory, profile->bm_state + 0x0E);
-    snapshot->camera_max_x = (int16_t)read16(memory, profile->bm_state + 0x28);
-    snapshot->camera_max_y = (int16_t)read16(memory, profile->bm_state + 0x2A);
-    snapshot->cursor_x = (uint8_t)read16(memory, profile->bm_state + 0x14);
-    snapshot->cursor_y = (uint8_t)read16(memory, profile->bm_state + 0x16);
-    snapshot->cursor_target_x = (int16_t)read16(memory, profile->bm_state + 0x1C);
-    snapshot->cursor_target_y = (int16_t)read16(memory, profile->bm_state + 0x1E);
-    snapshot->cursor_display_x = (int16_t)read16(memory, profile->bm_state + 0x20);
-    snapshot->cursor_display_y = (int16_t)read16(memory, profile->bm_state + 0x22);
-    snapshot->active_unit_address = read32(memory, profile->active_unit);
-    snapshot->game_state_bits = read8(memory, profile->bm_state + 0x04);
-    snapshot->input_lock = read8(memory, profile->bm_state + 0x01);
-    snapshot->chapter = read8(memory, profile->play_state + 0x0E);
-    snapshot->phase = read8(memory, profile->play_state + 0x0F);
-    if (snapshot->active_unit_address != 0 &&
-            !valid_ewram(snapshot->active_unit_address, FE8_UNIT_SIZE))
-        return false;
-    if (snapshot->cursor_x >= width || snapshot->cursor_y >= height ||
-            snapshot->cursor_target_x < 0 || snapshot->cursor_target_y < 0 ||
-            snapshot->cursor_display_x < 0 || snapshot->cursor_display_y < 0 ||
-            snapshot->cursor_target_x > (int)(width - 1) * 16 ||
-            snapshot->cursor_target_y > (int)(height - 1) * 16 ||
-            snapshot->cursor_display_x > (int)(width - 1) * 16 ||
-            snapshot->cursor_display_y > (int)(height - 1) * 16)
-        return false;
+    width = live.map_width;
+    height = live.map_height;
+#define COPY_LIVE(field) snapshot->field = live.field
+    COPY_LIVE(map_width); COPY_LIVE(map_height);
+    COPY_LIVE(camera_x); COPY_LIVE(camera_y);
+    COPY_LIVE(camera_max_x); COPY_LIVE(camera_max_y);
+    COPY_LIVE(cursor_x); COPY_LIVE(cursor_y);
+    COPY_LIVE(cursor_target_x); COPY_LIVE(cursor_target_y);
+    COPY_LIVE(cursor_display_x); COPY_LIVE(cursor_display_y);
+    COPY_LIVE(active_unit_address); COPY_LIVE(game_state_bits);
+    COPY_LIVE(input_lock); COPY_LIVE(chapter); COPY_LIVE(phase);
+#undef COPY_LIVE
 
     map_handles[0] = profile->map_terrain;
     map_handles[1] = profile->map_unit;

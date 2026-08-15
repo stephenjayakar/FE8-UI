@@ -1,10 +1,20 @@
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+add_executable(test_address_space
+    test_address_space.c
+    ../app/src/address_space.c)
+target_include_directories(test_address_space PRIVATE ../app/src)
+
 add_executable(test_fe8_profile
     test_fe8_profile.c
     ../app/src/fe8_profile.c)
 target_include_directories(test_fe8_profile PRIVATE ../app/src)
+
+add_executable(test_frame_scheduler
+    test_frame_scheduler.c
+    ../app/src/frame_scheduler.c)
+target_include_directories(test_frame_scheduler PRIVATE ../app/src)
 
 add_executable(test_extended_map_renderer
     test_extended_map_renderer.c
@@ -63,6 +73,8 @@ add_executable(test_host_cursor
 target_include_directories(test_host_cursor PRIVATE ../app/src)
 
 add_test(NAME fe8_profile COMMAND test_fe8_profile)
+add_test(NAME frame_scheduler COMMAND test_frame_scheduler)
+add_test(NAME address_space COMMAND test_address_space)
 add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
 add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)
 add_test(NAME frame_alignment COMMAND test_frame_alignment)
