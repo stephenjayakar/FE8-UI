@@ -50,6 +50,9 @@ int main(void) {
     int map_x = -1;
     int map_y = -1;
     unsigned index;
+    static Fe8HostPixel native_frame[240 * 160];
+    Fe8PaletteMapping mapping = {0};
+    Fe8TerrainCache *cache;
 
     memset(ewram, 0, sizeof(ewram));
     memset(palette, 0, sizeof(palette));
@@ -74,6 +77,34 @@ int main(void) {
     assert(fe8_canvas_to_map_tile(&state, viewport, 20, 8, &map_x, &map_y));
     assert(map_x == 1 && map_y == 0);
     assert(!fe8_canvas_to_map_tile(&state, viewport, 40, 8, &map_x, &map_y));
+
+    /* Infer a source-bank mapping independently, requiring two frames. */
+    for (index = 0; index < 8; ++index)
+        put16(ewram, 0x1000 + index * 2, UINT16_C(0x2001));
+    put16(palette, (7 * 16 + 1) * 2, 0x03E0);
+    for (index = 0; index < 240 * 160; ++index)
+        native_frame[index] = UINT32_C(0xFF101418);
+    for (map_y = 0; map_y < 16; ++map_y)
+        for (map_x = 0; map_x < 32; ++map_x)
+            native_frame[map_y * 240 + map_x] = UINT32_C(0xFF00FF00);
+    state.palette_mapping = &mapping;
+    cache = fe8_terrain_cache_create();
+    assert(cache);
+    state.tile_cache = cache;
+    assert(fe8_learn_palette_mapping(&memory, &state, native_frame, 240) == 0);
+    assert(fe8_learn_palette_mapping(&memory, &state, native_frame, 240) == 1);
+    assert((mapping.valid_mask[0] & (1u << 2)) != 0);
+    assert(mapping.bank[0][2] == 7);
+
+    assert(fe8_render_extended_terrain(&memory, &state, viewport, output, 32));
+    assert(output[0] == UINT32_C(0xFF00FF00));
+    fe8_palette_mapping_reset(&mapping);
+    assert(fe8_render_extended_terrain(&memory, &state, viewport, output, 32));
+    assert(output[0] == UINT32_C(0xFF00FF00)); /* last validated tile */
+    fe8_terrain_cache_reset(cache);
+    assert(fe8_render_extended_terrain(&memory, &state, viewport, output, 32));
+    assert(output[0] == UINT32_C(0xFF101418)); /* neutral, never guessed */
+    fe8_terrain_cache_destroy(cache);
     puts("extended renderer tests passed");
     return 0;
 }

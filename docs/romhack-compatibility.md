@@ -14,27 +14,27 @@ No ROM data or Pokémblem assets are included in this repository.
 
 Pokémblem's free-roaming overworld preserves the FE8 map dimensions, row
 pointers, metatile configuration, camera, and map-sprite handles used by the
-frontend. Its terrain palettes are loaded with bank offset 6, however, while
-standard FE8 maps normally add offset 11 to each metatile palette index.
+frontend, but its runtime terrain palette layout does not follow retail FE8's
+single bank offset.
 
-The renderer now treats normal and fog palette-bank offsets as map-render
-profile data. When the default layout does not visually match mGBA's canonical
-240×160 frame, the frontend probes all 16 possible bank offsets, selects only a
-candidate that passes the existing visual validator, and periodically retries
-while no candidate is valid. This is runtime structure detection rather than a
-Pokémblem filename or hash exception, so other FE8U hacks with relocated
-palette banks can use the same path.
+The renderer learns a separate destination for each of the 16 source palette
+banks by comparing decoded terrain inside mGBA's authoritative 240×160 frame.
+A bank needs at least 24 samples, 35% exact agreement, a ten-point lead over
+the runner-up, and the same result on two consecutive presented frames. Normal
+and fog banks are learned independently. Terrain using unresolved banks is never
+drawn with a guessed palette: the frontend reuses a previously validated tile
+or draws its neutral background. The mapping and tile cache are cleared when
+the chapter, map dimensions, tile rows, tileset configuration, ROM, or state
+changes. This is runtime structure detection rather than a filename/hash
+exception.
 
 ## Verified checkpoint
 
-The Pokémblem checkpoint in the local game library exposes a 24×20 overworld.
-At the stable outdoor frame the adaptive profile selected offset 6 with a 60%
-exact sampled-pixel match. FE8's complete linked SMS list contained 20 world
-sprites: four unit-backed actors plus 16 non-unit map sprites. Rendering the
-list extended Pokémblem's Trap Rework decorations, including rocks below the
-native viewport, without ROM-specific trap IDs or graphics addresses. A
-30-frame comparison also confirmed that an actor outside the native viewport
-continued to animate from live OBJ VRAM.
+The current Pokémblem checkpoint exposes a 24×40 overworld. The adaptive
+mapping raises the exact sampled-pixel match to 82% in its initial viewport;
+unresolved banks remain neutral until the canonical frame validates them.
+FE8's complete linked SMS list is still used to extend Pokémblem's Trap
+Rework decorations without ROM-specific trap IDs or graphics addresses.
 
 An existing Fire Emblem Archanea checkpoint was used as a regression case. It
 selected the standard offset 11 with an 84% match and rendered its 34×15 map
@@ -55,10 +55,11 @@ build/fe8-mgba-sdl.app/Contents/MacOS/fe8-mgba-sdl \
   --capture-after 150
 ```
 
-Expected log lines include `Terrain profile: palette offset 6` and `Extended
-renderer active`. The terrain-only output should show the whole map with
-correct colors; the composited output additionally includes the authoritative
-mGBA frame, menus and overlays, extended actors, and world-space trap effects.
+Expected log lines include `Terrain palette: learned` and `Extended renderer
+active`. The terrain-only output may contain neutral regions that have not yet
+appeared in the native frame; it must never contain a best-effort wrong palette.
+The composited output additionally includes the authoritative mGBA frame,
+menus and overlays, extended actors, and world-space trap effects.
 
 ## Remaining edge cases
 

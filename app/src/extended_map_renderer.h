@@ -18,6 +18,15 @@ typedef struct Fe8MemoryView {
     Fe8Read8 read8;
 } Fe8MemoryView;
 
+typedef struct Fe8PaletteMapping {
+    uint8_t bank[2][16];
+    uint16_t valid_mask[2];
+    uint8_t pending_bank[2][16];
+    uint8_t confirmation_frames[2][16];
+} Fe8PaletteMapping;
+
+typedef struct Fe8TerrainCache Fe8TerrainCache;
+
 typedef struct Fe8MapRenderState {
     uint16_t map_width;
     uint16_t map_height;
@@ -30,6 +39,8 @@ typedef struct Fe8MapRenderState {
     uint32_t palette;
     uint8_t normal_palette_bank_offset;
     uint8_t fog_palette_bank_offset;
+    Fe8PaletteMapping *palette_mapping;
+    Fe8TerrainCache *tile_cache;
 } Fe8MapRenderState;
 
 typedef struct Fe8ExtendedViewport {
@@ -51,6 +62,17 @@ bool fe8_render_extended_terrain(
     Fe8ExtendedViewport viewport,
     Fe8HostPixel *pixels,
     size_t stride_pixels);
+
+void fe8_palette_mapping_reset(Fe8PaletteMapping *mapping);
+unsigned fe8_learn_palette_mapping(
+    const Fe8MemoryView *memory,
+    const Fe8MapRenderState *state,
+    const Fe8HostPixel *native_frame,
+    size_t frame_stride);
+
+Fe8TerrainCache *fe8_terrain_cache_create(void);
+void fe8_terrain_cache_reset(Fe8TerrainCache *cache);
+void fe8_terrain_cache_destroy(Fe8TerrainCache *cache);
 
 /* Converts a host-canvas point to the map tile under it. */
 bool fe8_canvas_to_map_tile(
