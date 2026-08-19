@@ -9,42 +9,39 @@ static uint32_t cursor_color(char code) {
     switch (code) {
     case 'K': return UINT32_C(0xFF1F1018); /* ink outline */
     case 'W': return UINT32_C(0xFFEAC968); /* light FE blue */
-    case 'B': return UINT32_C(0xFFA45220); /* royal-blue inlay */
-    case 'G': return UINT32_C(0xFF48D3FF); /* gold trim */
-    case 'R': return UINT32_C(0xFF4030BE); /* red seal */
     default: return 0;
     }
 }
 
 void fe8_host_draw_mouse_cursor(uint32_t *pixels, size_t stride,
     int width, int height, int hotspot_x, int hotspot_y) {
-    /* A crisp tactician's pointer. The high-contrast silhouette remains
-     * readable over forests, water, range overlays, and native FE8 menus. */
+    /* A compact tactician's pointer. The continuous two-tone silhouette
+     * stays readable without overpowering native FE8 menus and map tiles. */
     static const char *const art[CURSOR_GRID] = {
-        "K.......................",
         "KK......................",
         "KWK.....................",
-        "KWGK....................",
-        "KWWGK...................",
-        "KWWBGK..................",
-        "KWWWBGK.................",
-        "KWWWWBGK................",
-        "KWWWWWBGK...............",
-        "KWWWWWWBGK..............",
-        "KWWWWWWWBGK.............",
-        "KWWWWWWWWBGK............",
-        "KWWWWWWWWWRGK...........",
-        "KWWWWWWKKKKKK...........",
-        "KWWWWKGBBGK.............",
-        "KWWWK.KGBBGK............",
-        "KWWK...KGBBGK...........",
-        "KWK.....KGBBGK..........",
-        "KK.......KGBBGK.........",
-        "K.........KGBGK.........",
-        "...........KGGK.........",
-        "............KK..........",
-        "........................",
-        "........................",
+        "KWWK....................",
+        "KWWWK...................",
+        "KWWWWK..................",
+        "KWWWWWK.................",
+        "KWWWWWWK................",
+        "KWWWWWWWK...............",
+        "KWWWWWWWWK..............",
+        "KWWWWWWWWWK.............",
+        "KWWWWWWWWWWK............",
+        "KWWWWWWWWWWWK...........",
+        "KWWWWWWWWWWWWK..........",
+        "KWWWWWWWWWWWWWK.........",
+        "KWWWWWKKKKKKKKKK........",
+        "KWWWWK.KWWWK............",
+        "KWWWK...KWWWK...........",
+        "KWWK....KWWWK...........",
+        "KWK......KWWWK..........",
+        "KK........KWWWK.........",
+        "K.........KWWWK.........",
+        "...........KWWWK........",
+        "............KWWWK.......",
+        ".............KKKK.......",
     };
     int y;
     if (!pixels || stride < (size_t)width || width <= 0 || height <= 0)
