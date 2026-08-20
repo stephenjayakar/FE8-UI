@@ -81,6 +81,10 @@ int main(void) {
     put_rom16(0x08809B10 + 0x24 + 2, 5);
     rom[0x809B10 + 0x24 + 0x14] = 40;
     rom[0x809B10 + 0x24 + 0x15] = 7;
+    rom[0x809B10 + 0x24 + 0x19] = 0x12;
+    rom[0x809B10 + 0x1C * 0x24 + 6] = 0x1C;
+    rom[0x809B10 + 0x2D * 0x24 + 6] = 0x2D;
+    rom[0x809B10 + 0x35 * 0x24 + 6] = 0x35;
     rom[0x809B10 + 0x38 * 0x24 + 6] = 0x38;
     put_rom16(0x08809B10 + 0x38 * 0x24, 4);
     put_rom32(0x08809B10 + 0x38 * 0x24 + 8, 2);
@@ -92,6 +96,7 @@ int main(void) {
         assert(strcmp(decoded, "Alice") == 0);
         assert(fe8_catalog_item(&memory, &catalog, 0x2801, &item));
         assert(strcmp(item.name, "Test Blade") == 0 && item.uses == 40 && item.might == 7);
+        assert(item.min_range == 1 && item.max_range == 2);
         assert(strcmp(item.description, "A dependable blade.") == 0);
         assert(fe8_catalog_item(&memory, &catalog, 0x2838, &item));
         assert(strcmp(item.name, "Fire") == 0 && !item.movable);
