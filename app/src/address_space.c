@@ -1,6 +1,10 @@
 #include "address_space.h"
 
+#include <mgba-util/sha1.h>
+
 #include <string.h>
+
+#define FE8_ROM_BASE UINT32_C(0x08000000)
 
 void fe8_address_space_init(
     Fe8AddressSpace *space, void *fallback_context, Fe8Read8 fallback_read8) {
@@ -20,6 +24,10 @@ bool fe8_address_space_add(
     block->base = base;
     block->data = data;
     block->size = size;
+    if (base == FE8_ROM_BASE) {
+        sha1Buffer(data, size, space->rom_sha1);
+        space->rom_sha1_valid = true;
+    }
     return true;
 }
 
@@ -36,4 +44,8 @@ uint8_t fe8_address_space_read8(void *context, uint32_t address) {
     }
     return space->fallback_read8 ?
         space->fallback_read8(space->fallback_context, address) : 0;
+}
+
+const uint8_t *fe8_address_space_rom_sha1(const Fe8AddressSpace *space) {
+    return space && space->rom_sha1_valid ? space->rom_sha1 : NULL;
 }

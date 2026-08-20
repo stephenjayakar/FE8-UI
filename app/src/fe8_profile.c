@@ -1,4 +1,5 @@
 #include "fe8_profile.h"
+#include "address_space.h"
 
 #include <string.h>
 
@@ -51,12 +52,17 @@
 #define FE8_ITEM_TABLE UINT32_C(0x08809B10)
 #define FE8_GET_CONVOY_ITEMS UINT32_C(0x0803159C)
 
-/* Fire Emblem Archanea keeps the retail FE8U header, but repoints both the
- * item table and the 200-slot convoy accessor in the validated ROM build. */
-#define ARCHANEA_ITEM_TABLE_LITERAL UINT32_C(0x080177C0)
-#define ARCHANEA_ITEM_TABLE UINT32_C(0x09AA54F8)
-#define ARCHANEA_GET_CONVOY_ITEMS UINT32_C(0x08031500)
-#define ARCHANEA_CONVOY_ITEMS UINT32_C(0x0203B200)
+/* Fire Emblem: Archanae keeps the FE8U header but uses a repointed item
+ * table and an expanded convoy. Inventory writes are enabled only for the
+ * exact tested ROM image. */
+#define ARCHANAE_ITEM_TABLE UINT32_C(0x09AA54F8)
+#define ARCHANAE_GET_CONVOY_ITEMS UINT32_C(0x08031500)
+#define ARCHANAE_CONVOY_ITEMS UINT32_C(0x0203B200)
+
+static const uint8_t s_archanae_sha1[FE8_ROM_SHA1_SIZE] = {
+    0x22, 0x0D, 0x1D, 0x6B, 0x5F, 0x56, 0xC9, 0xE2, 0x5E, 0xB6,
+    0x66, 0xA7, 0xF3, 0xDD, 0x7C, 0x48, 0x6A, 0x75, 0x94, 0x17,
+};
 
 #define FE8_PROFILE_COMMON \
     FE8_HEADER_TITLE, FE8_HEADER_GAME_CODE, FE8_HEADER_MAKER_CODE, 0, 0x9D, \
@@ -87,10 +93,10 @@ static const Fe8Profile s_sacred_echoes_profile = {
         UINT32_C(0x00000006)),
 };
 
-static const Fe8Profile s_archanea_profile = {
-    FE8_PROFILE_COMMON, ARCHANEA_CONVOY_ITEMS,
-    "Fire Emblem Archanea", "FIREEMBLEM2E",
-    FE8_INVENTORY_LAYOUT(ARCHANEA_ITEM_TABLE, ARCHANEA_GET_CONVOY_ITEMS, 200, 0),
+static const Fe8Profile s_archanae_profile = {
+    FE8_PROFILE_COMMON, ARCHANAE_CONVOY_ITEMS,
+    "Fire Emblem: Archanae", "FIREEMBLEM2E",
+    FE8_INVENTORY_LAYOUT(ARCHANAE_ITEM_TABLE, ARCHANAE_GET_CONVOY_ITEMS, 200, 0),
 };
 
 static bool valid_reader(const Fe8MemoryReader *memory) {
@@ -220,26 +226,19 @@ static uint32_t returned_pointer(
     return valid_ewram(result, 2) ? result : 0;
 }
 
-static bool archanea_inventory_signature(const Fe8MemoryReader *memory) {
-    uint32_t first_item = ARCHANEA_ITEM_TABLE + UINT32_C(0x24);
-    return valid_reader(memory) &&
-        valid_range(ARCHANEA_ITEM_TABLE_LITERAL, 4, FE8_ROM_START, FE8_ROM_END) &&
-        valid_range(first_item, UINT32_C(0x24), FE8_ROM_START, FE8_ROM_END) &&
-        read32(memory, ARCHANEA_ITEM_TABLE_LITERAL) == ARCHANEA_ITEM_TABLE &&
-        read8(memory, first_item + 6) == 1 &&
-        returned_pointer(memory, ARCHANEA_GET_CONVOY_ITEMS) ==
-            ARCHANEA_CONVOY_ITEMS;
-}
-
 const Fe8Profile *fe8u_profile(void) {
     return &s_fe8u_profile;
 }
 
 const Fe8Profile *fe8_profile_for_rom(const Fe8MemoryReader *memory) {
+    const uint8_t *rom_sha1 = NULL;
     if (!fe8u_family_header(memory))
         return &s_fe8u_profile;
-    if (archanea_inventory_signature(memory))
-        return &s_archanea_profile;
+    if (memory->read8 == fe8_address_space_read8)
+        rom_sha1 = fe8_address_space_rom_sha1(memory->context);
+    if (rom_sha1 &&
+            memcmp(rom_sha1, s_archanae_sha1, sizeof(s_archanae_sha1)) == 0)
+        return &s_archanae_profile;
     if (returned_pointer(memory, FE8_GET_CONVOY_ITEMS) ==
             SACRED_ECHOES_CONVOY_ITEMS)
         return &s_sacred_echoes_profile;

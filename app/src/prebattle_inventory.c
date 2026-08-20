@@ -57,7 +57,7 @@ static void resolve_supply(const Fe8MemoryReader *memory, const Fe8Profile *prof
         uint32_t literal = ((accessor + 4) & ~UINT32_C(3)) +
             (uint32_t)(load & 0xFF) * 4;
         uint32_t discovered = read32(memory, literal);
-        if (valid_range(discovered, FE8_SUPPLY_RETAIL_CAPACITY * 2,
+        if (valid_range(discovered, (uint32_t)*capacity * 2,
                 FE8_EWRAM_START, FE8_EWRAM_END))
             *address = discovered;
     }
