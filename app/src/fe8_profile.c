@@ -48,6 +48,15 @@
 #define FE8_CLASS_ATTRIBUTES_OFFSET UINT32_C(0x28)
 #define FE8_CONVOY_ITEMS UINT32_C(0x0203A81C)
 #define SACRED_ECHOES_CONVOY_ITEMS UINT32_C(0x0203B200)
+#define FE8_ITEM_TABLE UINT32_C(0x08809B10)
+#define FE8_GET_CONVOY_ITEMS UINT32_C(0x0803159C)
+
+/* Fire Emblem Archanea keeps the retail FE8U header, but repoints both the
+ * item table and the 200-slot convoy accessor in the validated ROM build. */
+#define ARCHANEA_ITEM_TABLE_LITERAL UINT32_C(0x080177C0)
+#define ARCHANEA_ITEM_TABLE UINT32_C(0x09AA54F8)
+#define ARCHANEA_GET_CONVOY_ITEMS UINT32_C(0x08031500)
+#define ARCHANEA_CONVOY_ITEMS UINT32_C(0x0203B200)
 
 #define FE8_PROFILE_COMMON \
     FE8_HEADER_TITLE, FE8_HEADER_GAME_CODE, FE8_HEADER_MAKER_CODE, 0, 0x9D, \
@@ -57,16 +66,16 @@
     FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS, FE8_ACTIVE_UNIT, \
     FE8_SMS_HANDLE_ARRAY, FE8_MAP_ANIMATION_STATE, FE8_BG1_TILEMAP, FE8_BG2_TILEMAP
 
-#define FE8_INVENTORY_LAYOUT(capacity, immovable_attributes) { \
+#define FE8_INVENTORY_LAYOUT(item_table, get_convoy_items, capacity, immovable_attributes) { \
     UINT32_C(0x0800A2A0), UINT32_C(0x080006DC), UINT32_C(0x080006E0), \
-    UINT32_C(0x08809B10), UINT32_C(0x08005524), UINT32_C(0x0803159C), capacity, \
+    item_table, UINT32_C(0x08005524), get_convoy_items, capacity, \
     immovable_attributes \
 }
 
 static const Fe8Profile s_fe8u_profile = {
     FE8_PROFILE_COMMON, FE8_CONVOY_ITEMS,
-    "Fire Emblem 8 (FE8U)", "FIREEMBLEM8",
-    FE8_INVENTORY_LAYOUT(100, 0),
+    "Fire Emblem 8 (FE8U)", "FIREEMBLEM2E",
+    FE8_INVENTORY_LAYOUT(FE8_ITEM_TABLE, FE8_GET_CONVOY_ITEMS, 100, 0),
 };
 
 static const Fe8Profile s_sacred_echoes_profile = {
@@ -74,7 +83,14 @@ static const Fe8Profile s_sacred_echoes_profile = {
     "Sacred Echoes", "FIREEMBLEM2E",
     /* Sacred Echoes spells are learned abilities represented as magic/staff
        items. Native inventory management never permits transferring them. */
-    FE8_INVENTORY_LAYOUT(200, UINT32_C(0x00000006)),
+    FE8_INVENTORY_LAYOUT(FE8_ITEM_TABLE, FE8_GET_CONVOY_ITEMS, 200,
+        UINT32_C(0x00000006)),
+};
+
+static const Fe8Profile s_archanea_profile = {
+    FE8_PROFILE_COMMON, ARCHANEA_CONVOY_ITEMS,
+    "Fire Emblem Archanea", "FIREEMBLEM2E",
+    FE8_INVENTORY_LAYOUT(ARCHANEA_ITEM_TABLE, ARCHANEA_GET_CONVOY_ITEMS, 200, 0),
 };
 
 static bool valid_reader(const Fe8MemoryReader *memory) {
@@ -161,7 +177,8 @@ static bool map_hp_bar_patch_present(const Fe8MemoryReader *memory) {
     return (target & 1) != 0 && valid_pointer(target & ~UINT32_C(1));
 }
 
-static bool read_header_bytes(const Fe8MemoryReader *memory, uint32_t address, const char *expected, uint32_t size) {
+static bool read_header_bytes(const Fe8MemoryReader *memory, uint32_t address,
+    const char *expected, uint32_t size) {
     uint32_t i;
     if (!valid_range(address, size, FE8_ROM_START, FE8_ROM_END))
         return false;
@@ -171,24 +188,66 @@ static bool read_header_bytes(const Fe8MemoryReader *memory, uint32_t address, c
     return true;
 }
 
+static bool fe8u_family_header(const Fe8MemoryReader *memory) {
+    static const char game_code[] = "BE8E";
+    static const char maker_code[] = "01";
+    return valid_reader(memory) &&
+        read_header_bytes(memory, FE8_HEADER_GAME_CODE,
+            game_code, sizeof(game_code) - 1) &&
+        read_header_bytes(memory, FE8_HEADER_MAKER_CODE,
+            maker_code, sizeof(maker_code) - 1);
+}
+
+static uint32_t returned_pointer(
+    const Fe8MemoryReader *memory, uint32_t function_address) {
+    uint16_t load;
+    uint16_t branch;
+    uint32_t literal;
+    uint32_t result;
+    if (!valid_reader(memory) ||
+            !valid_range(function_address, 4, FE8_ROM_START, FE8_ROM_END))
+        return 0;
+    load = read16(memory, function_address);
+    branch = read16(memory, function_address + 2);
+    if ((load & UINT16_C(0xF800)) != UINT16_C(0x4800) ||
+            branch != UINT16_C(0x4770))
+        return 0;
+    literal = ((function_address + 4) & ~UINT32_C(3)) +
+        (uint32_t)(load & 0xFF) * 4;
+    if (!valid_range(literal, 4, FE8_ROM_START, FE8_ROM_END))
+        return 0;
+    result = read32(memory, literal);
+    return valid_ewram(result, 2) ? result : 0;
+}
+
+static bool archanea_inventory_signature(const Fe8MemoryReader *memory) {
+    uint32_t first_item = ARCHANEA_ITEM_TABLE + UINT32_C(0x24);
+    return valid_reader(memory) &&
+        valid_range(ARCHANEA_ITEM_TABLE_LITERAL, 4, FE8_ROM_START, FE8_ROM_END) &&
+        valid_range(first_item, UINT32_C(0x24), FE8_ROM_START, FE8_ROM_END) &&
+        read32(memory, ARCHANEA_ITEM_TABLE_LITERAL) == ARCHANEA_ITEM_TABLE &&
+        read8(memory, first_item + 6) == 1 &&
+        returned_pointer(memory, ARCHANEA_GET_CONVOY_ITEMS) ==
+            ARCHANEA_CONVOY_ITEMS;
+}
+
 const Fe8Profile *fe8u_profile(void) {
     return &s_fe8u_profile;
 }
 
 const Fe8Profile *fe8_profile_for_rom(const Fe8MemoryReader *memory) {
-    if (valid_reader(memory) && read_header_bytes(memory, FE8_HEADER_TITLE,
-            s_sacred_echoes_profile.rom_title_match, 12))
+    if (!fe8u_family_header(memory))
+        return &s_fe8u_profile;
+    if (archanea_inventory_signature(memory))
+        return &s_archanea_profile;
+    if (returned_pointer(memory, FE8_GET_CONVOY_ITEMS) ==
+            SACRED_ECHOES_CONVOY_ITEMS)
         return &s_sacred_echoes_profile;
     return &s_fe8u_profile;
 }
 
 bool fe8_detect_fe8u_family(const Fe8MemoryReader *memory) {
-    static const char game_code[] = "BE8E";
-    static const char maker_code[] = "01";
-    if (!valid_reader(memory))
-        return false;
-    return read_header_bytes(memory, FE8_HEADER_GAME_CODE, game_code, sizeof(game_code) - 1) &&
-        read_header_bytes(memory, FE8_HEADER_MAKER_CODE, maker_code, sizeof(maker_code) - 1);
+    return fe8u_family_header(memory);
 }
 
 bool fe8_detect_retail_fe8u(const Fe8MemoryReader *memory) {
