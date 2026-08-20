@@ -13,6 +13,7 @@
 #include "extended_presentation.h"
 #include "extended_unit_renderer.h"
 #include "fe8_profile.h"
+#include "fe8_catalog.h"
 #include "frame_alignment.h"
 #include "frame_scheduler.h"
 #include "host_audio.h"
@@ -22,6 +23,8 @@
 #include "macos_library.h"
 #include "macos_settings.h"
 #include "mouse_controller.h"
+#include "prebattle_inventory.h"
+#include "prebattle_inventory_ui.h"
 #include "viewport_controller.h"
 
 #include <errno.h>
@@ -55,6 +58,8 @@ struct fe8_options {
     int seek_large_map;
     int realtime;
     int perf_stats;
+    int mute;
+    int open_inventory;
 };
 
 typedef struct Fe8PerfStats {
@@ -89,7 +94,7 @@ static void usage(const char *program) {
         "       [--capture-after FRAMES]\n"
         "       [--auto-continue] [--seek-large-map]\n"
         "       [--state-out MAP_STATE.ss] [--quick-state QUICK_STATE.ss]\n"
-        "       [--realtime] [--perf-stats]\n"
+        "       [--realtime] [--perf-stats] [--mute] [--inventory]\n"
         "       [--no-extensions]\n", program);
 }
 
@@ -137,6 +142,12 @@ static int parse_options(int argc, char **argv, struct fe8_options *options) {
         } else if (strcmp(argv[i], "--perf-stats") == 0) {
             options->perf_stats = 1;
             continue;
+        } else if (strcmp(argv[i], "--mute") == 0) {
+            options->mute = 1;
+            continue;
+        } else if (strcmp(argv[i], "--inventory") == 0) {
+            options->open_inventory = 1;
+            continue;
         }
         else if (strcmp(argv[i], "--no-extensions") == 0) {
             options->extensions = 0;
@@ -183,6 +194,11 @@ static void update_hotkeys(
 static uint8_t core_read8(void *context, uint32_t address) {
     struct mCore *core = context;
     return core->busRead8(core, address);
+}
+
+static void core_write8(void *context, uint32_t address, uint8_t value) {
+    struct mCore *core = context;
+    core->busWrite8(core, address, value);
 }
 
 static void map_core_memory(Fe8AddressSpace *space, struct mCore *core) {
@@ -440,6 +456,23 @@ static int resize_canvas(Fe8HostPixel **canvas,
     return 1;
 }
 
+static int set_inventory_presentation(Fe8HostVideo *video,
+    Fe8HostPixel **canvas, int *canvas_width, int *canvas_height,
+    Fe8ExtendedViewport *viewport, int *gba_x, int *gba_y,
+    Fe8InventoryUi *ui, int enabled, enum Fe8HostShader game_shader) {
+    int density = enabled ? 2 : 1;
+    if (!fe8_host_video_set_content_density(video, density) ||
+            !resize_canvas(canvas, canvas_width, canvas_height, viewport, video))
+        return 0;
+    ui->render_scale = density;
+    *gba_x = (*canvas_width - GBA_WIDTH) / 2;
+    *gba_y = (*canvas_height - GBA_HEIGHT) / 2;
+    viewport->gba_x = *gba_x;
+    viewport->gba_y = *gba_y;
+    return fe8_host_video_set_shader(video,
+        enabled ? FE8_HOST_SHADER_OFF : game_shader);
+}
+
 static uint32_t scripted_continue_keys(unsigned frame) {
     struct scripted_press { unsigned frame; uint32_t key; };
     static const struct scripted_press presses[] = {
@@ -470,6 +503,7 @@ int main(int argc, char **argv) {
     struct mCore *core = NULL;
     const Fe8Profile *profile = fe8u_profile();
     Fe8MemoryReader profile_memory;
+    Fe8MemoryWriter profile_writer;
     Fe8MemoryView render_memory;
     Fe8AddressSpace address_space;
     Fe8LiveState live_state = {0};
@@ -483,6 +517,16 @@ int main(int argc, char **argv) {
     Fe8HostAudio audio = {0};
     Fe8HostVideo video = {0};
     Fe8MouseController mouse = {0};
+    Fe8InventoryUi inventory_ui;
+    Fe8Catalog inventory_catalog = {0};
+    Fe8InventorySnapshot inventory_snapshot = {0};
+    struct {
+        int valid;
+        Fe8InventoryEndpoint first;
+        Fe8InventoryEndpoint second;
+        uint16_t first_item;
+        uint16_t second_item;
+    } inventory_undo = {0};
     struct pan_controller pan = {0};
     mColor *video_buffer = NULL;
     Fe8HostPixel *host_frame = NULL;
@@ -530,6 +574,7 @@ int main(int argc, char **argv) {
     uint32_t map_identity_rows = 0;
     uint32_t map_identity_config = 0;
     int map_identity_valid = 0;
+    int hp_bars_detected = 0;
     int speed_up_active = 0;
     int previous_camera_valid = 0;
     int pointer_tile_valid = 0;
@@ -556,6 +601,9 @@ int main(int argc, char **argv) {
     }
     fe8_host_settings_init(&settings);
     fe8_macos_load_settings(&settings);
+    if (options.mute)
+        settings.audio_enabled = 0;
+    fe8_inventory_ui_init(&inventory_ui);
     if (!options.extensions)
         settings.extensions_enabled = 0;
     fprintf(stderr, "Starting libmGBA core: %s\n", options.rom_path);
@@ -596,11 +644,15 @@ int main(int argc, char **argv) {
     map_core_memory(&address_space, core);
     profile_memory.context = &address_space;
     profile_memory.read8 = fe8_address_space_read8;
+    profile = fe8_profile_for_rom(&profile_memory);
+    profile_writer.context = core;
+    profile_writer.write8 = core_write8;
+    if (!fe8_catalog_init(&profile_memory, profile, &inventory_catalog))
+        fprintf(stderr, "Inventory metadata unavailable for this ROM\n");
     render_memory.context = &address_space;
     render_memory.read8 = fe8_address_space_read8;
     family_match = settings.extensions_enabled && fe8_detect_fe8u_family(&profile_memory);
-    fprintf(stderr, "FE8 extensions: %s\n", family_match ?
-        (fe8_detect_retail_fe8u(&profile_memory) ? "retail-layout profile" : "FE8U-family structural profile") :
+    fprintf(stderr, "FE8 extensions: %s\n", family_match ? profile->profile_name :
         (!settings.extensions_enabled ? "disabled by settings" : "disabled (unknown ROM)"));
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO) != 0) {
@@ -648,11 +700,30 @@ int main(int argc, char **argv) {
         fe8_extract_live_state(&profile_memory, profile, &live_state);
     snapshot_valid = family_match &&
         fe8_extract_snapshot(&profile_memory, profile, &snapshot);
+    if (options.open_inventory && family_match &&
+            fe8_extract_prebattle_inventory(&profile_memory, profile,
+                &inventory_catalog, &inventory_snapshot)) {
+        fe8_inventory_ui_open(&inventory_ui);
+        if (!set_inventory_presentation(&video, &canvas, &canvas_width,
+                &canvas_height, &viewport, &gba_x, &gba_y,
+                &inventory_ui, 1, settings.shader))
+            goto cleanup;
+        options.open_inventory = 0;
+        fprintf(stderr, "Inventory manager: auto-opened (%u units, %u supply items, supply=%08X/%u)\n",
+            inventory_snapshot.unit_count, inventory_snapshot.supply_count,
+            inventory_snapshot.supply_address, inventory_snapshot.supply_capacity);
+    }
 
     while (running) {
         SDL_Event event;
         if (state_reload_generation != applied_state_reload_generation) {
             applied_state_reload_generation = state_reload_generation;
+            if (inventory_ui.active)
+                set_inventory_presentation(&video, &canvas, &canvas_width,
+                    &canvas_height, &viewport, &gba_x, &gba_y,
+                    &inventory_ui, 0, settings.shader);
+            inventory_ui.active = 0;
+            inventory_undo.valid = 0;
             map_identity_valid = 0;
             fe8_palette_mapping_reset(&palette_mapping);
             fe8_terrain_cache_reset(terrain_cache);
@@ -738,6 +809,21 @@ int main(int argc, char **argv) {
         }
         live_state_valid = family_match &&
             fe8_extract_live_state(&profile_memory, profile, &live_state);
+        if (options.open_inventory && family_match &&
+                fe8_extract_prebattle_inventory(&profile_memory, profile,
+                    &inventory_catalog, &inventory_snapshot)) {
+            fe8_inventory_ui_open(&inventory_ui);
+            if (!set_inventory_presentation(&video, &canvas, &canvas_width,
+                    &canvas_height, &viewport, &gba_x, &gba_y,
+                    &inventory_ui, 1, settings.shader))
+                goto cleanup;
+            options.open_inventory = 0;
+            keyboard_keys = 0;
+            fprintf(stderr,
+                "Inventory manager: auto-opened (%u units, %u supply items, supply=%08X/%u)\n",
+                inventory_snapshot.unit_count, inventory_snapshot.supply_count,
+                inventory_snapshot.supply_address, inventory_snapshot.supply_capacity);
+        }
         if (snapshot_valid) {
             map_state.map_width = snapshot.map_width;
             map_state.map_height = snapshot.map_height;
@@ -786,7 +872,8 @@ int main(int argc, char **argv) {
         }
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_MOUSEMOTION) {
-                if (settings.mouse_enabled && fe8_host_video_window_to_canvas(
+                if ((settings.mouse_enabled || inventory_ui.active) &&
+                        fe8_host_video_window_to_canvas(
                         &video, event.motion.x, event.motion.y,
                         &host_pointer_canvas_x, &host_pointer_canvas_y)) {
                     host_pointer_visible = 1;
@@ -810,7 +897,7 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_WINDOWEVENT &&
                     event.window.event == SDL_WINDOWEVENT_ENTER &&
-                    settings.mouse_enabled) {
+                    (settings.mouse_enabled || inventory_ui.active)) {
                 int window_x;
                 int window_y;
                 SDL_GetMouseState(&window_x, &window_y);
@@ -820,6 +907,150 @@ int main(int argc, char **argv) {
                     SDL_ShowCursor(SDL_DISABLE);
                     system_cursor_hidden = 1;
                 }
+            }
+            if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                    event.key.keysym.scancode == SDL_SCANCODE_I) {
+                if (inventory_ui.active) {
+                    inventory_ui.active = 0;
+                    inventory_ui.has_selection = 0;
+                    set_inventory_presentation(&video, &canvas, &canvas_width,
+                        &canvas_height, &viewport, &gba_x, &gba_y,
+                        &inventory_ui, 0, settings.shader);
+                    frame_deadline = SDL_GetPerformanceCounter();
+                    fprintf(stderr, "Inventory manager: closed\n");
+                } else if (fe8_detect_fe8u_family(&profile_memory) &&
+                        fe8_extract_prebattle_inventory(
+                            &profile_memory, profile, &inventory_catalog,
+                            &inventory_snapshot)) {
+                    fe8_inventory_ui_open(&inventory_ui);
+                    if (!set_inventory_presentation(&video, &canvas,
+                            &canvas_width, &canvas_height, &viewport,
+                            &gba_x, &gba_y, &inventory_ui, 1, settings.shader))
+                        running = 0;
+                    inventory_undo.valid = 0;
+                    keyboard_keys = 0;
+                    hotkeys_down = 0;
+                    fe8_mouse_cancel(&mouse);
+                    fprintf(stderr,
+                        "Inventory manager: opened (%u units, %u supply items, supply=%08X/%u)\n",
+                        inventory_snapshot.unit_count, inventory_snapshot.supply_count,
+                        inventory_snapshot.supply_address, inventory_snapshot.supply_capacity);
+                } else {
+                    fprintf(stderr,
+                        "Inventory manager unavailable: no active FE8 roster\n");
+                }
+                continue;
+            }
+            if (inventory_ui.active) {
+                if (event.type == SDL_QUIT) {
+                    running = 0;
+                } else if (event.type == SDL_MOUSEMOTION) {
+                    int index;
+                    Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
+                        &inventory_snapshot, canvas_width, canvas_height,
+                        host_pointer_canvas_x, host_pointer_canvas_y, &index);
+                    fe8_inventory_ui_inspect(&inventory_ui, &inventory_snapshot,
+                        hit, index);
+                } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                        event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                    inventory_ui.active = 0;
+                    set_inventory_presentation(&video, &canvas, &canvas_width,
+                        &canvas_height, &viewport, &gba_x, &gba_y,
+                        &inventory_ui, 0, settings.shader);
+                    frame_deadline = SDL_GetPerformanceCounter();
+                    fprintf(stderr, "Inventory manager: closed\n");
+                } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                        event.key.keysym.scancode == SDL_SCANCODE_U &&
+                        inventory_undo.valid) {
+                    if (fe8_swap_inventory_endpoints(&profile_memory, &profile_writer,
+                            profile, inventory_undo.first, inventory_undo.second_item,
+                            inventory_undo.second, inventory_undo.first_item)) {
+                        fe8_extract_prebattle_inventory(
+                            &profile_memory, profile, &inventory_catalog,
+                            &inventory_snapshot);
+                        snprintf(inventory_ui.status, sizeof(inventory_ui.status),
+                            "UNDID LAST SWAP");
+                        inventory_undo.valid = 0;
+                    }
+                } else if (event.type == SDL_MOUSEWHEEL) {
+                    int direction = event.wheel.y > 0 ? -3 :
+                        event.wheel.y < 0 ? 3 : 0;
+                    if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+                        direction = -direction;
+                    fe8_inventory_ui_scroll(&inventory_ui, direction,
+                        &inventory_snapshot, canvas_width, canvas_height,
+                        host_pointer_canvas_x);
+                } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                        event.button.button == SDL_BUTTON_RIGHT) {
+                    inventory_ui.has_selection = 0;
+                    snprintf(inventory_ui.status, sizeof(inventory_ui.status),
+                        "SELECTION CLEARED");
+                } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                        event.button.button == SDL_BUTTON_LEFT) {
+                    int canvas_x;
+                    int canvas_y;
+                    int index;
+                    if (fe8_host_video_window_to_canvas(&video,
+                            event.button.x, event.button.y, &canvas_x, &canvas_y)) {
+                        Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
+                            &inventory_snapshot, canvas_width, canvas_height,
+                            canvas_x, canvas_y, &index);
+                        if (hit == FE8_INVENTORY_HIT_ROSTER &&
+                                index >= 0 && index < inventory_snapshot.unit_count) {
+                            inventory_ui.current_unit = index;
+                            if (inventory_ui.has_selection)
+                                snprintf(inventory_ui.status, sizeof(inventory_ui.status),
+                                    "SELECT A DESTINATION ON %s",
+                                    inventory_snapshot.units[index].name);
+                            else
+                                snprintf(inventory_ui.status, sizeof(inventory_ui.status),
+                                    "SELECT AN ITEM FOR %s",
+                                    inventory_snapshot.units[index].name);
+                        } else if (hit == FE8_INVENTORY_HIT_UNIT_ITEM ||
+                                hit == FE8_INVENTORY_HIT_SUPPLY_ITEM) {
+                            Fe8InventoryEndpoint endpoint = fe8_inventory_ui_endpoint(
+                                &inventory_ui, &inventory_snapshot, hit, index);
+                            fe8_inventory_ui_inspect(&inventory_ui,
+                                &inventory_snapshot, hit, index);
+                            uint16_t endpoint_item = fe8_inventory_ui_endpoint_item(
+                                &inventory_snapshot, endpoint);
+                            if (endpoint_item && !fe8_inventory_ui_endpoint_movable(
+                                    &inventory_snapshot, endpoint)) {
+                                snprintf(inventory_ui.status, sizeof(inventory_ui.status),
+                                    "SPELLS ARE LEARNED - THEY CANNOT BE MOVED");
+                            } else if (!inventory_ui.has_selection) {
+                                inventory_ui.selected = endpoint;
+                                inventory_ui.has_selection = 1;
+                                snprintf(inventory_ui.status, sizeof(inventory_ui.status),
+                                    "SELECT A DESTINATION - RIGHT CLICK TO CANCEL");
+                            } else {
+                                uint16_t first_item = fe8_inventory_ui_endpoint_item(
+                                    &inventory_snapshot, inventory_ui.selected);
+                                if (fe8_swap_inventory_endpoints(&profile_memory,
+                                    &profile_writer, profile, inventory_ui.selected,
+                                    first_item, endpoint, endpoint_item)) {
+                                inventory_undo.valid = 1;
+                                inventory_undo.first = inventory_ui.selected;
+                                inventory_undo.first_item = first_item;
+                                inventory_undo.second = endpoint;
+                                inventory_undo.second_item = endpoint_item;
+                                fe8_extract_prebattle_inventory(
+                                    &profile_memory, profile, &inventory_catalog,
+                                    &inventory_snapshot);
+                                snprintf(inventory_ui.status,
+                                    sizeof(inventory_ui.status),
+                                    "MOVED - PRESS U TO UNDO");
+                                } else {
+                                snprintf(inventory_ui.status,
+                                    sizeof(inventory_ui.status),
+                                    "MOVE REJECTED - GAME STATE CHANGED");
+                                }
+                                inventory_ui.has_selection = 0;
+                            }
+                        }
+                    }
+                }
+                continue;
             }
             if (event.type == SDL_QUIT) {
                 running = 0;
@@ -1030,7 +1261,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        {
+        if (!inventory_ui.active) {
             unsigned multiplier = speed_up_active ?
                 fe8_host_speedup_multiplier(settings.speedup_rate) : 1;
             unsigned batch_limit = fe8_scheduler_batch_limit(
@@ -1065,6 +1296,17 @@ int main(int argc, char **argv) {
             snapshot_valid = family_match &&
                 fe8_extract_snapshot(&profile_memory, profile, &snapshot);
             perf.snapshot += SDL_GetPerformanceCounter() - stage_started;
+        }
+        if (snapshot_valid) {
+            if (snapshot.flags & FE8_SNAPSHOT_HP_BARS)
+                hp_bars_detected = 1;
+            else if (!hp_bars_detected &&
+                    fe8_detect_native_unit_hp_bars(&render_memory, &snapshot)) {
+                hp_bars_detected = 1;
+                fprintf(stderr, "Extended unit HP bars detected\n");
+            }
+            if (hp_bars_detected)
+                snapshot.flags |= FE8_SNAPSHOT_HP_BARS;
         }
         extension_active = 0;
         rendered_map_sprites = 0;
@@ -1112,7 +1354,8 @@ int main(int argc, char **argv) {
                     frozen_canvas, frozen_canvas_width, frozen_canvas_height,
                     frozen_canvas_width, frozen_placement.x, frozen_placement.y, 0);
                 fe8_presentation_update(&presentation, true,
-                    validation.match_percent >= 15);
+                    validation.match_percent >= 15,
+                    snapshot.combat_panel_active);
                 visual_profile_active = presentation.state == FE8_PRESENTATION_LIVE;
                 extension_active = 1;
             } else {
@@ -1145,7 +1388,7 @@ int main(int argc, char **argv) {
                     frame_compatible = frame_placement.match_percent >= 15;
                 }
                 fe8_presentation_update(&presentation, terrain_rendered,
-                    frame_compatible != 0);
+                    frame_compatible != 0, snapshot.combat_panel_active);
                 visual_profile_active = presentation.state == FE8_PRESENTATION_LIVE;
                 extension_active = visual_profile_active;
                 if (presentation.state == FE8_PRESENTATION_FROZEN && frozen_valid) {
@@ -1155,6 +1398,9 @@ int main(int argc, char **argv) {
                     extension_active = 1;
                 } else if (extension_active) {
                     uint64_t stage_started = SDL_GetPerformanceCounter();
+                    fe8_render_extended_move_range(
+                        &render_memory, &snapshot, viewport, canvas,
+                        canvas_width);
                     rendered_map_sprites = fe8_render_extended_units(
                         &render_memory, &snapshot, viewport, canvas,
                         canvas_width, frame_count);
@@ -1217,7 +1463,7 @@ int main(int argc, char **argv) {
                      presentation.state == FE8_PRESENTATION_FROZEN) &&
                     frozen_canvas_width == canvas_width &&
                     frozen_canvas_height == canvas_height) {
-                fe8_presentation_update(&presentation, true, false);
+                fe8_presentation_update(&presentation, true, false, false);
                 visual_profile_active = 0;
                 memcpy(canvas, frozen_canvas,
                     (size_t)canvas_width * canvas_height * sizeof(*canvas));
@@ -1244,7 +1490,10 @@ int main(int argc, char **argv) {
             canvas_width, canvas_height,
             extension_active ? frame_placement.x : gba_x,
             extension_active ? frame_placement.y : gba_y);
-        if (settings.mouse_enabled && host_pointer_visible)
+        if (inventory_ui.active)
+            fe8_inventory_ui_draw(&inventory_ui, &inventory_snapshot,
+                canvas, canvas_width, canvas_width, canvas_height);
+        if ((settings.mouse_enabled || inventory_ui.active) && host_pointer_visible)
             fe8_host_draw_mouse_cursor(canvas, canvas_width,
                 canvas_width, canvas_height,
                 host_pointer_canvas_x, host_pointer_canvas_y);
@@ -1268,7 +1517,9 @@ int main(int argc, char **argv) {
             }
         }
         if (options.capture_path &&
-                ((!options.seek_large_map && frame_count >= options.capture_after) ||
+                ((!options.seek_large_map &&
+                    (frame_count >= options.capture_after ||
+                     (inventory_ui.active && perf.presented_frames >= options.capture_after))) ||
                  (options.seek_large_map && large_map_ready) ||
                  (options.seek_large_map && frame_count >= 3600))) {
             if (!save_canvas_bmp(

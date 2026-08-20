@@ -11,6 +11,8 @@ typedef struct Fe8HostVideo {
     void *backend;
     int canvas_width;
     int canvas_height;
+    int base_canvas_width;
+    int base_canvas_height;
     Fe8DisplayScaling scaling;
     int vsync_active;
     enum Fe8HostShader shader;
@@ -26,6 +28,7 @@ int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
 int fe8_host_video_adjust_zoom(
     Fe8HostVideo *video, double wheel_delta, double sensitivity);
 int fe8_host_video_refresh_layout(Fe8HostVideo *video);
+int fe8_host_video_set_content_density(Fe8HostVideo *video, int density);
 void fe8_host_video_log_status(const Fe8HostVideo *video);
 void fe8_host_video_deinit(Fe8HostVideo *video);
 

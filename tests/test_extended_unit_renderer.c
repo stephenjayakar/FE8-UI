@@ -7,6 +7,7 @@
 static uint8_t ewram[0x40000];
 static uint8_t palette[0x400];
 static uint8_t vram[0x18000];
+static uint8_t oam[0x400];
 
 static uint8_t read8(void *context, uint32_t address) {
     (void)context;
@@ -16,6 +17,8 @@ static uint8_t read8(void *context, uint32_t address) {
         return palette[address - 0x05000000];
     if (address >= 0x06000000 && address < 0x06018000)
         return vram[address - 0x06000000];
+    if (address >= 0x07000000 && address < 0x07000400)
+        return oam[address - 0x07000000];
     return 0;
 }
 
@@ -93,6 +96,47 @@ int main(void) {
         output, 64, 0) == 0);
     assert(output[12 * 64 + 20] != 0);
     assert(output[32 * 64 + 48] == 0);
+
+    /* The native map-HP-bars patch is detected from OAM, then its exact
+     * 16x8 OBJ frame follows damaged units into extended space. */
+    memset(output, 0, sizeof(output));
+    snapshot.visible_unit_count = 1;
+    snapshot.visible_units[0].x = 1;
+    snapshot.visible_units[0].y = 1;
+    snapshot.visible_units[0].max_hp = 20;
+    snapshot.visible_units[0].current_hp = 10;
+    put16(oam, 0, 0x401A);
+    put16(oam, 2, 0x0010);
+    put16(oam, 4, 0x0836);
+    assert(fe8_detect_native_unit_hp_bars(&memory, &snapshot));
+    snapshot.flags = FE8_SNAPSHOT_HP_BARS;
+    memset(vram + 0x10000 + 0x36 * 32, 0x11, 2 * 32);
+    put16(palette, 0x200 + 1 * 2, 0x001F);
+    fe8_render_extended_units(&memory, &snapshot, viewport, output, 64, 0);
+    assert(output[26 * 64 + 16] == UINT32_C(0xFF0000FF));
+    memset(oam, 0, sizeof(oam));
+    assert(!fe8_detect_native_unit_hp_bars(&memory, &snapshot));
+
+    /* FE8's BG2 movement/range tiles continue beyond the hardware viewport. */
+    memset(output, 0, sizeof(output));
+    memset(vram + 0x280 * 32, 0x11, 4 * 32);
+    put16(palette, (4 * 16 + 1) * 2, 0x03E0);
+    put16(palette, (5 * 16 + 1) * 2, 0x001F);
+    snapshot.map_width = 4;
+    snapshot.map_height = 4;
+    snapshot.game_state_bits = 1;
+    snapshot.flags = FE8_SNAPSHOT_MOVEMENT | FE8_SNAPSHOT_RANGE;
+    memset(snapshot.movement, 0xFF, sizeof(snapshot.movement));
+    memset(snapshot.range, 0, sizeof(snapshot.range));
+    snapshot.movement[1 * 4 + 2] = 3;
+    snapshot.range[2 * 4 + 3] = 1;
+    assert(fe8_render_extended_move_range(&memory, &snapshot, viewport,
+        output, 64) == 2);
+    assert(output[16 * 64 + 32] == UINT32_C(0xFF009F00));
+    assert(output[32 * 64 + 48] == UINT32_C(0xFF00009F));
+    snapshot.game_state_bits = 0;
+    assert(fe8_render_extended_move_range(&memory, &snapshot, viewport,
+        output, 64) == 0);
     puts("extended unit renderer tests passed");
     return 0;
 }

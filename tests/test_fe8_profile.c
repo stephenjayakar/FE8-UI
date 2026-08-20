@@ -7,7 +7,7 @@
 #define RAM_BASE UINT32_C(0x02000000)
 #define RAM_SIZE UINT32_C(0x00040000)
 #define ROM_BASE UINT32_C(0x08000000)
-#define ROM_SIZE UINT32_C(0x00000100)
+#define ROM_SIZE UINT32_C(0x00028000)
 
 static uint8_t ram[RAM_SIZE];
 static uint8_t rom[ROM_SIZE];
@@ -117,6 +117,8 @@ static void setup_state(void) {
     put32(profile->blue_units + 0x0C, 0);
     put8(profile->blue_units + 0x10, 1);
     put8(profile->blue_units + 0x11, 2);
+    put8(profile->blue_units + 0x12, 24);
+    put8(profile->blue_units + 0x13, 17);
     put32(profile->blue_units + 0x3C, UINT32_C(0x02031000));
 
     /* FE8's linked SMS list includes ordinary units and non-unit map effects
@@ -149,6 +151,9 @@ static void test_identity(void) {
     setup_header();
     assert(fe8_detect_retail_fe8u(&memory));
     assert(fe8_detect_fe8u_family(&memory));
+    assert(strcmp(fe8_profile_for_rom(&memory)->profile_name, "Sacred Echoes") == 0);
+    assert(fe8_profile_for_rom(&memory)->convoy_items == UINT32_C(0x0203B200));
+    assert(fe8_profile_for_rom(&memory)->inventory.convoy_capacity == 200);
     rom[0xBD] = 0;
     assert(!fe8_detect_retail_fe8u(&memory));
     assert(fe8_detect_fe8u_family(&memory));
@@ -165,6 +170,7 @@ static void test_snapshot(void) {
     assert(snapshot.cursor_target_x == 32 && snapshot.cursor_target_y == 16);
     assert(snapshot.cursor_display_x == 28 && snapshot.cursor_display_y == 16);
     assert(snapshot.input_lock == 0);
+    assert(!snapshot.combat_panel_active);
     assert(snapshot.game_state_bits == 2);
     assert(snapshot.terrain[0] == 10 && snapshot.terrain[11] == 21);
     assert((snapshot.flags & (FE8_SNAPSHOT_TERRAIN | FE8_SNAPSHOT_UNIT_MAP)) ==
@@ -173,6 +179,8 @@ static void test_snapshot(void) {
     assert(snapshot.visible_units[0].unit_id == 1);
     assert(snapshot.visible_units[0].x == 1 && snapshot.visible_units[0].y == 2);
     assert(snapshot.visible_units[0].faction == 0x00);
+    assert(snapshot.visible_units[0].max_hp == 24);
+    assert(snapshot.visible_units[0].current_hp == 17);
     assert(snapshot.visible_units[0].map_sprite_handle == UINT32_C(0x02031000));
     assert(snapshot.visible_units[1].unit_id == 0x81);
     assert(snapshot.visible_units[1].faction == 0x80);
@@ -184,6 +192,47 @@ static void test_snapshot(void) {
     assert(snapshot.map_sprites[0].oam2 == 0xD080);
     assert(snapshot.map_sprites[1].x_display == 48);
     assert(snapshot.map_sprites[1].config == 2);
+}
+
+static void test_detects_combat_panel(void) {
+    Fe8MemoryReader memory = { NULL, read8 };
+    Fe8Snapshot snapshot;
+    const Fe8Profile *profile = fe8u_profile();
+    unsigned actor;
+    setup_state();
+    put8(profile->bm_state + 0x01, 1);
+    put8(profile->map_animation_state + 0x5E, 2);
+    for (actor = 0; actor < 2; ++actor) {
+        uint32_t actor_state = profile->map_animation_state + actor * 0x14;
+        unsigned panel_x = actor == 0 ? 14 : 4;
+        unsigned panel_y = 6;
+        unsigned tile;
+        put32(actor_state, UINT32_C(0x08000000) + actor * 0x40);
+        put8(actor_state + 0x10, (uint8_t)panel_x);
+        put8(actor_state + 0x11, (uint8_t)panel_y);
+        for (tile = 0; tile < 4; ++tile)
+            put16(profile->bg1_tilemap +
+                (panel_y * 32 + panel_x + tile) * 2,
+                (uint16_t)(((actor + 1) << 12) | (tile + 1)));
+    }
+    assert(fe8_extract_snapshot(&memory, profile, &snapshot));
+    assert(snapshot.combat_panel_active);
+    put8(profile->bm_state + 0x01, 0);
+    assert(fe8_extract_snapshot(&memory, profile, &snapshot));
+    assert(!snapshot.combat_panel_active);
+}
+
+static void test_detects_map_hp_bar_patch(void) {
+    Fe8MemoryReader memory = { NULL, read8 };
+    Fe8Snapshot snapshot;
+    setup_state();
+    put_rom32(UINT32_C(0x080276B4), UINT32_C(0x47184B00));
+    put_rom32(UINT32_C(0x080276B8), UINT32_C(0x0842E16D));
+    assert(fe8_extract_snapshot(&memory, fe8u_profile(), &snapshot));
+    assert((snapshot.flags & FE8_SNAPSHOT_HP_BARS) != 0);
+    put_rom32(UINT32_C(0x080276B4), 0);
+    assert(fe8_extract_snapshot(&memory, fe8u_profile(), &snapshot));
+    assert((snapshot.flags & FE8_SNAPSHOT_HP_BARS) == 0);
 }
 
 static void test_rejects_bad_rows_and_dimensions(void) {
@@ -200,6 +249,8 @@ static void test_rejects_bad_rows_and_dimensions(void) {
 int main(void) {
     test_identity();
     test_snapshot();
+    test_detects_combat_panel();
+    test_detects_map_hp_bar_patch();
     test_rejects_bad_rows_and_dimensions();
     puts("test_fe8_profile: ok");
     return 0;

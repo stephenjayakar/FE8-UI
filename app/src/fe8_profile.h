@@ -18,6 +18,17 @@ typedef struct Fe8MemoryReader {
     Fe8Read8 read8;
 } Fe8MemoryReader;
 
+typedef struct Fe8InventoryLayout {
+    uint32_t message_table_literal;
+    uint32_t huffman_root_literal;
+    uint32_t huffman_table_literal;
+    uint32_t item_table;
+    uint32_t portrait_table_literal;
+    uint32_t get_convoy_items;
+    uint16_t convoy_capacity;
+    uint32_t immovable_item_attributes;
+} Fe8InventoryLayout;
+
 typedef struct Fe8Profile {
     uint32_t rom_title;
     uint32_t rom_game_code;
@@ -42,6 +53,12 @@ typedef struct Fe8Profile {
     uint32_t green_units;
     uint32_t active_unit;
     uint32_t sms_handle_array;
+    uint32_t map_animation_state;
+    uint32_t bg1_tilemap;
+    uint32_t convoy_items;
+    const char *profile_name;
+    const char *rom_title_match;
+    Fe8InventoryLayout inventory;
 } Fe8Profile;
 
 enum {
@@ -62,6 +79,7 @@ enum Fe8SnapshotFlags {
     FE8_SNAPSHOT_OTHER = 1u << 6,
     FE8_SNAPSHOT_UNITS = 1u << 7,
     FE8_SNAPSHOT_MAP_SPRITES = 1u << 8,
+    FE8_SNAPSHOT_HP_BARS = 1u << 9,
 };
 
 typedef struct Fe8VisibleUnit {
@@ -72,6 +90,8 @@ typedef struct Fe8VisibleUnit {
     uint32_t state;
     uint32_t attributes;
     uint32_t map_sprite_handle;
+    uint8_t max_hp;
+    uint8_t current_hp;
 } Fe8VisibleUnit;
 
 typedef struct Fe8VisibleMapSprite {
@@ -99,6 +119,7 @@ typedef struct Fe8LiveState {
     uint8_t input_lock;
     uint8_t chapter;
     uint8_t phase;
+    bool combat_panel_active;
 } Fe8LiveState;
 
 typedef struct Fe8Snapshot {
@@ -119,6 +140,7 @@ typedef struct Fe8Snapshot {
     uint8_t input_lock;
     uint8_t chapter;
     uint8_t phase;
+    bool combat_panel_active;
     uint32_t flags;
     uint32_t base_tile_rows;
     uint32_t fog_rows;
@@ -140,6 +162,7 @@ typedef struct Fe8Snapshot {
 
 /* Returns the fixed profile for the unmodified FE8U retail executable. */
 const Fe8Profile *fe8u_profile(void);
+const Fe8Profile *fe8_profile_for_rom(const Fe8MemoryReader *memory);
 
 /* Checks the GBA header identity without writing to emulated memory. */
 bool fe8_detect_retail_fe8u(const Fe8MemoryReader *memory);

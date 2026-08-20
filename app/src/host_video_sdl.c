@@ -43,6 +43,8 @@ int fe8_host_video_init(Fe8HostVideo *video, const char *title,
     SDL_RenderSetIntegerScale(backend->renderer, SDL_FALSE);
     fe8_display_scaling_init(&video->scaling,
         canvas_width, canvas_height, 240, 160);
+    video->base_canvas_width = canvas_width;
+    video->base_canvas_height = canvas_height;
     {
         int output_width;
         int output_height;
@@ -121,6 +123,19 @@ int fe8_host_video_refresh_layout(Fe8HostVideo *video) {
     if (!fe8_display_scaling_resize(
             &video->scaling, output_width, output_height))
         return 0;
+    return apply_layout(video, backend);
+}
+
+int fe8_host_video_set_content_density(Fe8HostVideo *video, int density) {
+    Fe8HostVideoSdl *backend = video ? video->backend : NULL;
+    int output_width;
+    int output_height;
+    if (!backend || density < 1 || density > 3)
+        return 0;
+    video->scaling.minimum_canvas_width = video->base_canvas_width * density;
+    video->scaling.minimum_canvas_height = video->base_canvas_height * density;
+    SDL_GetRendererOutputSize(backend->renderer, &output_width, &output_height);
+    fe8_display_scaling_resize(&video->scaling, output_width, output_height);
     return apply_layout(video, backend);
 }
 

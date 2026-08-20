@@ -51,6 +51,9 @@ add_executable(fe8-mgba-sdl
     app/src/extended_presentation.c
     app/src/extended_unit_renderer.c
     app/src/mouse_controller.c
+    app/src/fe8_catalog.c
+    app/src/prebattle_inventory.c
+    app/src/prebattle_inventory_ui.c
     app/src/pointer_mapping.c
     app/src/viewport_controller.c
     app/src/display_scaling.c
@@ -75,6 +78,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION "1")
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_gl.c
+        app/src/host_text_macos.m
         app/src/macos_library.m
         app/src/macos_settings.m
         LICENSE
@@ -86,6 +90,7 @@ if(APPLE)
     target_compile_definitions(fe8-mgba-sdl PRIVATE BUILD_GLES3 GL_SILENCE_DEPRECATION)
     target_link_libraries(fe8-mgba-sdl PRIVATE
         "-framework Cocoa"
+        "-framework CoreText"
         "-framework OpenGL"
         "-framework UniformTypeIdentifiers")
     add_custom_command(TARGET fe8-mgba-sdl POST_BUILD
@@ -96,6 +101,7 @@ if(APPLE)
 else()
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_sdl.c
+        app/src/host_text_stub.c
         app/src/macos_library_stub.c
         app/src/macos_settings_stub.c)
 endif()

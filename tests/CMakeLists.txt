@@ -85,6 +85,21 @@ add_test(NAME extended_presentation COMMAND test_extended_presentation)
 add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)
 add_test(NAME frame_alignment COMMAND test_frame_alignment)
 add_test(NAME mouse_controller COMMAND test_mouse_controller)
+
+add_executable(test_prebattle_inventory
+    test_prebattle_inventory.c
+    ../app/src/fe8_catalog.c
+    ../app/src/prebattle_inventory.c
+    ../app/src/fe8_profile.c)
+target_include_directories(test_prebattle_inventory PRIVATE ../app/src)
+add_test(NAME prebattle_inventory COMMAND test_prebattle_inventory)
+
+add_executable(test_prebattle_inventory_ui
+    test_prebattle_inventory_ui.c
+    ../app/src/prebattle_inventory_ui.c
+    ../app/src/host_text_stub.c)
+target_include_directories(test_prebattle_inventory_ui PRIVATE ../app/src)
+add_test(NAME prebattle_inventory_ui COMMAND test_prebattle_inventory_ui)
 add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
 add_test(NAME viewport_controller COMMAND test_viewport_controller)
 add_test(NAME display_scaling COMMAND test_display_scaling)

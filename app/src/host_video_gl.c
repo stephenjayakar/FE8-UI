@@ -118,6 +118,8 @@ int fe8_host_video_init(Fe8HostVideo *video, const char *title,
         &backend->drawable_width, &backend->drawable_height);
     fe8_display_scaling_init(&video->scaling,
         canvas_width, canvas_height, 240, 160);
+    video->base_canvas_width = canvas_width;
+    video->base_canvas_height = canvas_height;
     fe8_display_scaling_resize(&video->scaling,
         backend->drawable_width, backend->drawable_height);
     apply_layout(video, backend);
@@ -242,6 +244,18 @@ int fe8_host_video_refresh_layout(Fe8HostVideo *video) {
     backend->renderer.d.contextResized(&backend->renderer.d,
         (unsigned)width, (unsigned)height, 0, 0);
     return 0;
+}
+
+int fe8_host_video_set_content_density(Fe8HostVideo *video, int density) {
+    Fe8HostVideoGl *backend = video ? video->backend : NULL;
+    if (!backend || density < 1 || density > 3)
+        return 0;
+    video->scaling.minimum_canvas_width = video->base_canvas_width * density;
+    video->scaling.minimum_canvas_height = video->base_canvas_height * density;
+    fe8_display_scaling_resize(&video->scaling,
+        backend->drawable_width, backend->drawable_height);
+    apply_layout(video, backend);
+    return 1;
 }
 
 void fe8_host_video_log_status(const Fe8HostVideo *video) {

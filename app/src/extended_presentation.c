@@ -8,7 +8,8 @@ void fe8_presentation_reset(Fe8ExtendedPresentation *presentation) {
 }
 
 Fe8ExtendedPresentationState fe8_presentation_update(
-    Fe8ExtendedPresentation *presentation, bool enabled, bool tactical_valid) {
+    Fe8ExtendedPresentation *presentation, bool enabled, bool tactical_valid,
+    bool freeze_requested) {
     if (!presentation)
         return FE8_PRESENTATION_INACTIVE;
     if (!enabled) {
@@ -16,10 +17,14 @@ Fe8ExtendedPresentationState fe8_presentation_update(
         return presentation->state;
     }
     if (presentation->state == FE8_PRESENTATION_LIVE) {
-        if (!tactical_valid) {
+        if (!tactical_valid || freeze_requested) {
             presentation->state = FE8_PRESENTATION_FROZEN;
             presentation->consecutive_valid_frames = 0;
         }
+        return presentation->state;
+    }
+    if (freeze_requested) {
+        presentation->consecutive_valid_frames = 0;
         return presentation->state;
     }
     if (tactical_valid)

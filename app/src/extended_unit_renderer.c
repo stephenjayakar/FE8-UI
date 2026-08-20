@@ -9,6 +9,18 @@ enum {
     UNIT_STATE_RESCUING = 1 << 4,
     CHARACTER_ATTRIBUTE_BOSS = 1 << 15,
     BOSS_ICON_TILE = 0x10,
+    BG_VRAM = 0x06000000,
+    BG_PALETTE = 0x05000000,
+    MOVE_TILE_BASE = 0x280,
+    RANGE_TILE_BASE = 0x280,
+    MOVE_PALETTE_BANK = 4,
+    RANGE_PALETTE_BANK = 5,
+    OAM = 0x07000000,
+};
+
+static const unsigned hp_bar_tiles[12] = {
+    0x12, 0x14, 0x16, 0x32, 0x34, 0x36,
+    0x52, 0x54, 0x56, 0x72, 0x74, 0x76,
 };
 
 static uint16_t read16(const Fe8MemoryView *memory, uint32_t address) {
@@ -28,6 +40,103 @@ static uint32_t gba_color(uint16_t color) {
 
 static bool valid_handle(uint32_t address) {
     return address >= UINT32_C(0x02000000) && address <= UINT32_C(0x0203FFF4);
+}
+
+static unsigned hp_bar_tile(const Fe8VisibleUnit *unit) {
+    unsigned missing;
+    unsigned frame;
+    if (!unit || unit->max_hp == 0 || unit->current_hp == 0 ||
+            unit->current_hp >= unit->max_hp)
+        return 0;
+    missing = unit->max_hp - unit->current_hp;
+    frame = missing * 11 / unit->max_hp;
+    return hp_bar_tiles[frame];
+}
+
+static Fe8HostPixel alpha_blend(Fe8HostPixel top, Fe8HostPixel bottom) {
+    unsigned red = ((top & 0xFF) * 10 + (bottom & 0xFF) * 6) / 16;
+    unsigned green = (((top >> 8) & 0xFF) * 10 +
+        ((bottom >> 8) & 0xFF) * 6) / 16;
+    unsigned blue = (((top >> 16) & 0xFF) * 10 +
+        ((bottom >> 16) & 0xFF) * 6) / 16;
+    if (red > 0xFF) red = 0xFF;
+    if (green > 0xFF) green = 0xFF;
+    if (blue > 0xFF) blue = 0xFF;
+    return UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;
+}
+
+static void draw_range_tile(const Fe8MemoryView *memory,
+    Fe8HostPixel *pixels, size_t stride, Fe8ExtendedViewport viewport,
+    int left, int top, unsigned tile_base, unsigned palette_bank) {
+    int y;
+    for (y = 0; y < MAP_TILE_SIZE; ++y) {
+        int x;
+        int destination_y = top + y;
+        if (destination_y < 0 || destination_y >= viewport.height)
+            continue;
+        for (x = 0; x < MAP_TILE_SIZE; ++x) {
+            int destination_x = left + x;
+            unsigned quadrant;
+            unsigned tile;
+            unsigned source_x;
+            unsigned source_y;
+            uint8_t packed;
+            unsigned color_index;
+            uint16_t color;
+            if (destination_x < 0 || destination_x >= viewport.width)
+                continue;
+            quadrant = (unsigned)(x >> 3) + (unsigned)(y >> 3) * 2;
+            tile = tile_base + quadrant;
+            source_x = (unsigned)x & 7;
+            source_y = (unsigned)y & 7;
+            packed = memory->read8(memory->context,
+                BG_VRAM + tile * 32 + source_y * 4 + source_x / 2);
+            color_index = (source_x & 1) ? packed >> 4 : packed & 0xF;
+            if (color_index == 0)
+                continue;
+            color = read16(memory, BG_PALETTE +
+                (palette_bank * 16 + color_index) * 2);
+            pixels[(size_t)destination_y * stride + destination_x] =
+                alpha_blend(gba_color(color),
+                    pixels[(size_t)destination_y * stride + destination_x]);
+        }
+    }
+}
+
+unsigned fe8_render_extended_move_range(
+    const Fe8MemoryView *memory, const Fe8Snapshot *snapshot,
+    Fe8ExtendedViewport viewport, Fe8HostPixel *pixels, size_t stride_pixels) {
+    unsigned rendered = 0;
+    uint16_t y;
+    if (!memory || !memory->read8 || !snapshot || !pixels ||
+            stride_pixels < (size_t)viewport.width ||
+            (snapshot->game_state_bits & 1) == 0)
+        return 0;
+    for (y = 0; y < snapshot->map_height; ++y) {
+        uint16_t x;
+        for (x = 0; x < snapshot->map_width; ++x) {
+            size_t index = (size_t)y * snapshot->map_width + x;
+            unsigned tile_base;
+            unsigned palette_bank;
+            if ((snapshot->flags & FE8_SNAPSHOT_MOVEMENT) &&
+                    snapshot->movement[index] < 0x80) {
+                tile_base = MOVE_TILE_BASE;
+                palette_bank = MOVE_PALETTE_BANK;
+            } else if ((snapshot->flags & FE8_SNAPSHOT_RANGE) &&
+                    snapshot->range[index] != 0) {
+                tile_base = RANGE_TILE_BASE;
+                palette_bank = RANGE_PALETTE_BANK;
+            } else {
+                continue;
+            }
+            draw_range_tile(memory, pixels, stride_pixels, viewport,
+                x * MAP_TILE_SIZE - snapshot->camera_x + viewport.gba_x,
+                y * MAP_TILE_SIZE - snapshot->camera_y + viewport.gba_y,
+                tile_base, palette_bank);
+            ++rendered;
+        }
+    }
+    return rendered;
 }
 
 static void draw_obj(
@@ -63,6 +172,59 @@ static void draw_obj(
                 (palette_bank * 16 + color_index) * 2);
             pixels[(size_t)destination_y * stride + destination_x] = gba_color(color);
         }
+    }
+}
+
+bool fe8_detect_native_unit_hp_bars(
+    const Fe8MemoryView *memory, const Fe8Snapshot *snapshot) {
+    uint16_t unit_index;
+    if (!memory || !memory->read8 || !snapshot)
+        return false;
+    for (unit_index = 0; unit_index < snapshot->visible_unit_count; ++unit_index) {
+        const Fe8VisibleUnit *unit = &snapshot->visible_units[unit_index];
+        unsigned tile = hp_bar_tile(unit);
+        unsigned expected_x;
+        unsigned expected_y;
+        unsigned entry;
+        if (tile == 0)
+            continue;
+        /* The patch calls PutSpriteExt at tile-relative (+1, -5); its frame
+         * then contributes (-1, +15), placing the 16x8 bar at (+0, +10). */
+        expected_x = (unsigned)(unit->x * MAP_TILE_SIZE -
+            snapshot->camera_x) & 0x1FF;
+        expected_y = (unsigned)(unit->y * MAP_TILE_SIZE -
+            snapshot->camera_y + 10) & 0xFF;
+        for (entry = 0; entry < 128; ++entry) {
+            uint32_t address = OAM + entry * 8;
+            uint16_t attr0 = read16(memory, address);
+            uint16_t attr1 = read16(memory, address + 2);
+            uint16_t attr2 = read16(memory, address + 4);
+            if ((attr0 & 0xFF) == expected_y &&
+                    (attr0 & 0xC000) == 0x4000 &&
+                    (attr1 & 0x1FF) == expected_x &&
+                    (attr1 & 0xC000) == 0 &&
+                    (attr2 & 0x3FF) == tile)
+                return true;
+        }
+    }
+    return false;
+}
+
+static void draw_unit_hp_bars(
+    const Fe8MemoryView *memory, const Fe8Snapshot *snapshot,
+    Fe8ExtendedViewport viewport, Fe8HostPixel *pixels, size_t stride_pixels) {
+    uint16_t i;
+    if ((snapshot->flags & FE8_SNAPSHOT_HP_BARS) == 0)
+        return;
+    for (i = 0; i < snapshot->visible_unit_count; ++i) {
+        const Fe8VisibleUnit *unit = &snapshot->visible_units[i];
+        unsigned tile = hp_bar_tile(unit);
+        if (tile == 0)
+            continue;
+        draw_obj(memory, pixels, stride_pixels, viewport.width, viewport.height,
+            unit->x * MAP_TILE_SIZE - snapshot->camera_x + viewport.gba_x,
+            unit->y * MAP_TILE_SIZE - snapshot->camera_y + viewport.gba_y + 10,
+            16, 8, tile, 0);
     }
 }
 
@@ -172,6 +334,7 @@ unsigned fe8_render_extended_units(
                 BOSS_ICON_TILE, 0);
         }
     }
+    draw_unit_hp_bars(memory, snapshot, viewport, pixels, stride_pixels);
     draw_cursor(pixels, stride_pixels, viewport.width, viewport.height,
         snapshot->cursor_display_x - snapshot->camera_x + viewport.gba_x,
         snapshot->cursor_display_y - snapshot->camera_y + viewport.gba_y,

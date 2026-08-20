@@ -10,10 +10,33 @@ build submodule under `third_party/mgba`; the optional FE8 decomp under
 `reference/fireemblem8u` is a development reference and is never compiled into
 the application. ROMs and game assets are not distributed.
 
-The extension is deliberately read-only. libmGBA remains authoritative for CPU,
+The extended renderer is deliberately read-only. libmGBA remains authoritative for CPU,
 memory, PPU, saves, and input. The host reads validated FE8 structures, decodes
 the game's metatiles from emulated EWRAM/VRAM/palette memory, renders a 480×320
 terrain canvas, and places mGBA's exact frame over its center.
+
+Whenever a live FE8 roster exists, press **I** to open the host inventory
+manager. The game pauses while it is open. Pick a character from the full
+roster, then click a source and destination to move or swap items between that
+unit and the 100-slot Supply convoy. Empty slots are valid destinations. Press
+**U** to undo the most recent move, right-click to clear a selection, and **I**
+or **Escape** to close.
+
+The manager decodes the active ROM's own character, class, and item text and
+renders the selected character's chibi portrait. It shows level, HP, remaining
+uses, the full unit stat block, and every equipped item's combat stats at once,
+including relocated Sacred Echoes strings and portrait
+assets. ROM-specific addresses and limits live in a selected `Fe8Profile`;
+retail FE8U and Sacred Echoes have separate inventory layouts, so another hack
+can be supported without changing the UI or transaction engine. This is the
+sole write-enabled extension: destinations are restricted
+to validated blue-unit and convoy addresses, both source values are checked
+immediately before writing, and a failed verification rolls the swap back. It
+does not edit ROMs or parse cartridge saves.
+
+Sacred Echoes learned spells are shown for context but marked **SPELL - FIXED**.
+Its profile identifies magic and staff entries as non-transferable, and both
+the UI and memory transaction layer reject attempts to move them.
 
 ## Requirements
 
@@ -97,6 +120,7 @@ build/fe8-mgba-sdl.app/Contents/MacOS/fe8-mgba-sdl \
   --rom /path/to/fireemblem8.gba \
   [--state /path/to/state.ss] \
   [--save /path/to/fireemblem8.sav] \
+  [--mute] \
   [--no-extensions]
 ```
 
@@ -107,6 +131,8 @@ with this test set by safely extracting its `gbAs` core payload in memory.
 when testing: mGBA may write normal game progress back to this file.
 `--no-extensions` leaves the 480×320 canvas letterboxed and runs as an ordinary
 frontend.
+`--mute` suppresses frontend audio for that command-line run regardless of the
+saved global audio preference.
 
 The extended logical canvas is at least 480×320 and adapts to the drawable's
 aspect ratio. The window starts maximized and uses nearest-neighbor sampling to

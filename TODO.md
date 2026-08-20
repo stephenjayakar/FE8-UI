@@ -1,5 +1,14 @@
 # TODO
 
+## Inventory manager
+
+- [x] Add a paused, mouse-first host inventory for Preparations with instant
+  cross-unit item swaps, empty-slot moves, and one-step undo.
+- [x] Decode hack-specific character, class, and item names from the live ROM,
+  render chibi portraits, expose item stats, and support the Supply convoy.
+- [x] Make the manager available anywhere a valid FE8 roster exists, including
+  native inventory-management contexts outside Preparations.
+
 ## ROM library and launcher
 
 - [x] Accept `.gba` ROMs dropped onto the macOS library window.

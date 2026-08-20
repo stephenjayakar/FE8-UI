@@ -171,3 +171,10 @@ matches the map reconstruction, and returning to the map should resume it.
 Camera movement must not toggle the enhancement; the compatibility gate tracks
 camera-coordinate changes and uses separate activation and fallback streaks to
 absorb transient PPU timing.
+
+For pre-battle inventory testing, launch with `--mute` and a copy of the save,
+enter Preparations, and press **I**. Move an item into an empty slot on another
+unit, close the panel, and verify the native item screen reflects the move.
+Reopen the panel, press **U**, and verify the original inventories return. The
+panel must reject **I** during dialogue and ordinary tactical play. Never use
+the original cartridge save for write-path testing.

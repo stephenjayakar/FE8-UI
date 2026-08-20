@@ -31,6 +31,9 @@
 #define FE8_GREEN_UNITS UINT32_C(0x0202DDCC)
 #define FE8_ACTIVE_UNIT UINT32_C(0x03004E50)
 #define FE8_SMS_HANDLE_ARRAY UINT32_C(0x0203A018)
+#define FE8_MAP_ANIMATION_STATE UINT32_C(0x0203E1F0)
+#define FE8_BG1_TILEMAP UINT32_C(0x020234A8)
+#define FE8_HP_BAR_HOOK UINT32_C(0x080276B4)
 
 #define FE8_UNIT_SIZE UINT32_C(0x48)
 #define FE8_BLUE_UNIT_COUNT 62u
@@ -42,14 +45,35 @@
 #define FE8_UNIT_STATE_FOG_HIDDEN UINT32_C(1u << 9)
 #define FE8_CHARACTER_ATTRIBUTES_OFFSET UINT32_C(0x28)
 #define FE8_CLASS_ATTRIBUTES_OFFSET UINT32_C(0x28)
+#define FE8_CONVOY_ITEMS UINT32_C(0x0203A81C)
+#define SACRED_ECHOES_CONVOY_ITEMS UINT32_C(0x0203B200)
+
+#define FE8_PROFILE_COMMON \
+    FE8_HEADER_TITLE, FE8_HEADER_GAME_CODE, FE8_HEADER_MAKER_CODE, 0, 0x9D, \
+    FE8_BM_STATE, FE8_PLAY_STATE, FE8_MAP_SIZE, FE8_MAP_UNIT, FE8_MAP_TERRAIN, \
+    FE8_MAP_MOVEMENT, FE8_MAP_RANGE, FE8_MAP_FOG, FE8_MAP_HIDDEN, FE8_MAP_OTHER, \
+    FE8_MAP_BASE_TILES, FE8_TILESET_CONFIG, \
+    FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS, FE8_ACTIVE_UNIT, \
+    FE8_SMS_HANDLE_ARRAY, FE8_MAP_ANIMATION_STATE, FE8_BG1_TILEMAP
+
+#define FE8_INVENTORY_LAYOUT(capacity, immovable_attributes) { \
+    UINT32_C(0x0800A2A0), UINT32_C(0x080006DC), UINT32_C(0x080006E0), \
+    UINT32_C(0x08809B10), UINT32_C(0x08005524), UINT32_C(0x0803159C), capacity, \
+    immovable_attributes \
+}
 
 static const Fe8Profile s_fe8u_profile = {
-    FE8_HEADER_TITLE, FE8_HEADER_GAME_CODE, FE8_HEADER_MAKER_CODE, 0, 0x9D,
-    FE8_BM_STATE, FE8_PLAY_STATE, FE8_MAP_SIZE, FE8_MAP_UNIT, FE8_MAP_TERRAIN,
-    FE8_MAP_MOVEMENT, FE8_MAP_RANGE, FE8_MAP_FOG, FE8_MAP_HIDDEN, FE8_MAP_OTHER,
-    FE8_MAP_BASE_TILES, FE8_TILESET_CONFIG,
-    FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS, FE8_ACTIVE_UNIT,
-    FE8_SMS_HANDLE_ARRAY,
+    FE8_PROFILE_COMMON, FE8_CONVOY_ITEMS,
+    "Fire Emblem 8 (FE8U)", "FIREEMBLEM8",
+    FE8_INVENTORY_LAYOUT(100, 0),
+};
+
+static const Fe8Profile s_sacred_echoes_profile = {
+    FE8_PROFILE_COMMON, SACRED_ECHOES_CONVOY_ITEMS,
+    "Sacred Echoes", "FIREEMBLEM2E",
+    /* Sacred Echoes spells are learned abilities represented as magic/staff
+       items. Native inventory management never permits transferring them. */
+    FE8_INVENTORY_LAYOUT(200, UINT32_C(0x00000006)),
 };
 
 static bool valid_reader(const Fe8MemoryReader *memory) {
@@ -88,6 +112,54 @@ static uint32_t read32(const Fe8MemoryReader *memory, uint32_t address) {
     return (uint32_t)read16(memory, address) | ((uint32_t)read16(memory, address + 2) << 16);
 }
 
+static bool combat_panel_is_active(
+    const Fe8MemoryReader *memory, const Fe8Profile *profile, uint8_t input_lock) {
+    unsigned actor_count;
+    unsigned actor;
+    unsigned matching_tiles = 0;
+    if (input_lock == 0 ||
+            !valid_ewram(profile->map_animation_state, 0x64) ||
+            !valid_ewram(profile->bg1_tilemap, 32 * 32 * 2))
+        return false;
+    actor_count = read8(memory, profile->map_animation_state + 0x5E);
+    if (actor_count == 0 || actor_count > 2)
+        return false;
+    for (actor = 0; actor < actor_count; ++actor) {
+        uint32_t actor_state = profile->map_animation_state + actor * 0x14;
+        unsigned panel_x = read8(memory, actor_state + 0x10);
+        unsigned panel_y = read8(memory, actor_state + 0x11);
+        unsigned y;
+        if (panel_x >= 30 || panel_y >= 20 ||
+                !valid_pointer(read32(memory, actor_state)))
+            return false;
+        for (y = panel_y; y < panel_y + 4 && y < 20; ++y) {
+            unsigned x;
+            for (x = panel_x; x < panel_x + 10 && x < 30; ++x) {
+                uint16_t entry = read16(memory,
+                    profile->bg1_tilemap + (y * 32 + x) * 2);
+                unsigned palette_bank = entry >> 12;
+                unsigned tile = entry & 0x3FF;
+                if (tile != 0 && palette_bank == actor + 1)
+                    ++matching_tiles;
+            }
+        }
+    }
+    return matching_tiles >= actor_count * 4;
+}
+
+static bool map_hp_bar_patch_present(const Fe8MemoryReader *memory) {
+    uint32_t target;
+    /* Standard FE8 map-HP-bars installers replace this PutUnitSpriteIconsOam
+     * instruction with `ldr r3, [pc]; bx r3; .word hook | 1`. */
+    if (read8(memory, FE8_HP_BAR_HOOK) != 0x00 ||
+            read8(memory, FE8_HP_BAR_HOOK + 1) != 0x4B ||
+            read8(memory, FE8_HP_BAR_HOOK + 2) != 0x18 ||
+            read8(memory, FE8_HP_BAR_HOOK + 3) != 0x47)
+        return false;
+    target = read32(memory, FE8_HP_BAR_HOOK + 4);
+    return (target & 1) != 0 && valid_pointer(target & ~UINT32_C(1));
+}
+
 static bool read_header_bytes(const Fe8MemoryReader *memory, uint32_t address, const char *expected, uint32_t size) {
     uint32_t i;
     if (!valid_range(address, size, FE8_ROM_START, FE8_ROM_END))
@@ -99,6 +171,13 @@ static bool read_header_bytes(const Fe8MemoryReader *memory, uint32_t address, c
 }
 
 const Fe8Profile *fe8u_profile(void) {
+    return &s_fe8u_profile;
+}
+
+const Fe8Profile *fe8_profile_for_rom(const Fe8MemoryReader *memory) {
+    if (valid_reader(memory) && read_header_bytes(memory, FE8_HEADER_TITLE,
+            s_sacred_echoes_profile.rom_title_match, 12))
+        return &s_sacred_echoes_profile;
     return &s_fe8u_profile;
 }
 
@@ -198,7 +277,8 @@ static void append_units(
                 class_data + FE8_CLASS_ATTRIBUTES_OFFSET);
         snapshot->visible_units[snapshot->visible_unit_count++] = (Fe8VisibleUnit){
             read8(memory, address + 0x0B), faction, x, y, state, attributes,
-            read32(memory, address + 0x3C)};
+            read32(memory, address + 0x3C),
+            read8(memory, address + 0x12), read8(memory, address + 0x13)};
     }
 }
 
@@ -279,6 +359,8 @@ bool fe8_extract_live_state(
     state->input_lock = read8(memory, profile->bm_state + 0x01);
     state->chapter = read8(memory, profile->play_state + 0x0E);
     state->phase = read8(memory, profile->play_state + 0x0F);
+    state->combat_panel_active = combat_panel_is_active(
+        memory, profile, state->input_lock);
     if (state->active_unit_address != 0 &&
             !valid_ewram(state->active_unit_address, FE8_UNIT_SIZE))
         return false;
@@ -303,6 +385,8 @@ bool fe8_extract_snapshot(
     if (!snapshot || !fe8_extract_live_state(memory, profile, &live))
         return false;
     memset(snapshot, 0, sizeof(*snapshot));
+    if (map_hp_bar_patch_present(memory))
+        snapshot->flags |= FE8_SNAPSHOT_HP_BARS;
     width = live.map_width;
     height = live.map_height;
 #define COPY_LIVE(field) snapshot->field = live.field
@@ -314,6 +398,7 @@ bool fe8_extract_snapshot(
     COPY_LIVE(cursor_display_x); COPY_LIVE(cursor_display_y);
     COPY_LIVE(active_unit_address); COPY_LIVE(game_state_bits);
     COPY_LIVE(input_lock); COPY_LIVE(chapter); COPY_LIVE(phase);
+    COPY_LIVE(combat_panel_active);
 #undef COPY_LIVE
 
     map_handles[0] = profile->map_terrain;
