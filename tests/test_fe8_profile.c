@@ -7,11 +7,12 @@
 #define RAM_BASE UINT32_C(0x02000000)
 #define RAM_SIZE UINT32_C(0x00040000)
 #define ROM_BASE UINT32_C(0x08000000)
-#define ROM_SIZE UINT32_C(0x00028000)
+#define ROM_SIZE UINT32_C(0x00040000)
 
 static uint8_t ram[RAM_SIZE];
 static uint8_t rom[ROM_SIZE];
 static uint32_t synthetic_base_tiles;
+static int synthetic_archanea_item_table;
 
 static uint8_t read8(void *context, uint32_t address) {
     (void)context;
@@ -19,6 +20,9 @@ static uint8_t read8(void *context, uint32_t address) {
         return ram[address - RAM_BASE];
     if (address >= ROM_BASE && address - ROM_BASE < ROM_SIZE)
         return rom[address - ROM_BASE];
+    if (synthetic_archanea_item_table &&
+            address == UINT32_C(0x09AA54F8) + UINT32_C(0x24) + 6)
+        return 1;
     if (address >= UINT32_C(0x0859A9D4) && address < UINT32_C(0x0859A9D8))
         return (uint8_t)(synthetic_base_tiles >> ((address - UINT32_C(0x0859A9D4)) * 8));
     if (address >= UINT32_C(0x03004E50) && address < UINT32_C(0x03004E54))
@@ -54,8 +58,14 @@ static void put_rom32(uint32_t address, uint32_t value) {
     rom[address + 3 - ROM_BASE] = (uint8_t)(value >> 24);
 }
 
+static void put_return_pointer(uint32_t function, uint32_t pointer) {
+    put_rom32(function, UINT32_C(0x47704800));
+    put_rom32(function + 4, pointer);
+}
+
 static void setup_header(void) {
     memset(rom, 0, sizeof(rom));
+    synthetic_archanea_item_table = 0;
     put_rom(UINT32_C(0x080000A0), "FIREEMBLEM2E");
     put_rom(UINT32_C(0x080000AC), "BE8E");
     put_rom(UINT32_C(0x080000B0), "01");
@@ -148,12 +158,35 @@ static void setup_state(void) {
 
 static void test_identity(void) {
     Fe8MemoryReader memory = { NULL, read8 };
+    const Fe8Profile *profile;
     setup_header();
     assert(fe8_detect_retail_fe8u(&memory));
     assert(fe8_detect_fe8u_family(&memory));
-    assert(strcmp(fe8_profile_for_rom(&memory)->profile_name, "Sacred Echoes") == 0);
-    assert(fe8_profile_for_rom(&memory)->convoy_items == UINT32_C(0x0203B200));
-    assert(fe8_profile_for_rom(&memory)->inventory.convoy_capacity == 200);
+    profile = fe8_profile_for_rom(&memory);
+    assert(strcmp(profile->profile_name, "Fire Emblem 8 (FE8U)") == 0);
+    assert(profile->convoy_items == UINT32_C(0x0203A81C));
+    assert(profile->inventory.convoy_capacity == 100);
+
+    put_return_pointer(UINT32_C(0x0803159C), UINT32_C(0x0203B200));
+    profile = fe8_profile_for_rom(&memory);
+    assert(strcmp(profile->profile_name, "Sacred Echoes") == 0);
+    assert(profile->convoy_items == UINT32_C(0x0203B200));
+    assert(profile->inventory.convoy_capacity == 200);
+    assert(profile->inventory.immovable_item_attributes == UINT32_C(0x00000006));
+
+    setup_header();
+    synthetic_archanea_item_table = 1;
+    put_rom32(UINT32_C(0x080177C0), UINT32_C(0x09AA54F8));
+    put_return_pointer(UINT32_C(0x08031500), UINT32_C(0x0203B200));
+    profile = fe8_profile_for_rom(&memory);
+    assert(strcmp(profile->profile_name, "Fire Emblem Archanea") == 0);
+    assert(profile->inventory.item_table == UINT32_C(0x09AA54F8));
+    assert(profile->inventory.get_convoy_items == UINT32_C(0x08031500));
+    assert(profile->convoy_items == UINT32_C(0x0203B200));
+    assert(profile->inventory.convoy_capacity == 200);
+    assert(profile->inventory.immovable_item_attributes == 0);
+
+    synthetic_archanea_item_table = 0;
     rom[0xBD] = 0;
     assert(!fe8_detect_retail_fe8u(&memory));
     assert(fe8_detect_fe8u_family(&memory));
