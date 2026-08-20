@@ -33,6 +33,7 @@
 #define FE8_SMS_HANDLE_ARRAY UINT32_C(0x0203A018)
 #define FE8_MAP_ANIMATION_STATE UINT32_C(0x0203E1F0)
 #define FE8_BG1_TILEMAP UINT32_C(0x020234A8)
+#define FE8_BG2_TILEMAP UINT32_C(0x02023CA8)
 #define FE8_HP_BAR_HOOK UINT32_C(0x080276B4)
 
 #define FE8_UNIT_SIZE UINT32_C(0x48)
@@ -54,7 +55,7 @@
     FE8_MAP_MOVEMENT, FE8_MAP_RANGE, FE8_MAP_FOG, FE8_MAP_HIDDEN, FE8_MAP_OTHER, \
     FE8_MAP_BASE_TILES, FE8_TILESET_CONFIG, \
     FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS, FE8_ACTIVE_UNIT, \
-    FE8_SMS_HANDLE_ARRAY, FE8_MAP_ANIMATION_STATE, FE8_BG1_TILEMAP
+    FE8_SMS_HANDLE_ARRAY, FE8_MAP_ANIMATION_STATE, FE8_BG1_TILEMAP, FE8_BG2_TILEMAP
 
 #define FE8_INVENTORY_LAYOUT(capacity, immovable_attributes) { \
     UINT32_C(0x0800A2A0), UINT32_C(0x080006DC), UINT32_C(0x080006E0), \
@@ -400,6 +401,7 @@ bool fe8_extract_snapshot(
     COPY_LIVE(input_lock); COPY_LIVE(chapter); COPY_LIVE(phase);
     COPY_LIVE(combat_panel_active);
 #undef COPY_LIVE
+    snapshot->bg2_tilemap = profile->bg2_tilemap;
 
     map_handles[0] = profile->map_terrain;
     map_handles[1] = profile->map_unit;

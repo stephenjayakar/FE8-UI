@@ -117,26 +117,51 @@ int main(void) {
     memset(oam, 0, sizeof(oam));
     assert(!fe8_detect_native_unit_hp_bars(&memory, &snapshot));
 
-    /* FE8's BG2 movement/range tiles continue beyond the hardware viewport. */
+    /* Mirror only a range style that is present in FE8's live BG2 tilemap.
+     * This uses the stable quartet rather than forcing the opening animation
+     * across every highlighted cell. */
     memset(output, 0, sizeof(output));
-    memset(vram + 0x280 * 32, 0x11, 4 * 32);
-    put16(palette, (4 * 16 + 1) * 2, 0x03E0);
-    put16(palette, (5 * 16 + 1) * 2, 0x001F);
+    memset(snapshot.movement, 0xFF, sizeof(snapshot.movement));
+    memset(snapshot.range, 0, sizeof(snapshot.range));
     snapshot.map_width = 4;
     snapshot.map_height = 4;
     snapshot.game_state_bits = 1;
     snapshot.flags = FE8_SNAPSHOT_MOVEMENT | FE8_SNAPSHOT_RANGE;
-    memset(snapshot.movement, 0xFF, sizeof(snapshot.movement));
-    memset(snapshot.range, 0, sizeof(snapshot.range));
+    snapshot.bg2_tilemap = UINT32_C(0x02002000);
     snapshot.movement[1 * 4 + 2] = 3;
     snapshot.range[2 * 4 + 3] = 1;
+    put16(ewram, 0x2000, 0x4284);
+    put16(ewram, 0x2002, 0x4285);
+    put16(ewram, 0x2040, 0x4286);
+    put16(ewram, 0x2042, 0x4287);
+    put16(ewram, 0x2080, 0x5280);
+    put16(ewram, 0x2082, 0x5281);
+    put16(ewram, 0x20C0, 0x5282);
+    put16(ewram, 0x20C2, 0x5283);
+    memset(vram + 0x284 * 32, 0x11, 4 * 32);
+    memset(vram + 0x280 * 32, 0x11, 4 * 32);
+    put16(palette, (4 * 16 + 1) * 2, 0x03E0);
+    put16(palette, (5 * 16 + 1) * 2, 0x001F);
     assert(fe8_render_extended_move_range(&memory, &snapshot, viewport,
         output, 64) == 2);
     assert(output[16 * 64 + 32] == UINT32_C(0xFF009F00));
     assert(output[32 * 64 + 48] == UINT32_C(0xFF00009F));
+
+    /* A lagging BG2 shadow falls back to the stable tiles instead of clipping
+     * the logical movement map to the native frame. */
+    memset(ewram + 0x2000, 0, 0x800);
+    memset(output, 0, sizeof(output));
+    assert(fe8_render_extended_move_range(&memory, &snapshot, viewport,
+        output, 64) == 2);
+    assert(output[16 * 64 + 32] == UINT32_C(0xFF009F00));
+
+    /* Hidden logical maps remain untouched once MoveLimitView clears bit 0. */
     snapshot.game_state_bits = 0;
+    output[16 * 64 + 32] = UINT32_C(0xFF123456);
     assert(fe8_render_extended_move_range(&memory, &snapshot, viewport,
         output, 64) == 0);
+    assert(output[16 * 64 + 32] == UINT32_C(0xFF123456));
+
     puts("extended unit renderer tests passed");
     return 0;
 }

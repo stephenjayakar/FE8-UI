@@ -11,10 +11,10 @@ enum {
     BOSS_ICON_TILE = 0x10,
     BG_VRAM = 0x06000000,
     BG_PALETTE = 0x05000000,
-    MOVE_TILE_BASE = 0x280,
-    RANGE_TILE_BASE = 0x280,
     MOVE_PALETTE_BANK = 4,
     RANGE_PALETTE_BANK = 5,
+    RANGE_TILE_ANIMATED = 0x280,
+    RANGE_TILE_STABLE = 0x284,
     OAM = 0x07000000,
 };
 
@@ -65,6 +65,35 @@ static Fe8HostPixel alpha_blend(Fe8HostPixel top, Fe8HostPixel bottom) {
     return UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;
 }
 
+static bool find_live_range_tiles(const Fe8MemoryView *memory,
+    const Fe8Snapshot *snapshot, unsigned palette_bank, unsigned *tile_base) {
+    unsigned y;
+    if (snapshot->bg2_tilemap < UINT32_C(0x02000000) ||
+            snapshot->bg2_tilemap > UINT32_C(0x0203F800))
+        return false;
+    for (y = 0; y < 31; ++y) {
+        unsigned x;
+        for (x = 0; x < 31; ++x) {
+            uint32_t address = snapshot->bg2_tilemap + (y * 32 + x) * 2;
+            uint16_t entry = read16(memory, address);
+            unsigned tile = entry & 0x3FF;
+            uint16_t attributes = entry & 0xFC00;
+            if ((entry >> 12) != palette_bank ||
+                    (tile != RANGE_TILE_ANIMATED && tile != RANGE_TILE_STABLE))
+                continue;
+            if (read16(memory, address + 2) == (uint16_t)(attributes | (tile + 1)) &&
+                    read16(memory, address + 32 * 2) ==
+                        (uint16_t)(attributes | (tile + 2)) &&
+                    read16(memory, address + (32 + 1) * 2) ==
+                        (uint16_t)(attributes | (tile + 3))) {
+                *tile_base = tile;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static void draw_range_tile(const Fe8MemoryView *memory,
     Fe8HostPixel *pixels, size_t stride, Fe8ExtendedViewport viewport,
     int left, int top, unsigned tile_base, unsigned palette_bank) {
@@ -76,7 +105,6 @@ static void draw_range_tile(const Fe8MemoryView *memory,
             continue;
         for (x = 0; x < MAP_TILE_SIZE; ++x) {
             int destination_x = left + x;
-            unsigned quadrant;
             unsigned tile;
             unsigned source_x;
             unsigned source_y;
@@ -85,8 +113,7 @@ static void draw_range_tile(const Fe8MemoryView *memory,
             uint16_t color;
             if (destination_x < 0 || destination_x >= viewport.width)
                 continue;
-            quadrant = (unsigned)(x >> 3) + (unsigned)(y >> 3) * 2;
-            tile = tile_base + quadrant;
+            tile = tile_base + (unsigned)(x >> 3) + (unsigned)(y >> 3) * 2;
             source_x = (unsigned)x & 7;
             source_y = (unsigned)y & 7;
             packed = memory->read8(memory->context,
@@ -106,12 +133,23 @@ static void draw_range_tile(const Fe8MemoryView *memory,
 unsigned fe8_render_extended_move_range(
     const Fe8MemoryView *memory, const Fe8Snapshot *snapshot,
     Fe8ExtendedViewport viewport, Fe8HostPixel *pixels, size_t stride_pixels) {
+    unsigned movement_tiles = RANGE_TILE_STABLE;
+    unsigned range_tiles = RANGE_TILE_STABLE;
     unsigned rendered = 0;
     uint16_t y;
     if (!memory || !memory->read8 || !snapshot || !pixels ||
             stride_pixels < (size_t)viewport.width ||
             (snapshot->game_state_bits & 1) == 0)
         return 0;
+    /* BM_FLAG_0 is set and cleared with FE8's MoveLimitView process. The
+     * EWRAM tilemap shadow may lag its VRAM upload by a frame, so absence of
+     * a detectable quartet must not clip the full logical range map. Use the
+     * stable tiles in that case and mirror an animated/live quartet when one
+     * is observable. */
+    (void)find_live_range_tiles(memory, snapshot,
+        MOVE_PALETTE_BANK, &movement_tiles);
+    (void)find_live_range_tiles(memory, snapshot,
+        RANGE_PALETTE_BANK, &range_tiles);
     for (y = 0; y < snapshot->map_height; ++y) {
         uint16_t x;
         for (x = 0; x < snapshot->map_width; ++x) {
@@ -120,11 +158,11 @@ unsigned fe8_render_extended_move_range(
             unsigned palette_bank;
             if ((snapshot->flags & FE8_SNAPSHOT_MOVEMENT) &&
                     snapshot->movement[index] < 0x80) {
-                tile_base = MOVE_TILE_BASE;
+                tile_base = movement_tiles;
                 palette_bank = MOVE_PALETTE_BANK;
             } else if ((snapshot->flags & FE8_SNAPSHOT_RANGE) &&
                     snapshot->range[index] != 0) {
-                tile_base = RANGE_TILE_BASE;
+                tile_base = range_tiles;
                 palette_bank = RANGE_PALETTE_BANK;
             } else {
                 continue;

@@ -55,6 +55,7 @@ typedef struct Fe8Profile {
     uint32_t sms_handle_array;
     uint32_t map_animation_state;
     uint32_t bg1_tilemap;
+    uint32_t bg2_tilemap;
     uint32_t convoy_items;
     const char *profile_name;
     const char *rom_title_match;
@@ -144,6 +145,7 @@ typedef struct Fe8Snapshot {
     uint32_t flags;
     uint32_t base_tile_rows;
     uint32_t fog_rows;
+    uint32_t bg2_tilemap;
 
     /* Flattened row-major data; only map_width * map_height is populated. */
     uint8_t terrain[FE8_MAX_MAP_CELLS];

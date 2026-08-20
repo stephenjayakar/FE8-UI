@@ -14,7 +14,7 @@ unsigned fe8_render_extended_units(
     size_t stride_pixels,
     unsigned animation_frame);
 
-/* Reconstructs FE8's BG2 movement/range layer across the host canvas. */
+/* Mirrors FE8's active BG2 movement/range style across the host canvas. */
 unsigned fe8_render_extended_move_range(
     const Fe8MemoryView *memory,
     const Fe8Snapshot *snapshot,
