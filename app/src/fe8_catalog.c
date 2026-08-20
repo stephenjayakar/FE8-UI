@@ -127,8 +127,8 @@ bool fe8_catalog_item(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     item->weight = r8(memory, record + 0x17);
     item->crit = r8(memory, record + 0x18);
     range = r8(memory, record + 0x19);
-    item->min_range = range & 0x0F;
-    item->max_range = range >> 4;
+    item->min_range = range >> 4;
+    item->max_range = range & 0x0F;
     item->weapon_rank = r8(memory, record + 0x1C);
     if (!fe8_catalog_text(memory, catalog, text_id, item->name, sizeof(item->name)))
         strcpy(item->name, "Unknown item");
