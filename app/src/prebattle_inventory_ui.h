@@ -9,8 +9,17 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_NONE,
     FE8_INVENTORY_HIT_ROSTER,
     FE8_INVENTORY_HIT_UNIT_ITEM,
-    FE8_INVENTORY_HIT_SUPPLY_ITEM,
+    FE8_INVENTORY_HIT_ALL_ITEM,
+    /* Keep the old name so the existing event loop remains source-compatible. */
+    FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_ALL_ITEM,
 } Fe8InventoryHitKind;
+
+typedef struct Fe8InventoryListEntry {
+    Fe8InventoryEndpoint endpoint;
+    const Fe8ItemInfo *info;
+    uint16_t item;
+    int unit_index;
+} Fe8InventoryListEntry;
 
 typedef struct Fe8InventoryUi {
     int active;
@@ -27,6 +36,9 @@ typedef struct Fe8InventoryUi {
 
 void fe8_inventory_ui_init(Fe8InventoryUi *ui);
 void fe8_inventory_ui_open(Fe8InventoryUi *ui);
+int fe8_inventory_ui_all_item_count(const Fe8InventorySnapshot *snapshot);
+int fe8_inventory_ui_all_item_entry(const Fe8InventorySnapshot *snapshot,
+    int index, Fe8InventoryListEntry *entry);
 void fe8_inventory_ui_scroll(Fe8InventoryUi *ui, int rows,
     const Fe8InventorySnapshot *snapshot, int canvas_width, int canvas_height, int pointer_x);
 Fe8InventoryHitKind fe8_inventory_ui_hit_test(const Fe8InventoryUi *ui,

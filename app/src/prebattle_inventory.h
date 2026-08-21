@@ -10,6 +10,7 @@
 enum {
     FE8_INVENTORY_UNIT_CAPACITY = 62,
     FE8_INVENTORY_ITEM_SLOTS = 5,
+    FE8_INVENTORY_WEAPON_TYPES = 8,
     FE8_SUPPLY_RETAIL_CAPACITY = 100,
     FE8_SUPPLY_MAX_CAPACITY = 200,
 };
@@ -36,6 +37,9 @@ typedef struct Fe8InventoryUnit {
     uint8_t resistance;
     uint8_t constitution;
     uint8_t movement;
+    uint8_t ranks[FE8_INVENTORY_WEAPON_TYPES];
+    uint8_t status;
+    uint32_t attributes;
     uint16_t portrait_id;
     char name[28];
     char class_name[28];
@@ -72,6 +76,14 @@ typedef struct Fe8InventoryEndpoint {
     unsigned slot;
 } Fe8InventoryEndpoint;
 
+typedef enum Fe8InventoryUseState {
+    FE8_INVENTORY_USE_ITEM,
+    FE8_INVENTORY_USE_READY,
+    FE8_INVENTORY_USE_RANK,
+    FE8_INVENTORY_USE_LOCKED,
+    FE8_INVENTORY_USE_STATUS,
+} Fe8InventoryUseState;
+
 bool fe8_prebattle_inventory_active(
     const Fe8MemoryReader *memory, const Fe8Profile *profile);
 
@@ -81,6 +93,9 @@ bool fe8_extract_prebattle_inventory(
 
 bool fe8_inventory_management_available(
     const Fe8MemoryReader *memory, const Fe8Profile *profile);
+
+Fe8InventoryUseState fe8_inventory_item_use_state(
+    const Fe8InventoryUnit *unit, const Fe8ItemInfo *item);
 
 bool fe8_swap_inventory_endpoints(
     const Fe8MemoryReader *memory, const Fe8MemoryWriter *writer,

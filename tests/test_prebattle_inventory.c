@@ -4,6 +4,14 @@
 #include <stdio.h>
 #include <string.h>
 
+#define IA_WEAPON UINT32_C(1u << 0)
+#define IA_MAGIC UINT32_C(1u << 1)
+#define IA_STAFF UINT32_C(1u << 2)
+#define IA_LOCK_1 UINT32_C(1u << 11)
+#define IA_LOCK_3 UINT32_C(1u << 10)
+#define CA_LOCK_1 UINT32_C(1u << 16)
+#define CA_LOCK_3 UINT32_C(1u << 18)
+
 static unsigned char ewram[0x40000];
 static unsigned char rom[0x2000000];
 
@@ -42,6 +50,10 @@ static void put_rom32(uint32_t address, uint32_t value) {
     put_rom16(address + 2, (uint16_t)(value >> 16));
 }
 
+static uint32_t item_record(const Fe8Profile *profile, uint8_t item_id) {
+    return profile->inventory.item_table + (uint32_t)item_id * UINT32_C(0x24);
+}
+
 int main(void) {
     Fe8Profile profile = *fe8u_profile();
     Fe8MemoryReader memory = {NULL, read8};
@@ -52,6 +64,7 @@ int main(void) {
     uint32_t second = first + 0x48;
     uint32_t character_a = 0x08010000;
     uint32_t character_b = 0x08010034;
+    uint32_t class_data = 0x08010100;
     memset(ewram, 0, sizeof(ewram));
     memset(rom, 0, sizeof(rom));
     profile.convoy_items = 0x0203B200;
@@ -91,21 +104,30 @@ int main(void) {
     put_rom32(0x08023000 + 16, UINT32_C(0xFFFF0001));
     put_rom32(0x08023000 + 20, UINT32_C(0xFFFF4443));
     put_rom32(0x08023000 + 24, UINT32_C(0xFFFF0000));
-    rom[0x809B10 + 0x24 + 6] = 1;
-    put_rom16(0x08809B10 + 0x24, 3);
-    put_rom16(0x08809B10 + 0x24 + 2, 5);
-    rom[0x809B10 + 0x24 + 0x14] = 40;
-    rom[0x809B10 + 0x24 + 0x15] = 7;
-    rom[0x809B10 + 0x24 + 0x19] = 0x12;
+
+    rom[item_record(&profile, 1) - 0x08000000 + 6] = 1;
+    put_rom16(item_record(&profile, 1), 3);
+    put_rom16(item_record(&profile, 1) + 2, 5);
+    rom[item_record(&profile, 1) - 0x08000000 + 7] = 0;
+    put_rom32(item_record(&profile, 1) + 8, IA_WEAPON);
+    rom[item_record(&profile, 1) - 0x08000000 + 0x14] = 40;
+    rom[item_record(&profile, 1) - 0x08000000 + 0x15] = 7;
+    rom[item_record(&profile, 1) - 0x08000000 + 0x16] = 85;
+    rom[item_record(&profile, 1) - 0x08000000 + 0x19] = 0x12;
+    rom[item_record(&profile, 1) - 0x08000000 + 0x1C] = 31;
+
     /* Populate every encoded item used by the swap tests. With Sacred
        Echoes-style immovable-attribute validation enabled, an absent item
        record is rejected rather than treated as transferable. */
-    rom[0x809B10 + 0x1C * 0x24 + 6] = 0x1C;
-    rom[0x809B10 + 0x2D * 0x24 + 6] = 0x2D;
-    rom[0x809B10 + 0x35 * 0x24 + 6] = 0x35;
-    rom[0x809B10 + 0x38 * 0x24 + 6] = 0x38;
-    put_rom16(0x08809B10 + 0x38 * 0x24, 4);
-    put_rom32(0x08809B10 + 0x38 * 0x24 + 8, 2);
+    rom[item_record(&profile, 0x2D) - 0x08000000 + 6] = 0x2D;
+    rom[item_record(&profile, 0x2D) - 0x08000000 + 7] = 0;
+    put_rom32(item_record(&profile, 0x2D) + 8, IA_WEAPON);
+    rom[item_record(&profile, 0x2D) - 0x08000000 + 0x1C] = 71;
+    rom[item_record(&profile, 0x35) - 0x08000000 + 6] = 0x35;
+    rom[item_record(&profile, 0x38) - 0x08000000 + 6] = 0x38;
+    put_rom16(item_record(&profile, 0x38), 4);
+    put_rom32(item_record(&profile, 0x38) + 8, IA_MAGIC);
+
     assert(fe8_catalog_init(&memory, &profile, &catalog));
     {
         char decoded[32];
@@ -121,17 +143,21 @@ int main(void) {
         assert(fe8_catalog_item(&memory, &catalog, 0x2838, &item));
         assert(strcmp(item.name, "Fire") == 0 && !item.movable);
     }
+
     write8(NULL, profile.bm_state + 4, 1 << 4);
     write8(NULL, profile.play_state + 0x0E, 9);
     put32(first, character_a);
     put32(second, character_b);
-    put32(first + 4, 0x08010100);
-    put32(second + 4, 0x08010100);
+    put32(first + 4, class_data);
+    put32(second + 4, class_data);
     put_rom16(character_a, 1);
     put_rom16(character_b, 1);
-    put_rom16(0x08010100, 2);
+    put_rom16(class_data, 2);
     rom[character_a - 0x08000000 + 4] = 0x11;
     rom[character_b - 0x08000000 + 4] = 0x22;
+    put_rom32(character_a + 0x28, UINT32_C(0x00000100));
+    put_rom32(character_b + 0x28, UINT32_C(0x00000400));
+    put_rom32(class_data + 0x28, UINT32_C(0x00000200));
     write8(NULL, first + 8, 12);
     write8(NULL, first + 9, 44);
     write8(NULL, first + 0x12, 30);
@@ -144,14 +170,16 @@ int main(void) {
     write8(NULL, first + 0x19, 4);
     write8(NULL, first + 0x1A, 1);
     write8(NULL, first + 0x1D, 2);
+    write8(NULL, first + 0x28, 31);
+    write8(NULL, second + 0x28, 1);
     rom[character_a - 0x08000000 + 0x13] = 3;
-    rom[0x10100 + 0x11] = 5;
-    rom[0x10100 + 0x12] = 6;
+    rom[class_data - 0x08000000 + 0x11] = 5;
+    rom[class_data - 0x08000000 + 0x12] = 6;
     write8(NULL, second + 8, 7);
-    put16(first + 0x1E, 0x281C);
+    put16(first + 0x1E, 0x2801);
     put16(second + 0x20, 0x052D);
-
     put16(0x0203B200, 0x1435);
+
     assert(fe8_extract_prebattle_inventory(&memory, &profile, &catalog, &snapshot));
     assert(snapshot.chapter == 9 && snapshot.unit_count == 2);
     assert(snapshot.units[0].character_id == 0x11);
@@ -163,19 +191,51 @@ int main(void) {
         snapshot.units[0].speed == 7 && snapshot.units[0].defense == 6 &&
         snapshot.units[0].resistance == 5 && snapshot.units[0].luck == 4);
     assert(snapshot.units[0].constitution == 9 && snapshot.units[0].movement == 8);
-    assert(snapshot.units[0].items[0] == 0x281C);
+    assert(snapshot.units[0].ranks[0] == 31 && snapshot.units[1].ranks[0] == 1);
+    assert(snapshot.units[0].attributes == UINT32_C(0x00000300));
+    assert(snapshot.units[1].attributes == UINT32_C(0x00000600));
+    assert(snapshot.units[0].items[0] == 0x2801);
     assert(snapshot.units[1].items[1] == 0x052D);
     assert(snapshot.supply_count == 1 && snapshot.supply[0] == 0x1435);
     assert(snapshot.supply_address == 0x0203B200 && snapshot.supply_capacity == 200);
     assert(snapshot.supply_display_count == 2);
     assert(snapshot.supply_display_slots[0] == 0 && snapshot.supply_display_slots[1] == 1);
-    assert(fe8_swap_prebattle_items(&memory, &writer, &profile,
-        first, 0, 0x281C, second, 1, 0x052D));
-    assert(read8(NULL, first + 0x1E) == 0x2D);
-    assert(read8(NULL, second + 0x20) == 0x1C);
+    assert(fe8_inventory_item_use_state(&snapshot.units[0],
+        &snapshot.units[0].item_info[0]) == FE8_INVENTORY_USE_READY);
+    assert(fe8_inventory_item_use_state(&snapshot.units[1],
+        &snapshot.units[1].item_info[1]) == FE8_INVENTORY_USE_RANK);
+    assert(fe8_inventory_item_use_state(&snapshot.units[0],
+        &snapshot.supply_info[0]) == FE8_INVENTORY_USE_ITEM);
+    {
+        Fe8InventoryUnit unit = snapshot.units[0];
+        Fe8ItemInfo item = snapshot.units[0].item_info[0];
+        item.attributes |= IA_LOCK_1;
+        assert(fe8_inventory_item_use_state(&unit, &item) == FE8_INVENTORY_USE_LOCKED);
+        unit.attributes |= CA_LOCK_1;
+        assert(fe8_inventory_item_use_state(&unit, &item) == FE8_INVENTORY_USE_READY);
+        item.attributes = IA_WEAPON | IA_MAGIC;
+        unit.status = 3;
+        assert(fe8_inventory_item_use_state(&unit, &item) == FE8_INVENTORY_USE_STATUS);
+        item.attributes = IA_STAFF;
+        item.weapon_type = 4;
+        item.weapon_rank = 1;
+        unit.ranks[4] = 1;
+        unit.status = 2;
+        assert(fe8_inventory_item_use_state(&unit, &item) == FE8_INVENTORY_USE_STATUS);
+        item.attributes = IA_WEAPON | IA_LOCK_3;
+        item.weapon_type = 11;
+        unit.status = 0;
+        unit.attributes = CA_LOCK_3;
+        assert(fe8_inventory_item_use_state(&unit, &item) == FE8_INVENTORY_USE_READY);
+    }
 
+    assert(fe8_swap_prebattle_items(&memory, &writer, &profile,
+        first, 0, 0x2801, second, 1, 0x052D));
+    assert(read8(NULL, first + 0x1E) == 0x2D);
+    assert(read8(NULL, second + 0x20) == 0x01);
     assert(!fe8_swap_prebattle_items(&memory, &writer, &profile,
-        first, 0, 0xFFFF, second, 1, 0x281C));
+        first, 0, 0xFFFF, second, 1, 0x2801));
+
     write8(NULL, profile.bm_state + 4, 0);
     assert(fe8_extract_prebattle_inventory(&memory, &profile, &catalog, &snapshot));
     {
