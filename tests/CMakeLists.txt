@@ -127,6 +127,12 @@ add_executable(test_fe8_catalog_portrait
 target_include_directories(test_fe8_catalog_portrait PRIVATE ../app/src)
 add_test(NAME fe8_catalog_portrait COMMAND test_fe8_catalog_portrait)
 
+add_executable(test_fe8_catalog_effectiveness
+    test_fe8_catalog_effectiveness.c
+    ../app/src/fe8_catalog.c)
+target_include_directories(test_fe8_catalog_effectiveness PRIVATE ../app/src)
+add_test(NAME fe8_catalog_effectiveness COMMAND test_fe8_catalog_effectiveness)
+
 add_executable(test_prebattle_inventory_ui
     test_prebattle_inventory_ui.c
     ../app/src/prebattle_inventory_ui.c
