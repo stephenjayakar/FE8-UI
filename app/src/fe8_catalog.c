@@ -5,6 +5,7 @@
 #define ROM_START UINT32_C(0x08000000)
 #define ROM_END UINT32_C(0x0A000000)
 #define ITEM_DATA_SIZE UINT32_C(0x24)
+#define ARCHANAE_ITEM_TABLE UINT32_C(0x09AA54F8)
 
 static uint8_t r8(const Fe8MemoryReader *m, uint32_t a) { return m->read8(m->context, a); }
 static uint16_t r16(const Fe8MemoryReader *m, uint32_t a) {
@@ -104,6 +105,42 @@ bool fe8_catalog_text(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     return length != 0;
 }
 
+static void append_text(char *output, size_t capacity, size_t *length,
+    const char *text) {
+    while (*text && *length + 1 < capacity)
+        output[(*length)++] = *text++;
+}
+
+static void normalize_archanae_item_description(char *description, size_t capacity) {
+    static const char armored_cavalry_token[] = "Eff: {|";
+    static const char flier_token[] = "Eff: }";
+    static const char armored_cavalry_label[] = "Eff: Cavalry, Armored";
+    static const char flier_label[] = "Eff: Fliers";
+    char normalized[192];
+    const char *input = description;
+    size_t length = 0;
+
+    while (*input && length + 1 < sizeof(normalized)) {
+        if (strncmp(input, armored_cavalry_token,
+                sizeof(armored_cavalry_token) - 1) == 0) {
+            append_text(normalized, sizeof(normalized), &length,
+                armored_cavalry_label);
+            input += sizeof(armored_cavalry_token) - 1;
+        } else if (strncmp(input, flier_token, sizeof(flier_token) - 1) == 0) {
+            append_text(normalized, sizeof(normalized), &length, flier_label);
+            input += sizeof(flier_token) - 1;
+        } else {
+            normalized[length++] = *input++;
+        }
+    }
+    normalized[length] = '\0';
+    if (capacity) {
+        size_t copy_length = length < capacity - 1 ? length : capacity - 1;
+        memcpy(description, normalized, copy_length);
+        description[copy_length] = '\0';
+    }
+}
+
 bool fe8_catalog_item(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     uint16_t encoded_item, Fe8ItemInfo *item) {
     uint32_t record;
@@ -136,8 +173,11 @@ bool fe8_catalog_item(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     item->weapon_rank = r8(memory, record + 0x1C);
     if (!fe8_catalog_text(memory, catalog, text_id, item->name, sizeof(item->name)))
         strcpy(item->name, "Unknown item");
-    fe8_catalog_text(memory, catalog, description_id,
-        item->description, sizeof(item->description));
+    if (fe8_catalog_text(memory, catalog, description_id,
+            item->description, sizeof(item->description)) &&
+            catalog->item_table == ARCHANAE_ITEM_TABLE)
+        normalize_archanae_item_description(
+            item->description, sizeof(item->description));
     return true;
 }
 
