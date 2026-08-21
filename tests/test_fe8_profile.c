@@ -7,7 +7,7 @@
 #define RAM_BASE UINT32_C(0x02000000)
 #define RAM_SIZE UINT32_C(0x00040000)
 #define ROM_BASE UINT32_C(0x08000000)
-#define ROM_SIZE UINT32_C(0x00028000)
+#define ROM_SIZE UINT32_C(0x00040000)
 
 static uint8_t ram[RAM_SIZE];
 static uint8_t rom[ROM_SIZE];
@@ -52,6 +52,11 @@ static void put_rom32(uint32_t address, uint32_t value) {
     rom[address + 1 - ROM_BASE] = (uint8_t)(value >> 8);
     rom[address + 2 - ROM_BASE] = (uint8_t)(value >> 16);
     rom[address + 3 - ROM_BASE] = (uint8_t)(value >> 24);
+}
+
+static void put_return_pointer(uint32_t function, uint32_t pointer) {
+    put_rom32(function, UINT32_C(0x47704800));
+    put_rom32(function + 4, pointer);
 }
 
 static void setup_header(void) {
@@ -148,12 +153,28 @@ static void setup_state(void) {
 
 static void test_identity(void) {
     Fe8MemoryReader memory = { NULL, read8 };
+    const Fe8Profile *profile;
     setup_header();
     assert(fe8_detect_retail_fe8u(&memory));
     assert(fe8_detect_fe8u_family(&memory));
-    assert(strcmp(fe8_profile_for_rom(&memory)->profile_name, "Sacred Echoes") == 0);
-    assert(fe8_profile_for_rom(&memory)->convoy_items == UINT32_C(0x0203B200));
-    assert(fe8_profile_for_rom(&memory)->inventory.convoy_capacity == 200);
+    profile = fe8_profile_for_rom(&memory);
+    assert(strcmp(profile->profile_name, "Fire Emblem 8 (FE8U)") == 0);
+    assert(profile->convoy_items == UINT32_C(0x0203A81C));
+    assert(profile->inventory.convoy_capacity == 100);
+
+    put_return_pointer(UINT32_C(0x0803159C), UINT32_C(0x0203B200));
+    profile = fe8_profile_for_rom(&memory);
+    assert(strcmp(profile->profile_name, "Sacred Echoes") == 0);
+    assert(profile->convoy_items == UINT32_C(0x0203B200));
+    assert(profile->inventory.convoy_capacity == 200);
+    assert(profile->inventory.immovable_item_attributes == UINT32_C(0x00000006));
+
+    setup_header();
+    put_rom32(UINT32_C(0x080177C0), UINT32_C(0x09AA54F8));
+    put_return_pointer(UINT32_C(0x08031500), UINT32_C(0x0203B200));
+    profile = fe8_profile_for_rom(&memory);
+    assert(strcmp(profile->profile_name, "Fire Emblem 8 (FE8U)") == 0);
+
     rom[0xBD] = 0;
     assert(!fe8_detect_retail_fe8u(&memory));
     assert(fe8_detect_fe8u_family(&memory));
