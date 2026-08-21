@@ -5,9 +5,9 @@
 #include <string.h>
 
 enum {
-    MARGIN = 8, HEADER_H = 38, FOOTER_H = 56,
+    MARGIN = 8, HEADER_H = 38, FOOTER_H = 54,
     ROSTER_W = 124, UNIT_W = 300, ROW_H = 22, ITEM_ROW_H = 28,
-    SECTION_HEADER_H = 18, UNIT_CARD_H = 70,
+    SECTION_HEADER_H = 18, UNIT_CARD_H = 72,
 };
 
 static Fe8HostTextCanvas *text_canvas;
@@ -111,8 +111,12 @@ static const Fe8ItemInfo *endpoint_info(const Fe8InventorySnapshot *snap,Fe8Inve
     return NULL;
 }
 static void portrait(uint32_t *p,int s,int w,int h,int x,int y,const Fe8InventoryUnit *u){
-    int py,px;if(!u->portrait_valid){rect(p,s,w,h,x,y,64,64,UINT32_C(0xFF253E57));return;}
-    for(py=0;py<32;py++)for(px=0;px<32;px++){uint32_t c=u->portrait[py*32+px];if(c)rect(p,s,w,h,x+px*2,y+py*2,2,2,canvas_color(c));}
+    int py,px;if(!u->portrait_valid){rect(p,s,w,h,x,y,FE8_PORTRAIT_WIDTH,FE8_PORTRAIT_HEIGHT,UINT32_C(0xFF253E57));return;}
+    for(py=0;py<FE8_PORTRAIT_HEIGHT;py++)for(px=0;px<FE8_PORTRAIT_WIDTH;px++){
+        uint8_t index=u->portrait[py*FE8_PORTRAIT_WIDTH+px];
+        if(index<FE8_PORTRAIT_PALETTE_SIZE&&u->portrait_palette[index])
+            rect(p,s,w,h,x+px,y+py,1,1,canvas_color(u->portrait_palette[index]));
+    }
 }
 static char rank_letter(uint8_t rank) {
     if (rank >= 251) return 'S';
@@ -151,11 +155,11 @@ void fe8_inventory_ui_draw(const Fe8InventoryUi *ui,const Fe8InventorySnapshot *
         if(i==ui->current_unit){rect(p,s,w,h,MARGIN+2,y,ROSTER_W-4,ROW_H,0xFF253A52);rect(p,s,w,h,MARGIN+2,y,3,ROW_H,0xFF4B9BFF);}
         text(p,s,w,h,MARGIN+7,y+10,snap->units[i].name,0xFFF4F7FA,1,17);}
     if(ui->current_unit>=0&&ui->current_unit<snap->unit_count)unit=&snap->units[ui->current_unit];
-    if(unit){int ux=MARGIN+ROSTER_W;portrait(p,s,w,h,ux+8,top+5,unit);
-        text(p,s,w,h,ux+78,top+7,unit->name,0xFFFFE49A,1,20);text(p,s,w,h,ux+78,top+19,unit->class_name,0xFFA8C8E8,1,20);
-        snprintf(b,sizeof(b),"LV%u EXP%u HP%u/%u",unit->level,unit->exp,unit->hp,unit->max_hp);text(p,s,w,h,ux+78,top+31,b,0xFFF3F7FA,1,27);
-        snprintf(b,sizeof(b),"POW%u SKL%u SPD%u LCK%u",unit->power,unit->skill,unit->speed,unit->luck);text(p,s,w,h,ux+78,top+45,b,0xFFE7EEF5,1,31);
-        snprintf(b,sizeof(b),"DEF%u RES%u CON%u MOV%u",unit->defense,unit->resistance,unit->constitution,unit->movement);text(p,s,w,h,ux+78,top+59,b,0xFFE7EEF5,1,31);
+    if(unit){int ux=MARGIN+ROSTER_W;portrait(p,s,w,h,ux+6,top,unit);
+        text(p,s,w,h,ux+94,top+7,unit->name,0xFFFFE49A,1,20);text(p,s,w,h,ux+94,top+19,unit->class_name,0xFFA8C8E8,1,20);
+        snprintf(b,sizeof(b),"LV%u EXP%u HP%u/%u",unit->level,unit->exp,unit->hp,unit->max_hp);text(p,s,w,h,ux+94,top+31,b,0xFFF3F7FA,1,27);
+        snprintf(b,sizeof(b),"POW%u SKL%u SPD%u LCK%u",unit->power,unit->skill,unit->speed,unit->luck);text(p,s,w,h,ux+94,top+45,b,0xFFE7EEF5,1,31);
+        snprintf(b,sizeof(b),"DEF%u RES%u CON%u MOV%u",unit->defense,unit->resistance,unit->constitution,unit->movement);text(p,s,w,h,ux+94,top+59,b,0xFFE7EEF5,1,31);
         for(r=0;r<FE8_INVENTORY_ITEM_SLOTS;r++){Fe8InventoryEndpoint e={FE8_INVENTORY_ENDPOINT_UNIT,unit->address,(unsigned)r};
             int selected=ui->has_selection&&ui->selected.kind==e.kind&&ui->selected.unit_address==e.unit_address&&ui->selected.slot==e.slot;
             item_row(p,s,w,h,ux,top+UNIT_CARD_H+r*ITEM_ROW_H,UNIT_W,&unit->item_info[r],unit->items[r],selected,1);}}
