@@ -97,9 +97,14 @@ jobs:
       - name: Package relocatable SDL2 development files
         run: |
           sdk="$RUNNER_TEMP/fe8-linux-sdk"
+          multiarch=$(gcc -print-multiarch)
+          sdl_libdir=$(pkg-config --variable=libdir sdl2)
           mkdir -p "$sdk/include/SDL2" "$sdk/lib/pkgconfig"
           cp -a /usr/include/SDL2/. "$sdk/include/SDL2/"
-          cp --dereference /usr/lib/x86_64-linux-gnu/libSDL2.so "$sdk/lib/libSDL2.so"
+          if [ -d "/usr/include/$multiarch/SDL2" ]; then
+            cp -a "/usr/include/$multiarch/SDL2/." "$sdk/include/SDL2/"
+          fi
+          cp --dereference "$sdl_libdir/libSDL2.so" "$sdk/lib/libSDL2.so"
           cat > "$sdk/lib/pkgconfig/sdl2.pc" <<'EOF'
           prefix=${pcfiledir}/../..
           exec_prefix=${prefix}
@@ -118,6 +123,7 @@ jobs:
             PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig" cmake -S . -B build -G Ninja
           The bundled library is for linking only; normal SDL2 runtime packages remain required.
           EOF
+          test -f "$sdk/include/SDL2/_real_SDL_config.h"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/fe8-linux-sdk.tar.gz" fe8-linux-sdk
 
       - name: Upload offline Linux build SDK
