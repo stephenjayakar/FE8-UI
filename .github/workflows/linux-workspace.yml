@@ -1,0 +1,133 @@
+name: Linux workspace build
+
+on:
+  push:
+    branches:
+      - linux-workspace-build
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out frontend
+        uses: actions/checkout@v4
+
+      - name: Initialize pinned mGBA dependency
+        run: git submodule update --init --depth 1 third_party/mgba
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libsdl2-dev \
+            zlib1g-dev
+
+      - name: Build and run frontend tests through workspace script
+        env:
+          BUILD_DIR: ${{ github.workspace }}/build
+          BUILD_TYPE: RelWithDebInfo
+          BUILD_JOBS: 2
+        run: bash scripts/build-linux-workspace.sh
+
+      - name: Smoke-test command-line startup
+        run: |
+          set +e
+          output=$(build/fe8-mgba-sdl --help 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          grep -q '^Usage:' <<< "$output"
+          test "$status" -eq 0 -o "$status" -eq 1
+
+      - name: Inspect executable dependencies
+        run: |
+          file build/fe8-mgba-sdl
+          ldd build/fe8-mgba-sdl
+
+      - name: Package Linux executable
+        run: |
+          mkdir -p linux-dist
+          cp build/fe8-mgba-sdl linux-dist/
+          ldd build/fe8-mgba-sdl > linux-dist/ldd.txt
+          printf '%s\n' \
+            'Run with: ./fe8-mgba-sdl --rom /path/to/game.gba --mute' \
+            'For a deterministic image: add --capture frame.bmp --capture-after 120 --auto-continue' \
+            > linux-dist/README-linux.txt
+
+      - name: Upload Linux executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe8-ui-linux
+          path: linux-dist
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Package source tree with pinned mGBA
+        run: |
+          tar \
+            --exclude='./.git' \
+            --exclude='*/.git' \
+            --exclude='./build' \
+            --exclude='./linux-dist' \
+            -C "$GITHUB_WORKSPACE" \
+            -czf "$RUNNER_TEMP/fe8-ui-source-with-mgba.tar.gz" .
+
+      - name: Upload reproducible source tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe8-ui-source-with-mgba
+          path: ${{ runner.temp }}/fe8-ui-source-with-mgba.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Package relocatable SDL2 development files
+        run: |
+          sdk="$RUNNER_TEMP/fe8-linux-sdk"
+          multiarch=$(gcc -print-multiarch)
+          sdl_libdir=$(pkg-config --variable=libdir sdl2)
+          mkdir -p "$sdk/include/SDL2" "$sdk/lib/pkgconfig"
+          cp -a /usr/include/SDL2/. "$sdk/include/SDL2/"
+          cp --dereference \
+            "/usr/include/$multiarch/SDL2/_real_SDL_config.h" \
+            "$sdk/include/SDL2/_real_SDL_config.h"
+          cp --dereference "$sdl_libdir/libSDL2.so" "$sdk/lib/libSDL2.so"
+          cat > "$sdk/lib/pkgconfig/sdl2.pc" <<'EOF'
+          prefix=${pcfiledir}/../..
+          exec_prefix=${prefix}
+          libdir=${prefix}/lib
+          includedir=${prefix}/include
+
+          Name: sdl2
+          Description: Simple DirectMedia Layer
+          Version: 2.30.0
+          Libs: -L${libdir} -lSDL2
+          Cflags: -I${includedir}/SDL2 -I${includedir} -D_REENTRANT
+          EOF
+          cat > "$sdk/README.txt" <<'EOF'
+          Set PKG_CONFIG_PATH to <this-directory>/lib/pkgconfig before configuring.
+          Example:
+            PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig" bash scripts/build-linux-workspace.sh
+          The bundled library is for linking only; normal SDL2 runtime packages remain required.
+          EOF
+          test -f "$sdk/include/SDL2/_real_SDL_config.h"
+          test ! -L "$sdk/include/SDL2/SDL_platform.h"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/fe8-linux-sdk.tar.gz" fe8-linux-sdk
+
+      - name: Upload offline Linux build SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe8-linux-sdk
+          path: ${{ runner.temp }}/fe8-linux-sdk.tar.gz
+          if-no-files-found: error
+          retention-days: 7

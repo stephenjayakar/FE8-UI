@@ -11,6 +11,9 @@ typedef enum Fe8HostTextWeight {
 
 typedef struct Fe8HostTextCanvas {
     void *context;
+    uint32_t *pixels;
+    int stride;
+    int width;
     int height;
 } Fe8HostTextCanvas;
 

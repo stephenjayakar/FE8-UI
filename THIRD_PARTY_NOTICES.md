@@ -47,6 +47,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## font8x8 basic Latin bitmap font
+
+The portable text renderer includes Daniel Hepper's `font8x8_basic` data,
+based on public-domain IBM VGA font data. The upstream file declares the
+font data to be in the public domain.
+
 ## Fire Emblem decompilation reference
 
 The optional [`reference/fireemblem8u`](reference/fireemblem8u) submodule points

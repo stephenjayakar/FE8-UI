@@ -53,7 +53,10 @@ void fe8_inventory_ui_scroll(Fe8InventoryUi *ui,int rows,const Fe8InventorySnaps
     width/=scale;height/=scale;pointer_x/=scale;
     if(pointer_x>=supply_x(width)){value=&ui->supply_scroll;maximum=snap->supply_display_count-supply_rows(height);}
     else{value=&ui->roster_scroll;maximum=snap->unit_count-roster_rows(height);}
-    if(maximum<0)maximum=0;*value+=rows;if(*value<0)*value=0;if(*value>maximum)*value=maximum;
+    if(maximum<0)maximum=0;
+    *value+=rows;
+    if(*value<0)*value=0;
+    if(*value>maximum)*value=maximum;
 }
 
 Fe8InventoryHitKind fe8_inventory_ui_hit_test(const Fe8InventoryUi *ui,
@@ -65,7 +68,8 @@ Fe8InventoryHitKind fe8_inventory_ui_hit_test(const Fe8InventoryUi *ui,
         *index=ui->roster_scroll+(y-top-SECTION_HEADER_H)/ROW_H;return FE8_INVENTORY_HIT_ROSTER;}
     if(x<sx){int item_top=top+UNIT_CARD_H;if(y<item_top)return FE8_INVENTORY_HIT_NONE;*index=(y-item_top)/ITEM_ROW_H;
         return *index<FE8_INVENTORY_ITEM_SLOTS?FE8_INVENTORY_HIT_UNIT_ITEM:FE8_INVENTORY_HIT_NONE;}
-    if(y<top+SECTION_HEADER_H)return FE8_INVENTORY_HIT_NONE;*index=ui->supply_scroll+(y-top-SECTION_HEADER_H)/ROW_H;
+    if(y<top+SECTION_HEADER_H)return FE8_INVENTORY_HIT_NONE;
+    *index=ui->supply_scroll+(y-top-SECTION_HEADER_H)/ROW_H;
     if(*index>=snap->supply_display_count)return FE8_INVENTORY_HIT_NONE;
     *index=snap->supply_display_slots[*index];return FE8_INVENTORY_HIT_SUPPLY_ITEM;
 }
@@ -81,8 +85,11 @@ static const Fe8ItemInfo *endpoint_info(const Fe8InventorySnapshot *snap,
     Fe8InventoryEndpoint e);
 uint16_t fe8_inventory_ui_endpoint_item(const Fe8InventorySnapshot *snap,Fe8InventoryEndpoint e){
     unsigned i;if(e.kind==FE8_INVENTORY_ENDPOINT_SUPPLY)return e.slot<snap->supply_capacity?snap->supply[e.slot]:0;
-    for(i=0;i<snap->unit_count;i++)if(snap->units[i].address==e.unit_address)
-        return e.slot<FE8_INVENTORY_ITEM_SLOTS?snap->units[i].items[e.slot]:0;return 0;
+    for(i=0;i<snap->unit_count;i++){
+        if(snap->units[i].address==e.unit_address)
+            return e.slot<FE8_INVENTORY_ITEM_SLOTS?snap->units[i].items[e.slot]:0;
+    }
+    return 0;
 }
 int fe8_inventory_ui_endpoint_movable(const Fe8InventorySnapshot *snap,Fe8InventoryEndpoint e){
     const Fe8ItemInfo *info=endpoint_info(snap,e);return !info||!info->id||info->movable;
@@ -97,17 +104,24 @@ void fe8_inventory_ui_inspect(Fe8InventoryUi *ui,const Fe8InventorySnapshot *sna
 }
 static const Fe8ItemInfo *endpoint_info(const Fe8InventorySnapshot *snap,Fe8InventoryEndpoint e){
     unsigned i;if(e.kind==FE8_INVENTORY_ENDPOINT_SUPPLY)return e.slot<snap->supply_capacity?&snap->supply_info[e.slot]:NULL;
-    for(i=0;i<snap->unit_count;i++)if(snap->units[i].address==e.unit_address)
-        return e.slot<FE8_INVENTORY_ITEM_SLOTS?&snap->units[i].item_info[e.slot]:NULL;return NULL;
+    for(i=0;i<snap->unit_count;i++){
+        if(snap->units[i].address==e.unit_address)
+            return e.slot<FE8_INVENTORY_ITEM_SLOTS?&snap->units[i].item_info[e.slot]:NULL;
+    }
+    return NULL;
 }
 static void portrait(uint32_t *p,int s,int w,int h,int x,int y,const Fe8InventoryUnit *u){
     int py,px;if(!u->portrait_valid){rect(p,s,w,h,x,y,64,64,UINT32_C(0xFF253E57));return;}
     for(py=0;py<32;py++)for(px=0;px<32;px++){uint32_t c=u->portrait[py*32+px];if(c)rect(p,s,w,h,x+px*2,y+py*2,2,2,canvas_color(c));}
 }
 static char rank_letter(uint8_t rank) {
-    if (rank >= 251) return 'S'; if (rank >= 181) return 'A';
-    if (rank >= 121) return 'B'; if (rank >= 71) return 'C';
-    if (rank >= 31) return 'D'; if (rank) return 'E'; return '-';
+    if (rank >= 251) return 'S';
+    if (rank >= 181) return 'A';
+    if (rank >= 121) return 'B';
+    if (rank >= 71) return 'C';
+    if (rank >= 31) return 'D';
+    if (rank) return 'E';
+    return '-';
 }
 static void item_row(uint32_t *p,int s,int w,int h,int x,int y,int rw,
     const Fe8ItemInfo *info,uint16_t encoded,int selected,int dense){
@@ -148,7 +162,8 @@ void fe8_inventory_ui_draw(const Fe8InventoryUi *ui,const Fe8InventorySnapshot *
     text(p,s,w,h,sx+7,top+5,"Supply",0xFF8AB4E8,1,12);snprintf(b,sizeof(b),"%u / %u",snap->supply_count,snap->supply_capacity);
     text(p,s,w,h,w-MARGIN-38,top+5,b,0xFFB8CCE0,1,8);
     for(r=0;r<supply_rows(h);r++){int display=ui->supply_scroll+r;int i;int y=top+SECTION_HEADER_H+r*ROW_H;Fe8InventoryEndpoint e;
-        if(display>=snap->supply_display_count)break;i=snap->supply_display_slots[display];e.kind=FE8_INVENTORY_ENDPOINT_SUPPLY;e.unit_address=snap->supply_address;e.slot=(unsigned)i;
+        if(display>=snap->supply_display_count)break;
+        i=snap->supply_display_slots[display];e.kind=FE8_INVENTORY_ENDPOINT_SUPPLY;e.unit_address=snap->supply_address;e.slot=(unsigned)i;
         int selected=ui->has_selection&&ui->selected.kind==e.kind&&ui->selected.slot==e.slot;
         item_row(p,s,w,h,sx,y,w-MARGIN-sx,&snap->supply_info[i],snap->supply[i],selected,0);}
     rect(p,s,w,h,MARGIN,bottom,w-MARGIN*2,1,0xFF303A47);

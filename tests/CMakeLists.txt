@@ -1,6 +1,15 @@
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# These tests use the C assert() macro as their test oracle. Release and
+# RelWithDebInfo normally define NDEBUG, which would otherwise compile every
+# assertion out and turn the suite into a collection of no-op executables.
+if(MSVC)
+    add_compile_options(/UNDEBUG)
+else()
+    add_compile_options(-UNDEBUG)
+endif()
+
 add_executable(test_address_space
     test_address_space.c
     ../app/src/address_space.c)
@@ -77,6 +86,11 @@ add_executable(test_host_cursor
     ../app/src/host_cursor.c)
 target_include_directories(test_host_cursor PRIVATE ../app/src)
 
+add_executable(test_host_text
+    test_host_text.c
+    ../app/src/host_text_bitmap.c)
+target_include_directories(test_host_text PRIVATE ../app/src)
+
 add_test(NAME fe8_profile COMMAND test_fe8_profile)
 add_test(NAME frame_scheduler COMMAND test_frame_scheduler)
 add_test(NAME address_space COMMAND test_address_space)
@@ -97,7 +111,7 @@ add_test(NAME prebattle_inventory COMMAND test_prebattle_inventory)
 add_executable(test_prebattle_inventory_ui
     test_prebattle_inventory_ui.c
     ../app/src/prebattle_inventory_ui.c
-    ../app/src/host_text_stub.c)
+    ../app/src/host_text_bitmap.c)
 target_include_directories(test_prebattle_inventory_ui PRIVATE ../app/src)
 add_test(NAME prebattle_inventory_ui COMMAND test_prebattle_inventory_ui)
 add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
@@ -105,3 +119,4 @@ add_test(NAME viewport_controller COMMAND test_viewport_controller)
 add_test(NAME display_scaling COMMAND test_display_scaling)
 add_test(NAME host_settings COMMAND test_host_settings)
 add_test(NAME host_cursor COMMAND test_host_cursor)
+add_test(NAME host_text COMMAND test_host_text)

@@ -3,7 +3,8 @@
 FE8 Extended Frontend runs *Fire Emblem: The Sacred Stones* and compatible
 FE8U ROM hacks through the public libmGBA API while drawing map terrain beyond
 the 240×160 GBA frame. It builds a pinned mGBA `0.11` development snapshot and
-supplies a native macOS game library around a small SDL2 frontend.
+supplies a native macOS game library plus a portable SDL2 command-line
+frontend for Linux.
 
 This repository contains only the original frontend code. mGBA is a required
 build submodule under `third_party/mgba`; the optional FE8 decomp under
@@ -46,39 +47,70 @@ the UI and memory transaction layer reject attempts to move them.
 - A legally obtained FE8 ROM (`fireemblem8.gba` or another `.gba` path)
 - Git, for initializing the pinned mGBA submodule
 
-On Apple Silicon, install the native arm64 SDL2 package (for example, Homebrew's `sdl2`) and configure with `-DCMAKE_OSX_ARCHITECTURES=arm64` if the architecture is not already inferred by the toolchain.
+On Debian or Ubuntu, install the Linux toolchain and development packages with:
+
+```sh
+sudo apt-get update
+sudo apt-get install --yes \
+  build-essential cmake ninja-build pkg-config libsdl2-dev zlib1g-dev
+```
+
+On Apple Silicon, install the native arm64 SDL2 package (for example,
+Homebrew's `sdl2`). CMake selects the native arm64 target unless an explicit
+`CMAKE_OSX_ARCHITECTURES` value is supplied.
 
 ## Configure and build
 
-From the repository root, initialize the required dependency and build:
+From the repository root, bootstrap the pinned dependency and build with the
+portable wrapper:
 
 ```sh
-./scripts/bootstrap.sh
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_ARCHITECTURES=arm64
-cmake --build build --target fe8-mgba-sdl
+./build.sh -G Ninja
 ```
 
-Pass `--with-reference` to `bootstrap.sh` only when decomp symbols or source are
-needed for frontend research. A normal build does not initialize or read it.
+The wrapper delegates to `scripts/bootstrap.sh` and `scripts/build.sh`. It uses
+an already-populated `third_party/mgba` directory without requiring network or
+Git metadata, which lets the source artifact produced by CI build in an
+isolated workspace. In a normal clone it initializes the pinned submodule when
+needed. Pass `--with-reference` directly to `scripts/bootstrap.sh` only when
+decomp symbols or source are needed for frontend research; normal builds never
+initialize or read the optional reference submodule.
 
-If SDL2 is installed outside the default prefix, add its prefix while configuring, for example:
+Run the complete unit-test suite with:
 
 ```sh
-cmake -S . -B build \
-  -DCMAKE_PREFIX_PATH=/opt/homebrew \
-  -DCMAKE_OSX_ARCHITECTURES=arm64
+./scripts/test.sh -G Ninja
+```
+
+If SDL2 is installed outside the default prefix, add its prefix while
+configuring. Use `CMAKE_PREFIX_PATH` for a CMake package or `PKG_CONFIG_PATH`
+for an SDL2 `pkg-config` file, for example:
+
+```sh
+PKG_CONFIG_PATH=/opt/sdl2/lib/pkgconfig ./build.sh -G Ninja
 ```
 
 The mGBA submodule is pinned at commit
 `afd6f14eaf8bd35214ed3fb9dc69a92bfc3877a9`. The mGBA build is restricted to
 the static GBA core; the SDL2 frontend in `app/src/main.c` is owned by this
 project. The newer pin is deliberate: states produced by mGBA 0.11 cannot be
-restored by the older 0.10.3 state decoder. On macOS the result is
-`build/fe8-mgba-sdl.app`.
+restored by the older 0.10.3 state decoder. Linux produces
+`build/fe8-mgba-sdl`; macOS produces `build/fe8-mgba-sdl.app`.
 
 ## Run
+
+On Linux, launch the portable command-line frontend directly:
+
+```sh
+./build/fe8-mgba-sdl \
+  --rom /path/to/fireemblem8.gba \
+  --mute
+```
+
+A graphical session is required for interactive use. The Linux frontend uses
+a built-in bitmap text renderer, so the inventory UI does not require a system
+font package. Automated captures can run under Xvfb; see
+[`docs/testing.md`](docs/testing.md).
 
 On macOS, open the application without arguments to show the native game
 library:
