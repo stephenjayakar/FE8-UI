@@ -76,6 +76,10 @@ add_executable(test_display_scaling
     ../app/src/display_scaling.c)
 target_include_directories(test_display_scaling PRIVATE ../app/src)
 
+add_executable(test_video_layout
+    test_video_layout.c)
+target_include_directories(test_video_layout PRIVATE ../app/src)
+
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
     set(FE8_TEST_SDL_TARGET SDL2::SDL2)
@@ -136,6 +140,7 @@ add_test(NAME prebattle_inventory_ui COMMAND test_prebattle_inventory_ui)
 add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
 add_test(NAME viewport_controller COMMAND test_viewport_controller)
 add_test(NAME display_scaling COMMAND test_display_scaling)
+add_test(NAME video_layout COMMAND test_video_layout)
 add_test(NAME host_settings COMMAND test_host_settings)
 add_test(NAME host_cursor COMMAND test_host_cursor)
 add_test(NAME host_text COMMAND test_host_text)

@@ -78,6 +78,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION "1")
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_gl.c
+        app/src/mgles2_compat.c
         app/src/host_text_macos.m
         app/src/macos_library.m
         app/src/macos_settings.m
