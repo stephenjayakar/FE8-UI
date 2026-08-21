@@ -127,6 +127,7 @@ int main(void) {
     snapshot.map_height = 4;
     snapshot.game_state_bits = 1;
     snapshot.flags = FE8_SNAPSHOT_MOVEMENT | FE8_SNAPSHOT_RANGE;
+    assert(fe8_extended_move_range_is_active(&snapshot));
     snapshot.bg2_tilemap = UINT32_C(0x02002000);
     snapshot.movement[1 * 4 + 2] = 3;
     snapshot.range[2 * 4 + 3] = 1;
@@ -157,6 +158,7 @@ int main(void) {
 
     /* Hidden logical maps remain untouched once MoveLimitView clears bit 0. */
     snapshot.game_state_bits = 0;
+    assert(!fe8_extended_move_range_is_active(&snapshot));
     output[16 * 64 + 32] = UINT32_C(0xFF123456);
     assert(fe8_render_extended_move_range(&memory, &snapshot, viewport,
         output, 64) == 0);

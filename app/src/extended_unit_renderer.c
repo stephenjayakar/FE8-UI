@@ -130,6 +130,11 @@ static void draw_range_tile(const Fe8MemoryView *memory,
     }
 }
 
+bool fe8_extended_move_range_is_active(const Fe8Snapshot *snapshot) {
+    return snapshot && (snapshot->game_state_bits & 1) != 0 &&
+        (snapshot->flags & (FE8_SNAPSHOT_MOVEMENT | FE8_SNAPSHOT_RANGE)) != 0;
+}
+
 unsigned fe8_render_extended_move_range(
     const Fe8MemoryView *memory, const Fe8Snapshot *snapshot,
     Fe8ExtendedViewport viewport, Fe8HostPixel *pixels, size_t stride_pixels) {
@@ -137,9 +142,9 @@ unsigned fe8_render_extended_move_range(
     unsigned range_tiles = RANGE_TILE_STABLE;
     unsigned rendered = 0;
     uint16_t y;
-    if (!memory || !memory->read8 || !snapshot || !pixels ||
+    if (!memory || !memory->read8 || !pixels ||
             stride_pixels < (size_t)viewport.width ||
-            (snapshot->game_state_bits & 1) == 0)
+            !fe8_extended_move_range_is_active(snapshot))
         return 0;
     /* BM_FLAG_0 is set and cleared with FE8's MoveLimitView process. The
      * EWRAM tilemap shadow may lag its VRAM upload by a frame, so absence of
