@@ -279,6 +279,11 @@ static int snapshot_path_mode(const Fe8Snapshot *snapshot) {
         (snapshot->game_state_bits & (1u << 1)) != 0;
 }
 
+static int snapshot_cursor_controls_camera(const Fe8Snapshot *snapshot) {
+    return snapshot && snapshot->input_lock == 0 && snapshot->phase == 0 &&
+        !snapshot->combat_panel_active;
+}
+
 static void set_mouse_map_target(Fe8MouseController *mouse,
     const Fe8Snapshot *snapshot, int x, int y, int confirm) {
     (void)snapshot;
@@ -1312,8 +1317,20 @@ int main(int argc, char **argv) {
         rendered_map_sprites = 0;
         Fe8FramePlacement frame_placement = {gba_x, gba_y, 0};
         if (snapshot_valid) {
-            fe8_viewport_clamp_pan(
-                &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
+            int same_map = map_identity_valid &&
+                map_identity_chapter == snapshot.chapter &&
+                map_identity_width == snapshot.map_width &&
+                map_identity_height == snapshot.map_height &&
+                map_identity_rows == snapshot.base_tile_rows &&
+                map_identity_config == profile->tileset_config;
+            if (previous_camera_valid && same_map && visual_profile_active &&
+                    snapshot_cursor_controls_camera(&snapshot))
+                fe8_viewport_follow_cursor_camera(
+                    &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y,
+                    previous_camera_x, previous_camera_y);
+            else
+                fe8_viewport_clamp_pan(
+                    &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
             map_state.map_width = snapshot.map_width;
             map_state.map_height = snapshot.map_height;
             map_state.camera_x = snapshot.camera_x;
