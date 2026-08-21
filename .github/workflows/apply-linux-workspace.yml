@@ -6,6 +6,11 @@ on:
       - linux-workspace-build
     paths:
       - .github/workspace-payload/**
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workspace-payload/**
 
 permissions:
   contents: write
