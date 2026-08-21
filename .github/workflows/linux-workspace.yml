@@ -1,0 +1,80 @@
+name: Linux workspace build
+
+on:
+  push:
+    branches:
+      - linux-workspace-build
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out frontend
+        uses: actions/checkout@v4
+
+      - name: Initialize pinned mGBA dependency
+        run: git submodule update --init --depth 1 third_party/mgba
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cmake \
+            ninja-build \
+            libsdl2-dev \
+            zlib1g-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DFE8_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Inspect executable dependencies
+        run: |
+          file build/fe8-mgba-sdl
+          ldd build/fe8-mgba-sdl
+
+      - name: Package Linux executable
+        run: |
+          mkdir -p linux-dist
+          cp build/fe8-mgba-sdl linux-dist/
+          ldd build/fe8-mgba-sdl > linux-dist/ldd.txt
+          printf '%s\n' \
+            'Run with: ./fe8-mgba-sdl --rom /path/to/game.gba --mute' \
+            'For a deterministic image: add --capture frame.bmp --capture-after 120 --auto-continue' \
+            > linux-dist/README-linux.txt
+
+      - name: Upload Linux executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe8-ui-linux
+          path: linux-dist
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Package source tree with pinned mGBA
+        run: |
+          tar --exclude=.git --exclude=build --exclude=linux-dist \
+            -czf fe8-ui-source-with-mgba.tar.gz .
+
+      - name: Upload reproducible source tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe8-ui-source-with-mgba
+          path: fe8-ui-source-with-mgba.tar.gz
+          if-no-files-found: error
+          retention-days: 7
