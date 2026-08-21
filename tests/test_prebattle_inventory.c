@@ -76,6 +76,18 @@ int main(void) {
     memcpy(rom + 0x25030, "Fire", 5);
     put_rom32(0x08020000 + 20, 0x88025040);
     memcpy(rom + 0x25040, "A dependable blade.", 20);
+    /* Build a tiny Huffman tree whose leaves are "AB", a single-byte line
+       break, "CD", and the terminator. The decoder must not mistake the
+       line-break symbol's zero high byte for the end of the string. */
+    put_rom32(0x08020000 + 24, 0x08026000);
+    put_rom32(0x08022000, 0x00010000);
+    put_rom32(0x08023000 + 0 * 4, 0x00030002);
+    put_rom32(0x08023000 + 1 * 4, 0x00050004);
+    put_rom32(0x08023000 + 2 * 4, 0x80004241);
+    put_rom32(0x08023000 + 3 * 4, 0x80000001);
+    put_rom32(0x08023000 + 4 * 4, 0x80004443);
+    put_rom32(0x08023000 + 5 * 4, 0x80000000);
+    rom[0x26000] = 0xD8;
     rom[0x809B10 + 0x24 + 6] = 1;
     put_rom16(0x08809B10 + 0x24, 3);
     put_rom16(0x08809B10 + 0x24 + 2, 5);
@@ -97,6 +109,8 @@ int main(void) {
         Fe8ItemInfo item;
         assert(fe8_catalog_text(&memory, &catalog, 1, decoded, sizeof(decoded)));
         assert(strcmp(decoded, "Alice") == 0);
+        assert(fe8_catalog_text(&memory, &catalog, 6, decoded, sizeof(decoded)));
+        assert(strcmp(decoded, "AB\nCD") == 0);
         assert(fe8_catalog_item(&memory, &catalog, 0x2801, &item));
         assert(strcmp(item.name, "Test Blade") == 0 && item.uses == 40 && item.might == 7);
         assert(item.min_range == 1 && item.max_range == 2);

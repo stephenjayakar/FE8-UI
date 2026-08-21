@@ -40,12 +40,16 @@ bool fe8_catalog_init(const Fe8MemoryReader *memory, const Fe8Profile *profile,
 static void append_character(char *out, size_t cap, size_t *length, uint8_t c) {
     if (c == 0)
         return;
-    if (c >= 0x20 && c < 0x7F) {
+    if (c == 1 || c == 2) {
+        if (*length && out[*length - 1] != '\n' && *length + 1 < cap)
+            out[(*length)++] = '\n';
+    } else if (c >= 0x20 && c < 0x7F) {
         if (*length + 1 < cap)
             out[(*length)++] = (char)c;
-    } else if (c == 1 || c == 2 || c == 3 || c == 4 || c == 5 || c == 6 || c == 7) {
-        /* FE text commands are not useful in a one-line desktop label. */
-    } else if (*length && out[*length - 1] != ' ' && *length + 1 < cap) {
+    } else if (c >= 3 && c <= 7) {
+        /* Timing and page-advance commands have no desktop equivalent. */
+    } else if (*length && out[*length - 1] != ' ' &&
+               out[*length - 1] != '\n' && *length + 1 < cap) {
         out[(*length)++] = ' ';
     }
 }
@@ -82,19 +86,18 @@ bool fe8_catalog_text(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
                 break;
             value = r32(memory, node);
             if (value & UINT32_C(0x80000000)) {
-                uint8_t first = (uint8_t)value;
-                uint8_t second = (uint8_t)(value >> 8);
-                if (!first)
+                uint16_t symbol = (uint16_t)value;
+                if (!symbol)
                     break;
-                append_character(output, output_size, &length, first);
-                if (!second)
-                    break;
-                append_character(output, output_size, &length, second);
+                append_character(output, output_size, &length, (uint8_t)symbol);
+                if (symbol >> 8)
+                    append_character(output, output_size, &length,
+                        (uint8_t)(symbol >> 8));
                 node = catalog->huffman_root;
             }
         }
     }
-    while (length && output[length - 1] == ' ')
+    while (length && (output[length - 1] == ' ' || output[length - 1] == '\n'))
         --length;
     output[length] = '\0';
     return length != 0;
