@@ -34,8 +34,11 @@ static void put8(uint32_t address, uint8_t value) {
         ram[address - RAM_BASE] = value;
         return;
     }
-    assert(address >= IWRAM_BASE && address - IWRAM_BASE < IWRAM_SIZE);
-    iwram[address - IWRAM_BASE] = value;
+    if (address >= IWRAM_BASE && address - IWRAM_BASE < IWRAM_SIZE) {
+        iwram[address - IWRAM_BASE] = value;
+        return;
+    }
+    assert(!"address outside synthetic RAM");
 }
 
 static void put16(uint32_t address, uint16_t value) {
