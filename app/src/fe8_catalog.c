@@ -137,8 +137,44 @@ bool fe8_catalog_item(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     return true;
 }
 
-static bool lz77(const Fe8MemoryReader *memory, uint32_t source,
-    uint8_t *output, size_t capacity) {
+enum {
+    PORTRAIT_FULL_WIDTH = 96,
+    PORTRAIT_FULL_HEIGHT = 80,
+    PORTRAIT_FULL_TILE_BYTES = 128 * 32,
+    PORTRAIT_CHIBI_TILE_BYTES = 16 * 32,
+    PORTRAIT_OBJ_TILE_STRIDE = 32,
+    /* PutFace80x72 keeps the central 80 columns and first 72 rows of the
+       native 96x80 mug. Unlike the former 64x64 crop, this includes FE8's
+       side-hair and shoulder pieces exactly as the game lays them out. */
+    PORTRAIT_CROP_X = 8,
+    PORTRAIT_CROP_Y = 0,
+    PORTRAIT_CHIBI_X = (FE8_PORTRAIT_WIDTH - 64) / 2,
+    PORTRAIT_CHIBI_Y = (FE8_PORTRAIT_HEIGHT - 64) / 2,
+};
+
+static bool unpack_raw(const Fe8MemoryReader *memory, uint32_t source,
+    uint8_t *output, size_t capacity, size_t *output_length) {
+    uint32_t header;
+    size_t stored_size;
+    size_t length;
+    size_t index;
+    if (!rom(source, 4) || r8(memory, source) != 0)
+        return false;
+    header = r32(memory, source);
+    stored_size = header >> 8;
+    if (stored_size < 4)
+        return false;
+    length = stored_size - 4;
+    if (length > capacity || !rom(source + 4, (uint32_t)length))
+        return false;
+    for (index = 0; index < length; ++index)
+        output[index] = r8(memory, source + 4 + (uint32_t)index);
+    *output_length = length;
+    return true;
+}
+
+static bool unpack_lz77(const Fe8MemoryReader *memory, uint32_t source,
+    uint8_t *output, size_t capacity, size_t *output_length) {
     uint32_t header;
     size_t length;
     size_t out = 0;
@@ -157,58 +193,163 @@ static bool lz77(const Fe8MemoryReader *memory, uint32_t source,
                 uint16_t token;
                 size_t count;
                 size_t distance;
-                if (!rom(source, 2)) return false;
-                token = (uint16_t)((uint16_t)r8(memory, source) << 8 | r8(memory, source + 1));
+                if (!rom(source, 2))
+                    return false;
+                token = (uint16_t)((uint16_t)r8(memory, source) << 8 |
+                    r8(memory, source + 1));
                 source += 2;
                 count = (token >> 12) + 3;
                 distance = (token & 0x0FFF) + 1;
-                if (distance > out) return false;
+                if (distance > out)
+                    return false;
                 while (count-- && out < length) {
                     output[out] = output[out - distance];
                     ++out;
                 }
             } else {
-                if (!rom(source, 1)) return false;
+                if (!rom(source, 1))
+                    return false;
                 output[out++] = r8(memory, source++);
             }
         }
     }
-    return out == length;
+    if (out != length)
+        return false;
+    *output_length = length;
+    return true;
 }
 
-bool fe8_catalog_portrait(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
-    uint16_t portrait_id, uint32_t pixels[FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT]) {
-    uint32_t record;
-    uint32_t graphics;
-    uint32_t palette;
-    uint8_t tiles[512];
+static bool unpack_graphics(const Fe8MemoryReader *memory, uint32_t source,
+    uint8_t *output, size_t capacity, size_t *output_length) {
+    if (!rom(source, 1))
+        return false;
+    if (r8(memory, source) == 0)
+        return unpack_raw(memory, source, output, capacity, output_length);
+    if (r8(memory, source) == 0x10)
+        return unpack_lz77(memory, source, output, capacity, output_length);
+    return false;
+}
+
+static uint8_t tile_pixel(const uint8_t *tiles, size_t tile_bytes,
+    unsigned tile, unsigned x, unsigned y) {
+    size_t offset = (size_t)tile * 32 + (size_t)(y & 7) * 4 + (x & 7) / 2;
+    uint8_t packed;
+    if (offset >= tile_bytes)
+        return 0;
+    packed = tiles[offset];
+    return (x & 1) ? packed >> 4 : packed & 0x0F;
+}
+
+static bool blit_face_piece(uint8_t output[PORTRAIT_FULL_WIDTH * PORTRAIT_FULL_HEIGHT],
+    const uint8_t *tiles, size_t tile_bytes, unsigned base_tile,
+    unsigned destination_x, unsigned destination_y, unsigned width, unsigned height) {
     unsigned y;
-    if (!pixels)
-        return false;
-    memset(pixels, 0, FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT * sizeof(*pixels));
-    if (!catalog || !catalog->valid || !portrait_id)
-        return false;
-    record = catalog->portrait_table_bias + (uint32_t)portrait_id * 28;
-    graphics = r32(memory, record + 4) & UINT32_C(0x7FFFFFFF);
-    palette = r32(memory, record + 8) & UINT32_C(0x7FFFFFFF);
-    if (!rom(palette, 32) || !lz77(memory, graphics, tiles, sizeof(tiles)))
-        return false;
-    for (y = 0; y < 32; ++y) {
+    for (y = 0; y < height; ++y) {
         unsigned x;
-        for (x = 0; x < 32; ++x) {
-            unsigned tile = (y / 8) * 4 + x / 8;
-            unsigned in_tile = (y & 7) * 8 + (x & 7);
-            uint8_t packed = tiles[tile * 32 + in_tile / 2];
-            unsigned index = (in_tile & 1) ? packed >> 4 : packed & 0x0F;
-            uint16_t color;
-            if (!index)
-                continue;
-            color = r16(memory, palette + index * 2);
-            pixels[y * 32 + x] = UINT32_C(0xFF000000) |
-                ((uint32_t)((color >> 10) & 31) * 255 / 31) << 16 |
-                ((uint32_t)((color >> 5) & 31) * 255 / 31) << 8 |
-                (uint32_t)(color & 31) * 255 / 31;
+        for (x = 0; x < width; ++x) {
+            unsigned tile = base_tile + (y / 8) * PORTRAIT_OBJ_TILE_STRIDE + x / 8;
+            if ((size_t)tile * 32 + 31 >= tile_bytes)
+                return false;
+            output[(destination_y + y) * PORTRAIT_FULL_WIDTH + destination_x + x] =
+                tile_pixel(tiles, tile_bytes, tile, x, y);
         }
     }
     return true;
+}
+
+static bool decode_full_portrait(const uint8_t *tiles, size_t tile_bytes,
+    uint8_t pixels[FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT]) {
+    uint8_t full[PORTRAIT_FULL_WIDTH * PORTRAIT_FULL_HEIGHT] = {0};
+    unsigned y;
+    bool visible = false;
+    /* FE8 stores the mug as 2D OBJ pieces in a 32-tile-wide sheet. These
+       placements mirror the native 96x80 face sprite before selecting the
+       game's standard 80x72 menu layout. */
+    if (tile_bytes < PORTRAIT_FULL_TILE_BYTES ||
+            !blit_face_piece(full, tiles, tile_bytes, 0x00, 16, 0, 64, 32) ||
+            !blit_face_piece(full, tiles, tile_bytes, 0x08, 16, 32, 64, 32) ||
+            !blit_face_piece(full, tiles, tile_bytes, 0x10, 16, 64, 32, 16) ||
+            !blit_face_piece(full, tiles, tile_bytes, 0x50, 48, 64, 32, 16) ||
+            !blit_face_piece(full, tiles, tile_bytes, 0x14, 0, 48, 16, 32) ||
+            !blit_face_piece(full, tiles, tile_bytes, 0x16, 80, 48, 16, 32))
+        return false;
+    for (y = 0; y < FE8_PORTRAIT_HEIGHT; ++y) {
+        unsigned x;
+        for (x = 0; x < FE8_PORTRAIT_WIDTH; ++x) {
+            uint8_t index = full[(y + PORTRAIT_CROP_Y) * PORTRAIT_FULL_WIDTH +
+                x + PORTRAIT_CROP_X];
+            pixels[y * FE8_PORTRAIT_WIDTH + x] = index;
+            visible = visible || index != 0;
+        }
+    }
+    return visible;
+}
+
+static bool decode_chibi_portrait(const uint8_t *tiles, size_t tile_bytes,
+    uint8_t pixels[FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT]) {
+    unsigned y;
+    bool visible = false;
+    if (tile_bytes < PORTRAIT_CHIBI_TILE_BYTES)
+        return false;
+    for (y = 0; y < 64; ++y) {
+        unsigned x;
+        unsigned source_y = y / 2;
+        for (x = 0; x < 64; ++x) {
+            unsigned source_x = x / 2;
+            unsigned tile = (source_y / 8) * 4 + source_x / 8;
+            uint8_t index = tile_pixel(tiles, tile_bytes, tile, source_x, source_y);
+            pixels[(y + PORTRAIT_CHIBI_Y) * FE8_PORTRAIT_WIDTH +
+                x + PORTRAIT_CHIBI_X] = index;
+            visible = visible || index != 0;
+        }
+    }
+    return visible;
+}
+
+static void decode_portrait_palette(const Fe8MemoryReader *memory, uint32_t address,
+    uint32_t palette[FE8_PORTRAIT_PALETTE_SIZE]) {
+    unsigned index;
+    memset(palette, 0, FE8_PORTRAIT_PALETTE_SIZE * sizeof(*palette));
+    for (index = 1; index < FE8_PORTRAIT_PALETTE_SIZE; ++index) {
+        uint16_t color = r16(memory, address + index * 2);
+        palette[index] = UINT32_C(0xFF000000) |
+            ((uint32_t)((color >> 10) & 31) * 255 / 31) << 16 |
+            ((uint32_t)((color >> 5) & 31) * 255 / 31) << 8 |
+            (uint32_t)(color & 31) * 255 / 31;
+    }
+}
+
+bool fe8_catalog_portrait(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
+    uint16_t portrait_id,
+    uint8_t pixels[FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT],
+    uint32_t palette[FE8_PORTRAIT_PALETTE_SIZE]) {
+    uint32_t record;
+    uint32_t graphics;
+    uint32_t chibi_graphics;
+    uint32_t palette_address;
+    uint8_t tiles[PORTRAIT_FULL_TILE_BYTES];
+    size_t tile_bytes = 0;
+    if (!pixels || !palette)
+        return false;
+    memset(pixels, 0, FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT);
+    memset(palette, 0, FE8_PORTRAIT_PALETTE_SIZE * sizeof(*palette));
+    if (!memory || !memory->read8 || !catalog || !catalog->valid || !portrait_id)
+        return false;
+    record = catalog->portrait_table_bias + (uint32_t)portrait_id * 28;
+    if (!rom(record, 28))
+        return false;
+    graphics = r32(memory, record) & UINT32_C(0x7FFFFFFF);
+    chibi_graphics = r32(memory, record + 4) & UINT32_C(0x7FFFFFFF);
+    palette_address = r32(memory, record + 8) & UINT32_C(0x7FFFFFFF);
+    if (!rom(palette_address, FE8_PORTRAIT_PALETTE_SIZE * 2))
+        return false;
+    decode_portrait_palette(memory, palette_address, palette);
+    if (unpack_graphics(memory, graphics, tiles, sizeof(tiles), &tile_bytes) &&
+            decode_full_portrait(tiles, tile_bytes, pixels))
+        return true;
+    memset(pixels, 0, FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT);
+    tile_bytes = 0;
+    return unpack_graphics(memory, chibi_graphics, tiles,
+        PORTRAIT_CHIBI_TILE_BYTES, &tile_bytes) &&
+        decode_chibi_portrait(tiles, tile_bytes, pixels);
 }

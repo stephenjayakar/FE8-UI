@@ -121,6 +121,12 @@ target_include_directories(test_prebattle_inventory PRIVATE ../app/src)
 target_link_libraries(test_prebattle_inventory PRIVATE mgba)
 add_test(NAME prebattle_inventory COMMAND test_prebattle_inventory)
 
+add_executable(test_fe8_catalog_portrait
+    test_fe8_catalog_portrait.c
+    ../app/src/fe8_catalog.c)
+target_include_directories(test_fe8_catalog_portrait PRIVATE ../app/src)
+add_test(NAME fe8_catalog_portrait COMMAND test_fe8_catalog_portrait)
+
 add_executable(test_prebattle_inventory_ui
     test_prebattle_inventory_ui.c
     ../app/src/prebattle_inventory_ui.c

@@ -7,7 +7,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { FE8_PORTRAIT_WIDTH = 32, FE8_PORTRAIT_HEIGHT = 32 };
+enum {
+    /* FE8's standard menu portrait layout (PutFace80x72). */
+    FE8_PORTRAIT_WIDTH = 80,
+    FE8_PORTRAIT_HEIGHT = 72,
+    FE8_PORTRAIT_PALETTE_SIZE = 16,
+};
 
 typedef struct Fe8Catalog {
     uint32_t message_table;
@@ -44,6 +49,8 @@ bool fe8_catalog_text(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
 bool fe8_catalog_item(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     uint16_t encoded_item, Fe8ItemInfo *item);
 bool fe8_catalog_portrait(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
-    uint16_t portrait_id, uint32_t pixels[FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT]);
+    uint16_t portrait_id,
+    uint8_t pixels[FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT],
+    uint32_t palette[FE8_PORTRAIT_PALETTE_SIZE]);
 
 #endif
