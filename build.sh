@@ -1,5 +1,7 @@
-./scripts/bootstrap.sh     
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_ARCHITECTURES=arm64
-cmake --build build --target fe8-mgba-sdl
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+"$repo_dir/scripts/bootstrap.sh"
+exec "$repo_dir/scripts/build.sh" "$@"

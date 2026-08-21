@@ -18,7 +18,7 @@ void fe8_host_draw_mouse_cursor(uint32_t *pixels, size_t stride,
     /* A compact tactician's pointer. The continuous two-tone silhouette
      * stays readable without overpowering native FE8 menus and map tiles. */
     static const char *const art[CURSOR_GRID] = {
-        "KK......................",
+        "K.......................",
         "KWK.....................",
         "KWWK....................",
         "KWWWK...................",

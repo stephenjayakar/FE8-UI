@@ -1,9 +1,50 @@
 # Testing FE8 Extended Frontend
 
-These commands test the native macOS frontend. They do not rebuild or modify
-the ROM. Use a legally obtained US FE8 ROM and copies of any cartridge saves.
+These commands test the portable SDL2 command-line frontend and the native
+macOS application. They do not rebuild or modify the ROM. Use a legally
+obtained US FE8 ROM and copies of any cartridge saves.
 
-## Build and unit tests
+## Linux workspace build and capture
+
+On Debian or Ubuntu, install the development dependencies and build the pinned
+mGBA core plus frontend:
+
+```sh
+sudo apt-get update
+sudo apt-get install --yes \
+  build-essential cmake ninja-build pkg-config libsdl2-dev zlib1g-dev xvfb
+./scripts/bootstrap.sh
+./scripts/test.sh -G Ninja
+```
+
+For a deterministic headless image, keep the ROM local and run the frontend
+under Xvfb:
+
+```sh
+SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software \
+  xvfb-run -a ./build/fe8-mgba-sdl \
+  --rom "/path/to/Fire Emblem The Sacred Stones.GBA" \
+  --mute --auto-continue \
+  --capture /tmp/fe8-frame.bmp --capture-after 120
+```
+
+The `Linux workspace build` GitHub Actions workflow performs the same configure,
+build, and assertion-enabled unit-test sequence with GCC, repeats the release
+suite with Clang, and runs the tests under AddressSanitizer and
+UndefinedBehaviorSanitizer. It publishes a Linux executable, a source archive
+with the pinned mGBA tree, and a small SDL2 development bundle for isolated
+workspaces that cannot reach package mirrors. After extracting the latter two,
+point `PKG_CONFIG_PATH` at the bundle before configuring:
+
+```sh
+export PKG_CONFIG_PATH=/path/to/fe8-linux-sdk/lib/pkgconfig
+./scripts/test.sh -G Ninja
+```
+
+The SDL2 runtime library must still be installed on the target machine. ROMs,
+saves, and states are never included in CI artifacts.
+
+## macOS build and unit tests
 
 From the repository root:
 

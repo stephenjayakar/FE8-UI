@@ -19,6 +19,9 @@ int fe8_host_text_begin(Fe8HostTextCanvas *canvas, uint32_t *pixels,
     CGContextSetShouldAntialias(context, true);
     CGContextSetShouldSmoothFonts(context, true);
     canvas->context = context;
+    canvas->pixels = pixels;
+    canvas->stride = stride;
+    canvas->width = width;
     canvas->height = height;
     return 1;
 }
@@ -90,5 +93,9 @@ void fe8_host_text_end(Fe8HostTextCanvas *canvas) {
         CGContextFlush((CGContextRef)canvas->context);
         CGContextRelease((CGContextRef)canvas->context);
         canvas->context = NULL;
+        canvas->pixels = NULL;
+        canvas->stride = 0;
+        canvas->width = 0;
+        canvas->height = 0;
     }
 }

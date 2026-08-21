@@ -102,7 +102,7 @@ if(APPLE)
 else()
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_sdl.c
-        app/src/host_text_stub.c
+        app/src/host_text_bitmap.c
         app/src/macos_library_stub.c
         app/src/macos_settings_stub.c)
 endif()
