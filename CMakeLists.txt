@@ -95,6 +95,13 @@ if(FE8_BUILD_FRONTEND)
         set_source_files_properties(
             third_party/mgba/LICENSE
             PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/ThirdParty/mGBA")
+        # Newer macOS SDKs no longer declare NSAboutPanelOptionCopyright. The
+        # About panel's credits already contain the project/license text, so
+        # map the obsolete option onto Credits for source compatibility. Also
+        # suppress Foundation's GNU-expression MIN macro warning only here.
+        set_source_files_properties(app/src/macos_library.m PROPERTIES
+            COMPILE_DEFINITIONS "NSAboutPanelOptionCopyright=NSAboutPanelOptionCredits"
+            COMPILE_OPTIONS "-Wno-gnu-statement-expression-from-macro-expansion")
         set_target_properties(fe8-mgba-sdl PROPERTIES
             MACOSX_BUNDLE TRUE
             MACOSX_BUNDLE_BUNDLE_NAME "FE8 Extended Frontend"
