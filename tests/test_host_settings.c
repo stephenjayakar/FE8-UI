@@ -1,9 +1,11 @@
 #include "host_settings.h"
 
 #include <assert.h>
+#include <string.h>
 
 int main(void) {
     Fe8HostSettings settings;
+    Fe8HostShaderConfig config;
     fe8_host_settings_init(&settings);
     assert(settings.audio_enabled);
     assert(settings.vsync_enabled);
@@ -34,6 +36,28 @@ int main(void) {
         ((UINT32_C(1) << FE8_HOST_A) | (UINT32_C(1) << FE8_HOST_B)));
     assert(fe8_host_button_name(FE8_HOST_START)[0] == 'S');
     assert(fe8_host_shader_name(FE8_HOST_SHADER_CRT)[0] == 'C');
+
+    assert(strcmp(fe8_host_shader_name(FE8_HOST_SHADER_CRT_GEOM), "crt-geom") == 0);
+    assert(strcmp(fe8_host_shader_name(FE8_HOST_SHADER_CRT_LOTTES), "crt-lottes") == 0);
+    assert(strcmp(fe8_host_shader_name(FE8_HOST_SHADER_ZFAST_CRT), "zfast-crt") == 0);
+    assert(strcmp(fe8_host_shader_name(FE8_HOST_SHADER_CRT_APERTURE), "crt-aperture") == 0);
+    assert(strcmp(fe8_host_shader_name(FE8_HOST_SHADER_CRT_EASYMODE), "crt-easymode") == 0);
+
+    fe8_host_shader_default_config(FE8_HOST_SHADER_CRT_GEOM, &config);
+    assert(config.curvature > 0.10f);
+    assert(config.scanline_strength > 0.0f);
+    fe8_host_shader_default_config(FE8_HOST_SHADER_CRT_LOTTES, &config);
+    assert(config.mask_strength > 0.40f);
+    assert(config.bloom > 0.0f);
+    fe8_host_shader_default_config(FE8_HOST_SHADER_ZFAST_CRT, &config);
+    assert(config.blur < 0.10f);
+    assert(config.bloom < 0.05f);
+    fe8_host_shader_default_config(FE8_HOST_SHADER_CRT_APERTURE, &config);
+    assert(config.mask_strength > 0.50f);
+    fe8_host_shader_default_config(FE8_HOST_SHADER_CRT_EASYMODE, &config);
+    assert(config.mask_strength > 0.30f);
+    assert(config.blur > 0.10f);
+
     assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_SPACE) ==
         (UINT32_C(1) << FE8_HOST_HOTKEY_SPEED_UP));
     settings.hotkeys[FE8_HOST_HOTKEY_QUICK_LOAD] = SDL_SCANCODE_SPACE;

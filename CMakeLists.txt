@@ -81,6 +81,7 @@ if(APPLE)
         app/src/host_text_macos.m
         app/src/macos_library.m
         app/src/macos_settings.m
+        app/src/macos_shader_menu.m
         LICENSE
         THIRD_PARTY_NOTICES.md
         third_party/mgba/LICENSE

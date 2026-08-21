@@ -11,43 +11,75 @@ typedef struct Fe8HostVideoGl {
     SDL_GLContext gl_context;
     struct mGLES2Context renderer;
     struct mGLES2Shader shader;
-    struct mGLES2Uniform uniforms[2];
+    struct mGLES2Uniform uniforms[7];
     int renderer_initialized;
     int shader_initialized;
     int drawable_width;
     int drawable_height;
 } Fe8HostVideoGl;
 
-/* These are the fragment passes shipped by mGBA. TV Mode and Scanlines are
- * Copyright (C) Dominus Iniquitatis and distributed under the MIT license;
- * see THIRD_PARTY_NOTICES.md. The actual compilation, pass sizing, uniforms,
- * filtering, and presentation are handled by mGLES2Shader/mGLES2Context. */
+/* A single configurable CRT pass keeps preset changes cheap: switching modes
+ * or moving a slider only updates uniforms instead of rebuilding the GL
+ * program. The pass intentionally uses only mGLES2's portable shader inputs so
+ * it runs in the existing macOS OpenGL 3.2 compatibility wrapper. */
 static const char *const crt_fragment_shader =
     "uniform sampler2D tex;\n"
     "uniform vec2 texSize;\n"
+    "uniform vec2 outputSize;\n"
     "varying vec2 texCoord;\n"
-    "uniform float lineBrightness;\n"
-    "uniform float blurring;\n"
+    "uniform int crtMode;\n"
+    "uniform float scanlineStrength;\n"
+    "uniform float maskStrength;\n"
+    "uniform float blurAmount;\n"
+    "uniform float bloomAmount;\n"
+    "uniform float curvature;\n"
+    "uniform float saturation;\n"
+    "float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
     "void main() {\n"
-    " vec4 c = texture2D(tex, texCoord);\n"
-    " vec4 n = texture2D(tex, texCoord + vec2(1.0 / texSize.x * 0.5, 0.0));\n"
-    " vec4 color = mix(c, (c + n) / 2.0, blurring);\n"
-    " color.a = c.a;\n"
-    " if (int(mod(texCoord.t * texSize.y * 2.0, 2.0)) == 0)\n"
-    "  color.rgb *= lineBrightness;\n"
-    " gl_FragColor = color;\n"
-    "}\n";
-
-static const char *const scanlines_fragment_shader =
-    "uniform sampler2D tex;\n"
-    "uniform vec2 texSize;\n"
-    "varying vec2 texCoord;\n"
-    "uniform float lineBrightness;\n"
-    "void main() {\n"
-    " vec4 color = texture2D(tex, texCoord);\n"
-    " if (int(mod(texCoord.t * texSize.y * 2.0, 2.0)) == 0)\n"
-    "  color.rgb *= lineBrightness;\n"
-    " gl_FragColor = color;\n"
+    " vec2 p = texCoord * 2.0 - 1.0;\n"
+    " p *= 1.0 + curvature * vec2(p.y * p.y, p.x * p.x);\n"
+    " vec2 uv = p * 0.5 + 0.5;\n"
+    " if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {\n"
+    "  gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return;\n"
+    " }\n"
+    " vec2 px = 1.0 / texSize;\n"
+    " vec4 center = texture2D(tex, uv);\n"
+    " vec3 soft = (texture2D(tex, uv - vec2(px.x, 0.0)).rgb +\n"
+    "              texture2D(tex, uv + vec2(px.x, 0.0)).rgb) * 0.5;\n"
+    " vec3 color = mix(center.rgb, soft, blurAmount * 0.5);\n"
+    " vec3 glow = (texture2D(tex, uv - px).rgb + texture2D(tex, uv + px).rgb) * 0.5;\n"
+    " color += max(glow - color, vec3(0.0)) * bloomAmount;\n"
+    " float gray = luma(color);\n"
+    " color = mix(vec3(gray), color, saturation);\n"
+    " float scan = 0.5 + 0.5 * cos(uv.y * texSize.y * 6.28318530718);\n"
+    " float scanScale = crtMode == 9 ? 0.34 : (crtMode == 7 ? 0.62 : 0.50);\n"
+    " color *= 1.0 - scanlineStrength * scanScale * scan;\n"
+    " vec3 mask = vec3(1.0);\n"
+    " float ox = floor(uv.x * outputSize.x);\n"
+    " float oy = floor(uv.y * outputSize.y);\n"
+    " if (crtMode == 3 || crtMode == 6 || crtMode == 8 || crtMode == 10) {\n"
+    "  float triad = mod(ox, 3.0);\n"
+    "  float dim = crtMode == 10 ? 0.68 : (crtMode == 8 ? 0.70 : 0.72);\n"
+    "  mask = triad < 1.0 ? vec3(1.0, dim, dim) :\n"
+    "         (triad < 2.0 ? vec3(dim, 1.0, dim) : vec3(dim, dim, 1.0));\n"
+    " } else if (crtMode == 4 || crtMode == 11) {\n"
+    "  float triad = mod(ox + mod(oy, 2.0) * 1.5, 3.0);\n"
+    "  float dim = crtMode == 11 ? 0.72 : 0.67;\n"
+    "  mask = triad < 1.0 ? vec3(1.0, dim, dim) :\n"
+    "         (triad < 2.0 ? vec3(dim, 1.0, dim) : vec3(dim, dim, 1.0));\n"
+    "  if (mod(oy, 4.0) >= 3.0) mask *= crtMode == 11 ? 0.93 : 0.88;\n"
+    " } else if (crtMode == 5) {\n"
+    "  float triad = mod(ox, 6.0);\n"
+    "  mask = triad < 2.0 ? vec3(1.0, 0.68, 0.68) :\n"
+    "         (triad < 4.0 ? vec3(0.68, 1.0, 0.68) : vec3(0.68, 0.68, 1.0));\n"
+    "  if (mod(oy, 3.0) >= 2.0) mask *= 0.80;\n"
+    " } else if (crtMode == 9) {\n"
+    "  float stripe = mod(ox, 3.0);\n"
+    "  mask = stripe < 1.0 ? vec3(1.0, 0.88, 0.88) :\n"
+    "         (stripe < 2.0 ? vec3(0.88, 1.0, 0.88) : vec3(0.88, 0.88, 1.0));\n"
+    " }\n"
+    " color *= mix(vec3(1.0), mask, maskStrength);\n"
+    " gl_FragColor = vec4(max(color, vec3(0.0)), center.a);\n"
     "}\n";
 
 static void destroy_shader(Fe8HostVideoGl *backend) {
@@ -68,6 +100,19 @@ static int shader_linked(const struct mGLES2Shader *shader) {
     GLint linked = GL_FALSE;
     glGetProgramiv(shader->program, GL_LINK_STATUS, &linked);
     return linked == GL_TRUE;
+}
+
+static void update_shader_uniforms(
+    Fe8HostVideoGl *backend, enum Fe8HostShader mode) {
+    Fe8HostShaderConfig config;
+    fe8_host_shader_get_config(mode, &config);
+    backend->uniforms[0].value.i = (GLint)mode;
+    backend->uniforms[1].value.f = config.scanline_strength;
+    backend->uniforms[2].value.f = config.mask_strength;
+    backend->uniforms[3].value.f = config.blur;
+    backend->uniforms[4].value.f = config.bloom;
+    backend->uniforms[5].value.f = config.curvature;
+    backend->uniforms[6].value.f = config.saturation;
 }
 
 static void apply_layout(Fe8HostVideo *video, Fe8HostVideoGl *backend) {
@@ -139,39 +184,42 @@ int fe8_host_video_set_vsync(Fe8HostVideo *video, int enabled) {
 
 int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader mode) {
     Fe8HostVideoGl *backend = video ? video->backend : NULL;
-    const char *fragment;
-    size_t uniform_count;
+    static const char *const names[] = {
+        "crtMode", "scanlineStrength", "maskStrength", "blurAmount",
+        "bloomAmount", "curvature", "saturation"
+    };
+    static const char *const readable[] = {
+        "CRT mode", "Scanlines", "Mask", "Blur", "Bloom", "Curvature", "Saturation"
+    };
+    size_t i;
     if (!backend || mode < 0 || mode >= FE8_HOST_SHADER_COUNT)
         return 0;
-    if (video->shader == mode &&
-            (mode == FE8_HOST_SHADER_OFF || backend->shader_initialized))
+    if (mode == FE8_HOST_SHADER_OFF) {
+        destroy_shader(backend);
+        video->shader = FE8_HOST_SHADER_OFF;
         return 1;
-    destroy_shader(backend);
-    video->shader = FE8_HOST_SHADER_OFF;
-    if (mode == FE8_HOST_SHADER_OFF)
+    }
+    if (backend->shader_initialized) {
+        update_shader_uniforms(backend, mode);
+        video->shader = mode;
         return 1;
+    }
 
     memset(backend->uniforms, 0, sizeof(backend->uniforms));
-    backend->uniforms[0].name = "lineBrightness";
-    backend->uniforms[0].readableName = "Line brightness";
-    backend->uniforms[0].type = GL_FLOAT;
-    backend->uniforms[0].value.f = mode == FE8_HOST_SHADER_CRT ? 0.75f : 0.5f;
-    uniform_count = 1;
-    fragment = scanlines_fragment_shader;
-    if (mode == FE8_HOST_SHADER_CRT) {
-        backend->uniforms[1].name = "blurring";
-        backend->uniforms[1].readableName = "Blurring";
-        backend->uniforms[1].type = GL_FLOAT;
-        backend->uniforms[1].value.f = 1.0f;
-        uniform_count = 2;
-        fragment = crt_fragment_shader;
+    for (i = 0; i < sizeof(backend->uniforms) / sizeof(backend->uniforms[0]); ++i) {
+        backend->uniforms[i].name = names[i];
+        backend->uniforms[i].readableName = readable[i];
+        backend->uniforms[i].type = i == 0 ? GL_INT : GL_FLOAT;
     }
-    mGLES2ShaderInit(&backend->shader, NULL, fragment,
-        -2, -2, false, backend->uniforms, uniform_count);
+    update_shader_uniforms(backend, mode);
+    mGLES2ShaderInit(&backend->shader, NULL, crt_fragment_shader,
+        -2, -2, false, backend->uniforms,
+        sizeof(backend->uniforms) / sizeof(backend->uniforms[0]));
     backend->shader.blend = true;
     backend->shader_initialized = 1;
     if (!shader_linked(&backend->shader)) {
         destroy_shader(backend);
+        video->shader = FE8_HOST_SHADER_OFF;
         return 0;
     }
     mGLES2ShaderAttach(&backend->renderer, &backend->shader, 1);
@@ -184,10 +232,6 @@ int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
     if (!backend || !pixels)
         return 0;
     while (glGetError() != GL_NO_ERROR) {}
-    /* mGLES2ContextClear clears its offscreen render target, not framebuffer
-     * zero. Clear the macOS drawable as well so pixels from the old viewport
-     * cannot survive in newly exposed letterbox bars after a resize. glClear
-     * covers the drawable regardless of the current content viewport. */
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDisable(GL_SCISSOR_TEST);
     glClearColor(0.f, 0.f, 0.f, 1.f);
