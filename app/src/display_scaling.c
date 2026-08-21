@@ -50,11 +50,16 @@ void fe8_display_scaling_init(Fe8DisplayScaling *scaling,
 
 int fe8_display_scaling_resize(Fe8DisplayScaling *scaling,
     int drawable_width, int drawable_height) {
+    int drawable_changed;
+    int canvas_changed;
     if (!scaling || drawable_width <= 0 || drawable_height <= 0)
         return 0;
+    drawable_changed = scaling->drawable_width != drawable_width ||
+        scaling->drawable_height != drawable_height;
     scaling->drawable_width = drawable_width;
     scaling->drawable_height = drawable_height;
-    return calculate_layout(scaling);
+    canvas_changed = calculate_layout(scaling);
+    return drawable_changed || canvas_changed;
 }
 
 int fe8_display_scaling_adjust(Fe8DisplayScaling *scaling,

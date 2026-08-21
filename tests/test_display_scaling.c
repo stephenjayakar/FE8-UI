@@ -26,6 +26,21 @@ int main(void) {
     assert(fe8_display_scaling_adjust(&scaling, 1.0, 0.03));
     assert(scaling.zoom_factor > 1.029 && scaling.zoom_factor < 1.031);
 
+    {
+        Fe8DisplayScaling settled;
+        fe8_display_scaling_init(&settled, 480, 320, 240, 160);
+        assert(fe8_display_scaling_resize(&settled, 1920, 1280));
+        assert(settled.canvas_width == 480);
+        assert(settled.canvas_height == 320);
+        /* Maximization/HiDPI can change the drawable while preserving the
+         * logical canvas. Backends must still be told to reapply their layer
+         * geometry and callers must invalidate cached canvas coordinates. */
+        assert(fe8_display_scaling_resize(&settled, 2400, 1600));
+        assert(settled.canvas_width == 480);
+        assert(settled.canvas_height == 320);
+        assert(!fe8_display_scaling_resize(&settled, 2400, 1600));
+    }
+
     puts("display scaling tests passed");
     return 0;
 }
