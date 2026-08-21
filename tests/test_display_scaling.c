@@ -6,6 +6,12 @@
 int main(void) {
     Fe8DisplayScaling scaling;
     fe8_display_scaling_init(&scaling, 480, 320, 240, 160);
+
+    /* A widescreen drawable can change only the logical width. This is the
+     * production transition that exposed the mGLES2 layer-cache bug. */
+    assert(fe8_display_scaling_resize(&scaling, 1920, 1280));
+    assert(scaling.canvas_width == 480);
+    assert(scaling.canvas_height == 320);
     assert(fe8_display_scaling_resize(&scaling, 2458, 1536));
     assert(scaling.base_pixel_scale == 4.8);
     assert(scaling.pixel_scale == 4.8);

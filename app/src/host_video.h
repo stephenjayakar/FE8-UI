@@ -6,6 +6,13 @@
 #include "host_settings.h"
 #include "display_scaling.h"
 
+#ifdef __APPLE__
+/* Route mGLES2 initialization through the frontend's single-axis layout
+ * compatibility shim. The subsequent gles2.h declaration and call site are
+ * renamed together by this macro. */
+#define mGLES2ContextCreate fe8_mgles2_context_create
+#endif
+
 typedef struct Fe8HostVideo {
     SDL_Window *window;
     void *backend;
