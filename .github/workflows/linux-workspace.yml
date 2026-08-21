@@ -43,6 +43,9 @@ jobs:
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
 
+      - name: Smoke-test command-line startup
+        run: build/fe8-mgba-sdl --help
+
       - name: Inspect executable dependencies
         run: |
           file build/fe8-mgba-sdl
@@ -68,13 +71,52 @@ jobs:
 
       - name: Package source tree with pinned mGBA
         run: |
-          tar --exclude=.git --exclude=build --exclude=linux-dist \
-            -czf fe8-ui-source-with-mgba.tar.gz .
+          tar \
+            --exclude='./.git' \
+            --exclude='*/.git' \
+            --exclude='./build' \
+            --exclude='./linux-dist' \
+            -C "$GITHUB_WORKSPACE" \
+            -czf "$RUNNER_TEMP/fe8-ui-source-with-mgba.tar.gz" .
 
       - name: Upload reproducible source tree
         uses: actions/upload-artifact@v4
         with:
           name: fe8-ui-source-with-mgba
-          path: fe8-ui-source-with-mgba.tar.gz
+          path: ${{ runner.temp }}/fe8-ui-source-with-mgba.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Package relocatable SDL2 development files
+        run: |
+          sdk="$RUNNER_TEMP/fe8-linux-sdk"
+          mkdir -p "$sdk/include/SDL2" "$sdk/lib/pkgconfig"
+          cp -a /usr/include/SDL2/. "$sdk/include/SDL2/"
+          cp --dereference /usr/lib/x86_64-linux-gnu/libSDL2.so "$sdk/lib/libSDL2.so"
+          cat > "$sdk/lib/pkgconfig/sdl2.pc" <<'EOF'
+          prefix=${pcfiledir}/../..
+          exec_prefix=${prefix}
+          libdir=${prefix}/lib
+          includedir=${prefix}/include
+
+          Name: sdl2
+          Description: Simple DirectMedia Layer
+          Version: 2.30.0
+          Libs: -L${libdir} -lSDL2
+          Cflags: -I${includedir}/SDL2 -D_REENTRANT
+          EOF
+          cat > "$sdk/README.txt" <<'EOF'
+          Set PKG_CONFIG_PATH to <this-directory>/lib/pkgconfig before configuring.
+          Example:
+            PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig" cmake -S . -B build -G Ninja
+          The bundled library is for linking only; normal SDL2 runtime packages remain required.
+          EOF
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/fe8-linux-sdk.tar.gz" fe8-linux-sdk
+
+      - name: Upload offline Linux build SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe8-linux-sdk
+          path: ${{ runner.temp }}/fe8-linux-sdk.tar.gz
           if-no-files-found: error
           retention-days: 7
