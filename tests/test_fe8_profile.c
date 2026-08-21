@@ -6,10 +6,13 @@
 
 #define RAM_BASE UINT32_C(0x02000000)
 #define RAM_SIZE UINT32_C(0x00040000)
+#define IWRAM_BASE UINT32_C(0x03000000)
+#define IWRAM_SIZE UINT32_C(0x00008000)
 #define ROM_BASE UINT32_C(0x08000000)
 #define ROM_SIZE UINT32_C(0x00028000)
 
 static uint8_t ram[RAM_SIZE];
+static uint8_t iwram[IWRAM_SIZE];
 static uint8_t rom[ROM_SIZE];
 static uint32_t synthetic_base_tiles;
 
@@ -17,18 +20,25 @@ static uint8_t read8(void *context, uint32_t address) {
     (void)context;
     if (address >= RAM_BASE && address - RAM_BASE < RAM_SIZE)
         return ram[address - RAM_BASE];
+    if (address >= IWRAM_BASE && address - IWRAM_BASE < IWRAM_SIZE)
+        return iwram[address - IWRAM_BASE];
     if (address >= ROM_BASE && address - ROM_BASE < ROM_SIZE)
         return rom[address - ROM_BASE];
     if (address >= UINT32_C(0x0859A9D4) && address < UINT32_C(0x0859A9D8))
         return (uint8_t)(synthetic_base_tiles >> ((address - UINT32_C(0x0859A9D4)) * 8));
-    if (address >= UINT32_C(0x03004E50) && address < UINT32_C(0x03004E54))
-        return 0;
     return 0;
 }
 
 static void put8(uint32_t address, uint8_t value) {
-    assert(address >= RAM_BASE && address - RAM_BASE < RAM_SIZE);
-    ram[address - RAM_BASE] = value;
+    if (address >= RAM_BASE && address - RAM_BASE < RAM_SIZE) {
+        ram[address - RAM_BASE] = value;
+        return;
+    }
+    if (address >= IWRAM_BASE && address - IWRAM_BASE < IWRAM_SIZE) {
+        iwram[address - IWRAM_BASE] = value;
+        return;
+    }
+    assert(!"address outside synthetic RAM");
 }
 
 static void put16(uint32_t address, uint16_t value) {
@@ -80,6 +90,7 @@ static void setup_state(void) {
     const uint16_t width = 4;
     const uint16_t height = 3;
     memset(ram, 0, sizeof(ram));
+    memset(iwram, 0, sizeof(iwram));
     put16(profile->map_size, width);
     put16(profile->map_size + 2, height);
     put16(profile->bm_state + 0x0C, 0x0010);
@@ -194,6 +205,23 @@ static void test_snapshot(void) {
     assert(snapshot.map_sprites[1].config == 2);
 }
 
+static void test_extracts_iwram_movement_maps(void) {
+    Fe8MemoryReader memory = { NULL, read8 };
+    Fe8Snapshot snapshot;
+    const Fe8Profile *profile = fe8u_profile();
+    setup_state();
+
+    /* Some FE8 hacks move the working movement and range maps into IWRAM
+     * while leaving the map handles at their retail EWRAM addresses. */
+    make_map(profile->map_movement, UINT32_C(0x03000800), 4, 3, 70);
+    make_map(profile->map_range, UINT32_C(0x03001000), 4, 3, 90);
+    assert(fe8_extract_snapshot(&memory, profile, &snapshot));
+    assert((snapshot.flags & FE8_SNAPSHOT_MOVEMENT) != 0);
+    assert((snapshot.flags & FE8_SNAPSHOT_RANGE) != 0);
+    assert(snapshot.movement[0] == 70 && snapshot.movement[11] == 81);
+    assert(snapshot.range[0] == 90 && snapshot.range[11] == 101);
+}
+
 static void test_detects_combat_panel(void) {
     Fe8MemoryReader memory = { NULL, read8 };
     Fe8Snapshot snapshot;
@@ -249,6 +277,7 @@ static void test_rejects_bad_rows_and_dimensions(void) {
 int main(void) {
     test_identity();
     test_snapshot();
+    test_extracts_iwram_movement_maps();
     test_detects_combat_panel();
     test_detects_map_hp_bar_patch();
     test_rejects_bad_rows_and_dimensions();

@@ -1353,8 +1353,12 @@ int main(int argc, char **argv) {
                     host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
                     frozen_canvas, frozen_canvas_width, frozen_canvas_height,
                     frozen_canvas_width, frozen_placement.x, frozen_placement.y, 0);
+                /* FE8's BG2 movement/range layer can obscure every terrain
+                 * sample. Its validated logical maps are sufficient evidence
+                 * that the native frame is still the tactical map. */
                 fe8_presentation_update(&presentation, true,
-                    validation.match_percent >= 15,
+                    validation.match_percent >= 15 ||
+                        fe8_extended_move_range_is_active(&snapshot),
                     snapshot.combat_panel_active);
                 visual_profile_active = presentation.state == FE8_PRESENTATION_LIVE;
                 extension_active = 1;
@@ -1387,6 +1391,10 @@ int main(int argc, char **argv) {
                     perf.alignment += SDL_GetPerformanceCounter() - stage_started;
                     frame_compatible = frame_placement.match_percent >= 15;
                 }
+                /* Do not freeze or fail to reacquire the extension merely
+                 * because a large movement range covers the native viewport. */
+                if (fe8_extended_move_range_is_active(&snapshot))
+                    frame_compatible = 1;
                 fe8_presentation_update(&presentation, terrain_rendered,
                     frame_compatible != 0, snapshot.combat_panel_active);
                 visual_profile_active = presentation.state == FE8_PRESENTATION_LIVE;

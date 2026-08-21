@@ -14,6 +14,9 @@ unsigned fe8_render_extended_units(
     size_t stride_pixels,
     unsigned animation_frame);
 
+/* True while FE8's MoveLimitView process owns the BG2 movement/range layer. */
+bool fe8_extended_move_range_is_active(const Fe8Snapshot *snapshot);
+
 /* Mirrors FE8's active BG2 movement/range style across the host canvas. */
 unsigned fe8_render_extended_move_range(
     const Fe8MemoryView *memory,

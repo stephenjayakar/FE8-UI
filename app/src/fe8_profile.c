@@ -89,6 +89,11 @@ static bool valid_ewram(uint32_t address, uint32_t size) {
     return valid_range(address, size, FE8_EWRAM_START, FE8_EWRAM_END);
 }
 
+static bool valid_ram(uint32_t address, uint32_t size) {
+    return valid_ewram(address, size) ||
+        valid_range(address, size, FE8_IWRAM_START, FE8_IWRAM_END);
+}
+
 static bool valid_pointer(uint32_t address) {
     return valid_range(address, 1, FE8_EWRAM_START, FE8_EWRAM_END) ||
         valid_range(address, 1, FE8_IWRAM_START, FE8_IWRAM_END) ||
@@ -208,11 +213,11 @@ static bool map_rows_valid(
         width > FE8_MAX_MAP_WIDTH || height > FE8_MAX_MAP_HEIGHT)
         return false;
     table = read32(memory, handle_address);
-    if (!valid_ewram(table, (uint32_t)height * 4))
+    if (!valid_ram(table, (uint32_t)height * 4))
         return false;
     for (y = 0; y < height; ++y) {
         rows[y] = read32(memory, table + (uint32_t)y * 4);
-        if (!valid_ewram(rows[y], width))
+        if (!valid_ram(rows[y], width))
             return false;
     }
     return true;
