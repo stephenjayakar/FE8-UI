@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: linux-workspace-build
 
       - name: Decode and apply validated workspace files
         run: |
@@ -34,6 +35,11 @@ jobs:
             | tar -xzf - -C .
           rm app/src/host_text_stub.c
           chmod +x build.sh scripts/bootstrap.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path(".github/workflows/linux-workspace.yml")
+          path.write_text(path.read_text().rstrip() + "\n")
+          PY
           test "$(sha256sum <(cat .github/workspace-payload/part-* | base64 --decode) | cut -d' ' -f1)" \
             = c3c374309713a668947b05dcd280564bf3842e40ddc0b63bb5da7616b7dd3ece
 
