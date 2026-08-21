@@ -1,10 +1,12 @@
 #include "address_space.h"
 
+#include <mgba/core/core.h>
 #include <mgba-util/sha1.h>
 
 #include <string.h>
 
 #define FE8_ROM_BASE UINT32_C(0x08000000)
+#define FE8_GBA_ROM_WINDOW_SIZE ((size_t)UINT32_C(0x02000000))
 
 void fe8_address_space_init(
     Fe8AddressSpace *space, void *fallback_context, Fe8Read8 fallback_read8) {
@@ -25,8 +27,22 @@ bool fe8_address_space_add(
     block->data = data;
     block->size = size;
     if (base == FE8_ROM_BASE) {
-        sha1Buffer(data, size, space->rom_sha1);
-        space->rom_sha1_valid = true;
+        /* mGBA expands non-power-of-two ROMs to its full 32 MiB mapped
+         * cartridge window. Hashing that block includes emulator-added zero
+         * padding and does not match the ROM file's SHA-1. map_core_memory()
+         * supplies the backing mCore as fallback_context, so ask the public
+         * checksum API for the pristine image whenever expansion occurred. */
+        if (size == FE8_GBA_ROM_WINDOW_SIZE && space->fallback_context) {
+            struct mCore *core = space->fallback_context;
+            if (core->checksum) {
+                core->checksum(core, space->rom_sha1, mCHECKSUM_SHA1);
+                space->rom_sha1_valid = true;
+            }
+        }
+        if (!space->rom_sha1_valid) {
+            sha1Buffer(data, size, space->rom_sha1);
+            space->rom_sha1_valid = true;
+        }
     }
     return true;
 }
