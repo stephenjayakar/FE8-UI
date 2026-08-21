@@ -26,22 +26,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
+            build-essential \
             cmake \
             ninja-build \
+            pkg-config \
             libsdl2-dev \
             zlib1g-dev
 
-      - name: Configure
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DFE8_BUILD_TESTS=ON
-
-      - name: Build
-        run: cmake --build build --parallel 2
-
-      - name: Run unit tests
-        run: ctest --test-dir build --output-on-failure
+      - name: Build and run frontend tests through workspace script
+        env:
+          BUILD_DIR: ${{ github.workspace }}/build
+          BUILD_TYPE: RelWithDebInfo
+          BUILD_JOBS: 2
+        run: bash scripts/build-linux-workspace.sh
 
       - name: Smoke-test command-line startup
         run: |
@@ -120,7 +117,7 @@ jobs:
           cat > "$sdk/README.txt" <<'EOF'
           Set PKG_CONFIG_PATH to <this-directory>/lib/pkgconfig before configuring.
           Example:
-            PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig" cmake -S . -B build -G Ninja
+            PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig" bash scripts/build-linux-workspace.sh
           The bundled library is for linking only; normal SDL2 runtime packages remain required.
           EOF
           test -f "$sdk/include/SDL2/_real_SDL_config.h"
