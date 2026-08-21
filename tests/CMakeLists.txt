@@ -1,6 +1,12 @@
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+add_executable(test_gba_rom_info
+    test_gba_rom_info.c)
+target_link_libraries(test_gba_rom_info PRIVATE fe8-rom-info)
+fe8_enable_warnings(test_gba_rom_info)
+add_test(NAME gba_rom_info COMMAND test_gba_rom_info)
+
 add_executable(test_address_space
     test_address_space.c
     ../app/src/address_space.c)
@@ -60,17 +66,28 @@ target_include_directories(test_display_scaling PRIVATE ../app/src)
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
     set(FE8_TEST_SDL_TARGET SDL2::SDL2)
-else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+elseif(TARGET PkgConfig::SDL2)
     set(FE8_TEST_SDL_TARGET PkgConfig::SDL2)
+else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2)
+        if(TARGET PkgConfig::SDL2)
+            set(FE8_TEST_SDL_TARGET PkgConfig::SDL2)
+        endif()
+    endif()
 endif()
 
-add_executable(test_host_settings
-    test_host_settings.c
-    ../app/src/host_settings.c)
-target_include_directories(test_host_settings PRIVATE ../app/src)
-target_link_libraries(test_host_settings PRIVATE ${FE8_TEST_SDL_TARGET})
+if(FE8_TEST_SDL_TARGET)
+    add_executable(test_host_settings
+        test_host_settings.c
+        ../app/src/host_settings.c)
+    target_include_directories(test_host_settings PRIVATE ../app/src)
+    target_link_libraries(test_host_settings PRIVATE ${FE8_TEST_SDL_TARGET})
+    add_test(NAME host_settings COMMAND test_host_settings)
+else()
+    message(STATUS "SDL2 not found; skipping test_host_settings")
+endif()
 
 add_executable(test_host_cursor
     test_host_cursor.c
@@ -103,5 +120,4 @@ add_test(NAME prebattle_inventory_ui COMMAND test_prebattle_inventory_ui)
 add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
 add_test(NAME viewport_controller COMMAND test_viewport_controller)
 add_test(NAME display_scaling COMMAND test_display_scaling)
-add_test(NAME host_settings COMMAND test_host_settings)
 add_test(NAME host_cursor COMMAND test_host_cursor)

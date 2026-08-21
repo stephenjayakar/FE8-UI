@@ -18,13 +18,20 @@
 - [x] Isolate cartridge saves and F5 quick states by ROM SHA-1.
 - [x] Migrate a same-name `.sav` beside the ROM on first launch.
 - [x] Remove games from the library without deleting ROMs or saves.
-- [ ] Validate the GBA header checksum in addition to its size and metadata.
+- [x] Validate the Nintendo logo, fixed byte, and header checksum; preserve
+  non-fatal ROM-hack metadata discrepancies as visible warnings.
+- [x] Show compatibility class and last-played metadata.
+- [x] Provide clear import, missing-file, unreadable-file, changed-ROM, launch,
+  save-migration, and child-process errors.
+- [x] Allow a moved ROM to be reconnected only when its SHA-1 matches the
+  original entry.
+- [x] Retain a per-game launch log and surface a bounded tail on failure.
 - Store a security-scoped bookmark or another durable macOS-safe reference;
   do not copy or redistribute ROM contents without an explicit user action.
-- Add compatibility profile, cover/icon placeholder, and last-played metadata.
-- Provide clear errors for moved, deleted, unreadable, or unsupported files.
-- Add automated tests for import validation, persistence, duplicate ROMs,
-  missing bookmarks, and launch argument construction.
+- Add a cover/icon placeholder.
+- Add automated tests for library persistence, duplicate-row updates, missing
+  bookmarks, path relocation, and launch argument construction. Header parsing,
+  SHA-1 identity, warning policy, and fatal validation have unit coverage.
 
 ## Compatibility
 
@@ -43,4 +50,5 @@
 - Add native Open Recent, multiple named state slots, controller configuration,
   and per-game settings. Quick save/load and state file pickers are implemented.
 - [x] Add global bindable Speed Up, Quick Save, and Quick Load hotkeys.
-- Add an About panel that exposes the MIT license and third-party notices.
+- [x] Add an About panel that exposes the MIT license and bundled third-party
+  notices.
