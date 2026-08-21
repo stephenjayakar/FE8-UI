@@ -147,7 +147,7 @@ bool fe8_extract_prebattle_inventory(
                     unit->class_name, sizeof(unit->class_name)))
             strcpy(unit->class_name, "Unknown class");
         unit->portrait_valid = fe8_catalog_portrait(memory, catalog,
-            unit->portrait_id, unit->portrait);
+            unit->portrait_id, unit->portrait, unit->portrait_palette);
         for (slot = 0; slot < FE8_INVENTORY_ITEM_SLOTS; ++slot)
         {
             unit->items[slot] = read16(memory, address + FE8_UNIT_ITEM_OFFSET + slot * 2);
