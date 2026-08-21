@@ -101,9 +101,9 @@ jobs:
           sdl_libdir=$(pkg-config --variable=libdir sdl2)
           mkdir -p "$sdk/include/SDL2" "$sdk/lib/pkgconfig"
           cp -a /usr/include/SDL2/. "$sdk/include/SDL2/"
-          if [ -d "/usr/include/$multiarch/SDL2" ]; then
-            cp -a "/usr/include/$multiarch/SDL2/." "$sdk/include/SDL2/"
-          fi
+          cp --dereference \
+            "/usr/include/$multiarch/SDL2/_real_SDL_config.h" \
+            "$sdk/include/SDL2/_real_SDL_config.h"
           cp --dereference "$sdl_libdir/libSDL2.so" "$sdk/lib/libSDL2.so"
           cat > "$sdk/lib/pkgconfig/sdl2.pc" <<'EOF'
           prefix=${pcfiledir}/../..
@@ -115,7 +115,7 @@ jobs:
           Description: Simple DirectMedia Layer
           Version: 2.30.0
           Libs: -L${libdir} -lSDL2
-          Cflags: -I${includedir}/SDL2 -D_REENTRANT
+          Cflags: -I${includedir}/SDL2 -I${includedir} -D_REENTRANT
           EOF
           cat > "$sdk/README.txt" <<'EOF'
           Set PKG_CONFIG_PATH to <this-directory>/lib/pkgconfig before configuring.
@@ -124,6 +124,7 @@ jobs:
           The bundled library is for linking only; normal SDL2 runtime packages remain required.
           EOF
           test -f "$sdk/include/SDL2/_real_SDL_config.h"
+          test ! -L "$sdk/include/SDL2/SDL_platform.h"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/fe8-linux-sdk.tar.gz" fe8-linux-sdk
 
       - name: Upload offline Linux build SDK
