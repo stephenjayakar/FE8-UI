@@ -81,6 +81,12 @@ int main(void) {
     put_rom16(0x08809B10 + 0x24 + 2, 5);
     rom[0x809B10 + 0x24 + 0x14] = 40;
     rom[0x809B10 + 0x24 + 0x15] = 7;
+    /* Populate every encoded item used by the swap tests. With Sacred
+       Echoes-style immovable-attribute validation enabled, an absent item
+       record is rejected rather than treated as transferable. */
+    rom[0x809B10 + 0x1C * 0x24 + 6] = 0x1C;
+    rom[0x809B10 + 0x2D * 0x24 + 6] = 0x2D;
+    rom[0x809B10 + 0x35 * 0x24 + 6] = 0x35;
     rom[0x809B10 + 0x38 * 0x24 + 6] = 0x38;
     put_rom16(0x08809B10 + 0x38 * 0x24, 4);
     put_rom32(0x08809B10 + 0x38 * 0x24 + 8, 2);
