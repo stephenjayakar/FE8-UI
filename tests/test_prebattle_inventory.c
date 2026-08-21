@@ -76,6 +76,21 @@ int main(void) {
     memcpy(rom + 0x25030, "Fire", 5);
     put_rom32(0x08020000 + 20, 0x88025040);
     memcpy(rom + 0x25040, "A dependable blade.", 20);
+    /* Compressed text 6: "AB", a one-byte line-break command, "CD",
+       then the zero-first-byte terminator. The LSB-first paths are
+       00, 01, 10, and 11, encoded as 0xD8. */
+    put_rom32(0x08020000 + 24, 0x08025060);
+    rom[0x25060] = 0xD8;
+    put_rom16(0x08022000, 1);
+    put_rom16(0x08022002, 2);
+    put_rom16(0x08023000 + 4, 3);
+    put_rom16(0x08023000 + 6, 4);
+    put_rom16(0x08023000 + 8, 5);
+    put_rom16(0x08023000 + 10, 6);
+    put_rom32(0x08023000 + 12, UINT32_C(0xFFFF4241));
+    put_rom32(0x08023000 + 16, UINT32_C(0xFFFF0001));
+    put_rom32(0x08023000 + 20, UINT32_C(0xFFFF4443));
+    put_rom32(0x08023000 + 24, UINT32_C(0xFFFF0000));
     rom[0x809B10 + 0x24 + 6] = 1;
     put_rom16(0x08809B10 + 0x24, 3);
     put_rom16(0x08809B10 + 0x24 + 2, 5);
@@ -97,6 +112,8 @@ int main(void) {
         Fe8ItemInfo item;
         assert(fe8_catalog_text(&memory, &catalog, 1, decoded, sizeof(decoded)));
         assert(strcmp(decoded, "Alice") == 0);
+        assert(fe8_catalog_text(&memory, &catalog, 6, decoded, sizeof(decoded)));
+        assert(strcmp(decoded, "AB CD") == 0);
         assert(fe8_catalog_item(&memory, &catalog, 0x2801, &item));
         assert(strcmp(item.name, "Test Blade") == 0 && item.uses == 40 && item.might == 7);
         assert(item.min_range == 1 && item.max_range == 2);

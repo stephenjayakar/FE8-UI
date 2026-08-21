@@ -44,7 +44,10 @@ static void append_character(char *out, size_t cap, size_t *length, uint8_t c) {
         if (*length + 1 < cap)
             out[(*length)++] = (char)c;
     } else if (c == 1 || c == 2 || c == 3 || c == 4 || c == 5 || c == 6 || c == 7) {
-        /* FE text commands are not useful in a one-line desktop label. */
+        /* Normalize FE line/page controls to a separator so adjacent help-text
+         * fragments do not run together in the desktop layout. */
+        if (*length && out[*length - 1] != ' ' && *length + 1 < cap)
+            out[(*length)++] = ' ';
     } else if (*length && out[*length - 1] != ' ' && *length + 1 < cap) {
         out[(*length)++] = ' ';
     }
@@ -87,9 +90,10 @@ bool fe8_catalog_text(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
                 if (!first)
                     break;
                 append_character(output, output_size, &length, first);
-                if (!second)
-                    break;
-                append_character(output, output_size, &length, second);
+                /* A zero second byte is a one-byte Huffman symbol. Only a
+                 * zero first byte terminates the message. */
+                if (second)
+                    append_character(output, output_size, &length, second);
                 node = catalog->huffman_root;
             }
         }
