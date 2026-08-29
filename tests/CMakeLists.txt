@@ -136,6 +136,8 @@ add_test(NAME fe8_catalog_effectiveness COMMAND test_fe8_catalog_effectiveness)
 add_executable(test_prebattle_inventory_ui
     test_prebattle_inventory_ui.c
     ../app/src/prebattle_inventory_ui.c
+    ../app/src/prebattle_inventory.c
+    ../app/src/fe8_catalog.c
     ../app/src/host_text_bitmap.c)
 target_include_directories(test_prebattle_inventory_ui PRIVATE ../app/src)
 add_test(NAME prebattle_inventory_ui COMMAND test_prebattle_inventory_ui)
