@@ -17,17 +17,24 @@ the game's metatiles from emulated EWRAM/VRAM/palette memory, renders a 480×320
 terrain canvas, and places mGBA's exact frame over its center.
 
 Whenever a live FE8 roster exists, press **I** to open the host inventory
-manager. The game pauses while it is open. Pick a character from the full
-roster, then click a source and destination to move or swap items between that
-unit and the 100-slot Supply convoy. Empty slots are valid destinations. Press
-**U** to undo the most recent move, right-click to clear a selection, and **I**
-or **Escape** to close.
+manager. The game pauses while it is open. Pick a target from the full roster,
+then use the shared item pool to move or swap gear between any blue unit and
+the Supply convoy without stepping through the native character-by-character
+menus. Empty unit slots and the empty Supply row are valid destinations. The
+pool is sorted by weapon type by default; press **S** (or click the sort chip)
+to cycle through **Type**, **Name**, **Uses**, and **Owner**, and press **A** to
+toggle between **All** carried gear and **Supply** only. Press **U** to undo the
+most recent move, right-click to clear a selection, and **I** or **Escape** to
+close.
 
 The manager decodes the active ROM's own character, class, and item text and
-renders the selected character's chibi portrait. It shows level, HP, remaining
-uses, the full unit stat block, and every equipped item's combat stats at once,
-including relocated Sacred Echoes strings and portrait
-assets. ROM-specific addresses and limits live in a selected `Fe8Profile`;
+renders the selected character's full menu portrait. It shows level, HP,
+remaining uses, combat stats, source owner, and whether the selected target can
+use each weapon or staff. Compatibility badges distinguish ready gear, missing
+weapon ranks, personal locks, status restrictions, and ordinary non-weapon
+items. Long names, uses, ownership, and badges occupy separate clipped columns
+so narrow inventory layouts do not overlap. ROM-specific addresses and limits
+live in a selected `Fe8Profile`;
 retail FE8U and Sacred Echoes have separate inventory layouts, so another hack
 can be supported without changing the UI or transaction engine. This is the
 sole write-enabled extension: destinations are restricted
@@ -35,9 +42,9 @@ to validated blue-unit and convoy addresses, both source values are checked
 immediately before writing, and a failed verification rolls the swap back. It
 does not edit ROMs or parse cartridge saves.
 
-Sacred Echoes learned spells are shown for context but marked **SPELL - FIXED**.
-Its profile identifies magic and staff entries as non-transferable, and both
-the UI and memory transaction layer reject attempts to move them.
+Sacred Echoes learned spells are shown for context but marked as fixed. Its
+profile identifies magic and staff entries as non-transferable, and both the
+UI and memory transaction layer reject attempts to move them.
 
 ## Requirements
 

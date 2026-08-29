@@ -62,6 +62,11 @@ void fe8_host_text_draw(Fe8HostTextCanvas *canvas, int x, int y,
     attributed = CFAttributedStringCreate(NULL, string, attributes);
     CGContextSaveGState(context);
     CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+    /* Core Text does not honor CTLine's requested width by itself. Clip every
+       draw to the caller's box so adjacent inventory columns cannot bleed
+       into one another on the macOS renderer. */
+    CGContextClipToRect(context,
+        CGRectMake(x, canvas->height - y - height, width, height));
     if (wrap) {
         CTFramesetterRef framesetter = CTFramesetterCreateWithAttributedString(attributed);
         CGMutablePathRef path = CGPathCreateMutable();

@@ -4,6 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#define IA_WEAPON UINT32_C(1u << 0)
+#define IA_MAGIC UINT32_C(1u << 1)
+#define IA_LOCK_1 UINT32_C(1u << 11)
+#define UA_LOCK_1 UINT32_C(1u << 16)
+
 static unsigned char ewram[0x40000];
 static unsigned char rom[0x2000000];
 
@@ -92,6 +97,9 @@ int main(void) {
     put_rom32(0x08023000 + 20, UINT32_C(0xFFFF4443));
     put_rom32(0x08023000 + 24, UINT32_C(0xFFFF0000));
     rom[0x809B10 + 0x24 + 6] = 1;
+    rom[0x809B10 + 0x24 + 7] = 0;
+    put_rom32(0x08809B10 + 0x24 + 8, IA_WEAPON);
+    rom[0x809B10 + 0x24 + 0x1C] = 31;
     put_rom16(0x08809B10 + 0x24, 3);
     put_rom16(0x08809B10 + 0x24 + 2, 5);
     rom[0x809B10 + 0x24 + 0x14] = 40;
@@ -101,6 +109,9 @@ int main(void) {
        Echoes-style immovable-attribute validation enabled, an absent item
        record is rejected rather than treated as transferable. */
     rom[0x809B10 + 0x1C * 0x24 + 6] = 0x1C;
+    rom[0x809B10 + 0x1C * 0x24 + 7] = 0;
+    put_rom32(0x08809B10 + 0x1C * 0x24 + 8, IA_WEAPON);
+    rom[0x809B10 + 0x1C * 0x24 + 0x1C] = 31;
     rom[0x809B10 + 0x2D * 0x24 + 6] = 0x2D;
     rom[0x809B10 + 0x35 * 0x24 + 6] = 0x35;
     rom[0x809B10 + 0x38 * 0x24 + 6] = 0x38;
@@ -129,7 +140,9 @@ int main(void) {
     put32(second + 4, 0x08010100);
     put_rom16(character_a, 1);
     put_rom16(character_b, 1);
+    put_rom32(character_a + 0x28, UA_LOCK_1);
     put_rom16(0x08010100, 2);
+    put_rom32(0x08010100 + 0x28, UINT32_C(1u << 17));
     rom[character_a - 0x08000000 + 4] = 0x11;
     rom[character_b - 0x08000000 + 4] = 0x22;
     write8(NULL, first + 8, 12);
@@ -144,6 +157,8 @@ int main(void) {
     write8(NULL, first + 0x19, 4);
     write8(NULL, first + 0x1A, 1);
     write8(NULL, first + 0x1D, 2);
+    write8(NULL, first + 0x28, 31);
+    write8(NULL, first + 0x30, 3);
     rom[character_a - 0x08000000 + 0x13] = 3;
     rom[0x10100 + 0x11] = 5;
     rom[0x10100 + 0x12] = 6;
@@ -163,12 +178,31 @@ int main(void) {
         snapshot.units[0].speed == 7 && snapshot.units[0].defense == 6 &&
         snapshot.units[0].resistance == 5 && snapshot.units[0].luck == 4);
     assert(snapshot.units[0].constitution == 9 && snapshot.units[0].movement == 8);
+    assert(snapshot.units[0].ranks[0] == 31 && snapshot.units[0].status == 3);
+    assert((snapshot.units[0].attributes & UA_LOCK_1) != 0);
+    assert((snapshot.units[0].attributes & UINT32_C(1u << 17)) != 0);
     assert(snapshot.units[0].items[0] == 0x281C);
     assert(snapshot.units[1].items[1] == 0x052D);
     assert(snapshot.supply_count == 1 && snapshot.supply[0] == 0x1435);
     assert(snapshot.supply_address == 0x0203B200 && snapshot.supply_capacity == 200);
     assert(snapshot.supply_display_count == 2);
     assert(snapshot.supply_display_slots[0] == 0 && snapshot.supply_display_slots[1] == 1);
+    assert(fe8_inventory_item_use_state(&snapshot.units[0],
+        &snapshot.units[0].item_info[0]) == FE8_INVENTORY_USE_READY);
+    {
+        Fe8ItemInfo ranked = snapshot.units[0].item_info[0];
+        Fe8ItemInfo locked = snapshot.units[0].item_info[0];
+        Fe8ItemInfo silenced = snapshot.units[0].item_info[0];
+        ranked.weapon_rank = 71;
+        locked.attributes |= IA_LOCK_1;
+        silenced.attributes |= IA_MAGIC;
+        assert(fe8_inventory_item_use_state(&snapshot.units[0], &ranked) ==
+            FE8_INVENTORY_USE_RANK);
+        assert(fe8_inventory_item_use_state(&snapshot.units[1], &locked) ==
+            FE8_INVENTORY_USE_LOCKED);
+        assert(fe8_inventory_item_use_state(&snapshot.units[0], &silenced) ==
+            FE8_INVENTORY_USE_STATUS);
+    }
     assert(fe8_swap_prebattle_items(&memory, &writer, &profile,
         first, 0, 0x281C, second, 1, 0x052D));
     assert(read8(NULL, first + 0x1E) == 0x2D);

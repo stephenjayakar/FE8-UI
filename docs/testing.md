@@ -214,7 +214,11 @@ camera-coordinate changes and uses separate activation and fallback streaks to
 absorb transient PPU timing.
 
 For pre-battle inventory testing, launch with `--mute` and a copy of the save,
-enter Preparations, and press **I**. Move an item into an empty slot on another
+enter Preparations, and press **I**. Confirm the shared pool initially groups
+items by weapon type, **S** cycles Type/Name/Uses/Owner ordering, and **A**
+toggles All gear versus Supply-only scope without changing item ownership.
+Select several targets and verify the READY/RANK/LOCK/STATUS badges match their
+weapon ranks and current status. Move an item into an empty slot on another
 unit, close the panel, and verify the native item screen reflects the move.
 Reopen the panel, press **U**, and verify the original inventories return. The
 panel must reject **I** during dialogue and ordinary tactical play. Never use
