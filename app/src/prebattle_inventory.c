@@ -8,8 +8,35 @@
 #define FE8_ROM_END UINT32_C(0x0A000000)
 #define FE8_UNIT_SIZE UINT32_C(0x48)
 #define FE8_UNIT_ITEM_OFFSET UINT32_C(0x1E)
+#define FE8_UNIT_RANK_OFFSET UINT32_C(0x28)
+#define FE8_UNIT_STATUS_OFFSET UINT32_C(0x30)
 #define FE8_UNIT_STATE_DEAD UINT32_C(1u << 2)
 #define FE8_BM_FLAG_PREPSCREEN UINT8_C(1u << 4)
+
+#define FE8_ITEM_ATTRIBUTE_WEAPON UINT32_C(1u << 0)
+#define FE8_ITEM_ATTRIBUTE_MAGIC UINT32_C(1u << 1)
+#define FE8_ITEM_ATTRIBUTE_STAFF UINT32_C(1u << 2)
+#define FE8_ITEM_ATTRIBUTE_LOCK_3 UINT32_C(1u << 10)
+#define FE8_ITEM_ATTRIBUTE_LOCK_1 UINT32_C(1u << 11)
+#define FE8_ITEM_ATTRIBUTE_LOCK_2 UINT32_C(1u << 12)
+#define FE8_ITEM_ATTRIBUTE_LOCK_0 UINT32_C(1u << 13)
+#define FE8_ITEM_ATTRIBUTE_UNUSABLE UINT32_C(1u << 16)
+#define FE8_ITEM_ATTRIBUTE_LOCK_4 UINT32_C(1u << 18)
+#define FE8_ITEM_ATTRIBUTE_LOCK_5 UINT32_C(1u << 19)
+#define FE8_ITEM_ATTRIBUTE_LOCK_6 UINT32_C(1u << 20)
+#define FE8_ITEM_ATTRIBUTE_LOCK_7 UINT32_C(1u << 21)
+
+#define FE8_UNIT_ATTRIBUTE_LOCK_1 UINT32_C(1u << 16)
+#define FE8_UNIT_ATTRIBUTE_LOCK_2 UINT32_C(1u << 17)
+#define FE8_UNIT_ATTRIBUTE_LOCK_3 UINT32_C(1u << 18)
+#define FE8_UNIT_ATTRIBUTE_LOCK_4 UINT32_C(1u << 28)
+#define FE8_UNIT_ATTRIBUTE_LOCK_5 UINT32_C(1u << 29)
+#define FE8_UNIT_ATTRIBUTE_LOCK_6 UINT32_C(1u << 30)
+#define FE8_UNIT_ATTRIBUTE_LOCK_7 UINT32_C(1u << 31)
+
+#define FE8_UNIT_STATUS_SLEEP UINT8_C(2)
+#define FE8_UNIT_STATUS_SILENCED UINT8_C(3)
+#define FE8_UNIT_STATUS_BERSERK UINT8_C(4)
 
 static bool valid_reader(const Fe8MemoryReader *memory) {
     return memory && memory->read8;
@@ -87,6 +114,64 @@ bool fe8_inventory_management_available(
     return false;
 }
 
+static bool missing_item_lock(uint32_t item_attributes, uint32_t unit_attributes) {
+    static const struct {
+        uint32_t item;
+        uint32_t unit;
+    } locks[] = {
+        {FE8_ITEM_ATTRIBUTE_LOCK_1, FE8_UNIT_ATTRIBUTE_LOCK_1},
+        {FE8_ITEM_ATTRIBUTE_LOCK_2, FE8_UNIT_ATTRIBUTE_LOCK_2},
+        {FE8_ITEM_ATTRIBUTE_LOCK_4, FE8_UNIT_ATTRIBUTE_LOCK_4},
+        {FE8_ITEM_ATTRIBUTE_LOCK_5, FE8_UNIT_ATTRIBUTE_LOCK_5},
+        {FE8_ITEM_ATTRIBUTE_LOCK_6, FE8_UNIT_ATTRIBUTE_LOCK_6},
+        {FE8_ITEM_ATTRIBUTE_LOCK_7, FE8_UNIT_ATTRIBUTE_LOCK_7},
+    };
+    unsigned index;
+    for (index = 0; index < sizeof(locks) / sizeof(locks[0]); ++index) {
+        if ((item_attributes & locks[index].item) != 0 &&
+                (unit_attributes & locks[index].unit) == 0)
+            return true;
+    }
+    return false;
+}
+
+Fe8InventoryUseState fe8_inventory_item_use_state(
+    const Fe8InventoryUnit *unit, const Fe8ItemInfo *item) {
+    uint32_t attributes;
+    bool weapon;
+    bool staff;
+    if (!unit || !item || !item->id)
+        return FE8_INVENTORY_USE_ITEM;
+    attributes = item->attributes;
+    weapon = (attributes & FE8_ITEM_ATTRIBUTE_WEAPON) != 0;
+    staff = (attributes & FE8_ITEM_ATTRIBUTE_STAFF) != 0;
+    if (!weapon && !staff)
+        return FE8_INVENTORY_USE_ITEM;
+    if (missing_item_lock(attributes, unit->attributes))
+        return FE8_INVENTORY_USE_LOCKED;
+    if ((attributes & FE8_ITEM_ATTRIBUTE_LOCK_3) != 0) {
+        if ((unit->attributes & FE8_UNIT_ATTRIBUTE_LOCK_3) == 0)
+            return FE8_INVENTORY_USE_LOCKED;
+        return FE8_INVENTORY_USE_READY;
+    }
+    /* Lock 0 and the story-controlled unusable bit require game-specific
+       predicates. Conservatively present those items as locked. */
+    if ((attributes & (FE8_ITEM_ATTRIBUTE_LOCK_0 |
+            FE8_ITEM_ATTRIBUTE_UNUSABLE)) != 0)
+        return FE8_INVENTORY_USE_LOCKED;
+    if (staff && (unit->status == FE8_UNIT_STATUS_SLEEP ||
+            unit->status == FE8_UNIT_STATUS_SILENCED ||
+            unit->status == FE8_UNIT_STATUS_BERSERK))
+        return FE8_INVENTORY_USE_STATUS;
+    if (weapon && (attributes & FE8_ITEM_ATTRIBUTE_MAGIC) != 0 &&
+            unit->status == FE8_UNIT_STATUS_SILENCED)
+        return FE8_INVENTORY_USE_STATUS;
+    if (item->weapon_type >= FE8_INVENTORY_WEAPON_TYPES ||
+            unit->ranks[item->weapon_type] < item->weapon_rank)
+        return FE8_INVENTORY_USE_RANK;
+    return FE8_INVENTORY_USE_READY;
+}
+
 bool fe8_extract_prebattle_inventory(
     const Fe8MemoryReader *memory, const Fe8Profile *profile,
     const Fe8Catalog *catalog, Fe8InventorySnapshot *snapshot) {
@@ -130,14 +215,19 @@ bool fe8_extract_prebattle_inventory(
         unit->defense = read8(memory, address + 0x17);
         unit->resistance = read8(memory, address + 0x18);
         unit->luck = read8(memory, address + 0x19);
+        unit->status = read8(memory, address + FE8_UNIT_STATUS_OFFSET) & 0x0F;
         unit->portrait_id = read16(memory, character + 6);
+        unit->attributes = read32(memory, character + 0x28);
+        for (slot = 0; slot < FE8_INVENTORY_WEAPON_TYPES; ++slot)
+            unit->ranks[slot] = read8(memory, address + FE8_UNIT_RANK_OFFSET + slot);
         class_data = read32(memory, address + 4);
-        if (valid_range(class_data, 0x13, FE8_ROM_START, FE8_ROM_END)) {
+        if (valid_range(class_data, 0x2C, FE8_ROM_START, FE8_ROM_END)) {
             unit->constitution = clamp_stat((int8_t)read8(memory, character + 0x13) +
                 (int8_t)read8(memory, class_data + 0x11) +
                 (int8_t)read8(memory, address + 0x1A));
             unit->movement = clamp_stat((int8_t)read8(memory, class_data + 0x12) +
                 (int8_t)read8(memory, address + 0x1D));
+            unit->attributes |= read32(memory, class_data + 0x28);
         }
         if (!fe8_catalog_text(memory, catalog, read16(memory, character),
                 unit->name, sizeof(unit->name)))

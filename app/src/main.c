@@ -708,7 +708,7 @@ int main(int argc, char **argv) {
     if (options.open_inventory && family_match &&
             fe8_extract_prebattle_inventory(&profile_memory, profile,
                 &inventory_catalog, &inventory_snapshot)) {
-        fe8_inventory_ui_open(&inventory_ui);
+        fe8_inventory_ui_open(&inventory_ui, &inventory_snapshot);
         if (!set_inventory_presentation(&video, &canvas, &canvas_width,
                 &canvas_height, &viewport, &gba_x, &gba_y,
                 &inventory_ui, 1, settings.shader))
@@ -817,7 +817,7 @@ int main(int argc, char **argv) {
         if (options.open_inventory && family_match &&
                 fe8_extract_prebattle_inventory(&profile_memory, profile,
                     &inventory_catalog, &inventory_snapshot)) {
-            fe8_inventory_ui_open(&inventory_ui);
+            fe8_inventory_ui_open(&inventory_ui, &inventory_snapshot);
             if (!set_inventory_presentation(&video, &canvas, &canvas_width,
                     &canvas_height, &viewport, &gba_x, &gba_y,
                     &inventory_ui, 1, settings.shader))
@@ -927,7 +927,7 @@ int main(int argc, char **argv) {
                         fe8_extract_prebattle_inventory(
                             &profile_memory, profile, &inventory_catalog,
                             &inventory_snapshot)) {
-                    fe8_inventory_ui_open(&inventory_ui);
+                    fe8_inventory_ui_open(&inventory_ui, &inventory_snapshot);
                     if (!set_inventory_presentation(&video, &canvas,
                             &canvas_width, &canvas_height, &viewport,
                             &gba_x, &gba_y, &inventory_ui, 1, settings.shader))
@@ -965,16 +965,26 @@ int main(int argc, char **argv) {
                     frame_deadline = SDL_GetPerformanceCounter();
                     fprintf(stderr, "Inventory manager: closed\n");
                 } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                        event.key.keysym.scancode == SDL_SCANCODE_A) {
+                    fe8_inventory_ui_toggle_scope(&inventory_ui,
+                        &inventory_snapshot);
+                } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                        event.key.keysym.scancode == SDL_SCANCODE_S) {
+                    fe8_inventory_ui_cycle_sort(&inventory_ui,
+                        &inventory_snapshot);
+                } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                         event.key.keysym.scancode == SDL_SCANCODE_U &&
                         inventory_undo.valid) {
                     if (fe8_swap_inventory_endpoints(&profile_memory, &profile_writer,
                             profile, inventory_undo.first, inventory_undo.second_item,
                             inventory_undo.second, inventory_undo.first_item)) {
-                        fe8_extract_prebattle_inventory(
-                            &profile_memory, profile, &inventory_catalog,
-                            &inventory_snapshot);
+                        if (fe8_extract_prebattle_inventory(
+                                &profile_memory, profile, &inventory_catalog,
+                                &inventory_snapshot))
+                            fe8_inventory_ui_rebuild(&inventory_ui,
+                                &inventory_snapshot);
                         snprintf(inventory_ui.status, sizeof(inventory_ui.status),
-                            "UNDID LAST SWAP");
+                            "Undid last swap");
                         inventory_undo.valid = 0;
                     }
                 } else if (event.type == SDL_MOUSEWHEEL) {
@@ -989,7 +999,7 @@ int main(int argc, char **argv) {
                         event.button.button == SDL_BUTTON_RIGHT) {
                     inventory_ui.has_selection = 0;
                     snprintf(inventory_ui.status, sizeof(inventory_ui.status),
-                        "SELECTION CLEARED");
+                        "Selection cleared");
                 } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                         event.button.button == SDL_BUTTON_LEFT) {
                     int canvas_x;
@@ -1000,19 +1010,25 @@ int main(int argc, char **argv) {
                         Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
                             &inventory_snapshot, canvas_width, canvas_height,
                             canvas_x, canvas_y, &index);
-                        if (hit == FE8_INVENTORY_HIT_ROSTER &&
+                        if (hit == FE8_INVENTORY_HIT_POOL_SCOPE) {
+                            fe8_inventory_ui_toggle_scope(&inventory_ui,
+                                &inventory_snapshot);
+                        } else if (hit == FE8_INVENTORY_HIT_POOL_SORT) {
+                            fe8_inventory_ui_cycle_sort(&inventory_ui,
+                                &inventory_snapshot);
+                        } else if (hit == FE8_INVENTORY_HIT_ROSTER &&
                                 index >= 0 && index < inventory_snapshot.unit_count) {
                             inventory_ui.current_unit = index;
                             if (inventory_ui.has_selection)
                                 snprintf(inventory_ui.status, sizeof(inventory_ui.status),
-                                    "SELECT A DESTINATION ON %s",
+                                    "Choose a destination on %s",
                                     inventory_snapshot.units[index].name);
                             else
                                 snprintf(inventory_ui.status, sizeof(inventory_ui.status),
-                                    "SELECT AN ITEM FOR %s",
+                                    "Choose an item for %s",
                                     inventory_snapshot.units[index].name);
                         } else if (hit == FE8_INVENTORY_HIT_UNIT_ITEM ||
-                                hit == FE8_INVENTORY_HIT_SUPPLY_ITEM) {
+                                hit == FE8_INVENTORY_HIT_POOL_ITEM) {
                             Fe8InventoryEndpoint endpoint = fe8_inventory_ui_endpoint(
                                 &inventory_ui, &inventory_snapshot, hit, index);
                             fe8_inventory_ui_inspect(&inventory_ui,
@@ -1022,33 +1038,35 @@ int main(int argc, char **argv) {
                             if (endpoint_item && !fe8_inventory_ui_endpoint_movable(
                                     &inventory_snapshot, endpoint)) {
                                 snprintf(inventory_ui.status, sizeof(inventory_ui.status),
-                                    "SPELLS ARE LEARNED - THEY CANNOT BE MOVED");
+                                    "Learned spells are fixed and cannot be moved");
                             } else if (!inventory_ui.has_selection) {
                                 inventory_ui.selected = endpoint;
                                 inventory_ui.has_selection = 1;
                                 snprintf(inventory_ui.status, sizeof(inventory_ui.status),
-                                    "SELECT A DESTINATION - RIGHT CLICK TO CANCEL");
+                                    "Choose a destination - right-click to cancel");
                             } else {
                                 uint16_t first_item = fe8_inventory_ui_endpoint_item(
                                     &inventory_snapshot, inventory_ui.selected);
                                 if (fe8_swap_inventory_endpoints(&profile_memory,
-                                    &profile_writer, profile, inventory_ui.selected,
-                                    first_item, endpoint, endpoint_item)) {
-                                inventory_undo.valid = 1;
-                                inventory_undo.first = inventory_ui.selected;
-                                inventory_undo.first_item = first_item;
-                                inventory_undo.second = endpoint;
-                                inventory_undo.second_item = endpoint_item;
-                                fe8_extract_prebattle_inventory(
-                                    &profile_memory, profile, &inventory_catalog,
-                                    &inventory_snapshot);
-                                snprintf(inventory_ui.status,
-                                    sizeof(inventory_ui.status),
-                                    "MOVED - PRESS U TO UNDO");
+                                        &profile_writer, profile, inventory_ui.selected,
+                                        first_item, endpoint, endpoint_item)) {
+                                    inventory_undo.valid = 1;
+                                    inventory_undo.first = inventory_ui.selected;
+                                    inventory_undo.first_item = first_item;
+                                    inventory_undo.second = endpoint;
+                                    inventory_undo.second_item = endpoint_item;
+                                    if (fe8_extract_prebattle_inventory(
+                                            &profile_memory, profile, &inventory_catalog,
+                                            &inventory_snapshot))
+                                        fe8_inventory_ui_rebuild(&inventory_ui,
+                                            &inventory_snapshot);
+                                    snprintf(inventory_ui.status,
+                                        sizeof(inventory_ui.status),
+                                        "Moved item - press U to undo");
                                 } else {
-                                snprintf(inventory_ui.status,
-                                    sizeof(inventory_ui.status),
-                                    "MOVE REJECTED - GAME STATE CHANGED");
+                                    snprintf(inventory_ui.status,
+                                        sizeof(inventory_ui.status),
+                                        "Move rejected - game state changed");
                                 }
                                 inventory_ui.has_selection = 0;
                             }

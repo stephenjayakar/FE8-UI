@@ -27,6 +27,19 @@ static int count_nonzero_rows(const uint32_t *pixels, int stride,
     return count;
 }
 
+static int count_nonzero_region(const uint32_t *pixels, int stride,
+    int x_begin, int y_begin, int x_end, int y_end) {
+    int count = 0;
+    int x;
+    int y;
+    for (y = y_begin; y < y_end; ++y) {
+        for (x = x_begin; x < x_end; ++x) {
+            if (pixels[y * stride + x]) ++count;
+        }
+    }
+    return count;
+}
+
 int main(void) {
     enum { WIDTH = 96, HEIGHT = 48 };
     Fe8HostTextCanvas canvas;
@@ -49,6 +62,8 @@ int main(void) {
     assert(regular_count > 0);
     assert(regular[0] == 0);
     assert(regular[70 + 3 * WIDTH] == 0);
+    assert(count_nonzero_region(regular, WIDTH, 63, 4, WIDTH, 16) == 0);
+    assert(count_nonzero_region(regular, WIDTH, 3, 16, 63, HEIGHT) == 0);
     fe8_host_text_end(&canvas);
     assert(!canvas.context);
 
