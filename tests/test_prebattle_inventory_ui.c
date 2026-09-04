@@ -140,11 +140,11 @@ int main(void) {
     fe8_inventory_ui_draw(&ui, &snapshot, scaled_pixels, 960, 960, 640);
     assert(scaled_pixels[0] != 0);
     assert(fe8_inventory_ui_hit_test(&ui, &snapshot, 960, 640,
-        305 * 2, 51 * 2, &index) == FE8_INVENTORY_HIT_POOL_SCOPE);
+        310 * 2, 72 * 2, &index) == FE8_INVENTORY_HIT_POOL_SCOPE);
     assert(fe8_inventory_ui_hit_test(&ui, &snapshot, 960, 640,
-        370 * 2, 51 * 2, &index) == FE8_INVENTORY_HIT_POOL_SORT);
+        408 * 2, 72 * 2, &index) == FE8_INVENTORY_HIT_POOL_SORT);
     assert(fe8_inventory_ui_hit_test(&ui, &snapshot, 960, 640,
-        330 * 2, 73 * 2, &index) == FE8_INVENTORY_HIT_POOL_ITEM);
+        330 * 2, 96 * 2, &index) == FE8_INVENTORY_HIT_POOL_ITEM);
     assert(index == 0);
     ui.render_scale = 1;
 
@@ -160,7 +160,7 @@ int main(void) {
     assert(ui.inspected.unit_address == snapshot.units[0].address);
 
     assert(fe8_inventory_ui_hit_test(&ui, &snapshot, 480, 320,
-        330, 73, &index) == FE8_INVENTORY_HIT_POOL_ITEM);
+        330, 96, &index) == FE8_INVENTORY_HIT_POOL_ITEM);
     {
         Fe8InventoryEndpoint pooled = fe8_inventory_ui_endpoint(&ui, &snapshot,
             FE8_INVENTORY_HIT_POOL_ITEM, index);

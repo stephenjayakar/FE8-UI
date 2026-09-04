@@ -220,6 +220,57 @@ toggles All gear versus Supply-only scope without changing item ownership.
 Select several targets and verify the READY/RANK/LOCK/STATUS badges match their
 weapon ranks and current status. Move an item into an empty slot on another
 unit, close the panel, and verify the native item screen reflects the move.
-Reopen the panel, press **U**, and verify the original inventories return. The
-panel must reject **I** during dialogue and ordinary tactical play. Never use
-the original cartridge save for write-path testing.
+Before closing the panel, press **U** and verify the original inventories
+return. The manager may open whenever a live roster exists, including outside
+Preparations, and pauses the game. Never use the original cartridge save for
+write-path testing.
+
+
+## Inventory hover and layout regression
+
+`inventory_hover` exercises name and class hit regions in the roster and portrait
+card, selection preservation, item-to-character help transitions, stale and
+missing descriptions, scrolling, resized final pages, five canvas/density
+combinations, and pixel-buffer guard regions. `host_text` covers clipping,
+ellipsized labels and the common ABGR color format. On macOS, CTest additionally
+runs `inventory_hover_native` and `host_text_native` against CoreText, not just
+the bitmap fallback. The Inventory UI regression workflow runs both backends.
+
+The optional ROM tests boot the actual unmodified ROM through libmGBA with
+ordinary A/Start presses. They wait for a populated roster, extract every
+available character/class description, exercise the real hit-test/hover/render
+path and assert that inspection leaves emulated EWRAM unchanged. Enable them
+with local ROM paths (no ROMs, states or captures are uploaded to CI):
+
+```sh
+cmake -S . -B build-linux \
+  -DFE8_ARCHANAE_ROM="/path/to/Fire Emblem Archanea.GBA" \
+  -DFE8_SACRED_ECHOES_ROM="/path/to/Fire Emblem Sacred Echoes.GBA"
+cmake --build build-linux --parallel
+ctest --test-dir build-linux --output-on-failure
+```
+
+For local visual checks, supply an output prefix to the integration executable.
+It writes lossless PPM captures and a populated-roster state; the parent directory
+must already exist. Launch that state in the real SDL application to exercise
+pointer input rather than only the rendering API:
+
+```sh
+build-linux/tests/test_inventory_rom \
+  "/path/to/Fire Emblem Archanea.GBA" archanae /tmp/archanae-inventory
+build-linux/fe8-mgba-sdl \
+  --rom "/path/to/Fire Emblem Archanea.GBA" \
+  --state /tmp/archanae-inventory.ss --inventory --mute
+```
+
+Repeat with `sacred-echoes`. Hover both name/class labels, including another
+roster member without clicking; the description must follow the pointer, not
+the selected target. Select an item, hover a character and return to the item;
+its selection must remain intact. Test scope, sort and scroll under a stationary
+pointer, window leave, and resizing. Click a lower roster row after resizing:
+it must select that row, not the preceding row (SDL renderer events already use
+logical coordinates, while `SDL_GetMouseState` remains window-local). All five
+unit slots must remain visible at the minimum 480x320 logical size. Archanae's
+NarrowFont-encoded Pegasus Knight name and weapon icons in class help must decode
+legibly; Sacred Echoes must continue showing unbreakable uses as INF and prevent
+transfers of learned spells.

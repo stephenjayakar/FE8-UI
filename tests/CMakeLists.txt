@@ -147,3 +147,61 @@ add_test(NAME display_scaling COMMAND test_display_scaling)
 add_test(NAME host_settings COMMAND test_host_settings)
 add_test(NAME host_cursor COMMAND test_host_cursor)
 add_test(NAME host_text COMMAND test_host_text)
+
+add_executable(test_inventory_hover
+    test_inventory_hover.c
+    ../app/src/prebattle_inventory_ui.c
+    ../app/src/prebattle_inventory.c
+    ../app/src/fe8_catalog.c
+    ../app/src/host_text_bitmap.c)
+target_include_directories(test_inventory_hover PRIVATE ../app/src)
+add_test(NAME inventory_hover COMMAND test_inventory_hover)
+
+# ROMs are user-supplied local test inputs, never repository or CI artifacts.
+add_executable(test_inventory_rom
+    test_inventory_rom.c
+    ../app/src/address_space.c
+    ../app/src/fe8_profile.c
+    ../app/src/prebattle_inventory.c
+    ../app/src/prebattle_inventory_ui.c
+    ../app/src/fe8_catalog.c
+    ../app/src/host_text_bitmap.c)
+target_include_directories(test_inventory_rom PRIVATE ../app/src)
+# mCore's public struct layout depends on the exact feature macros used by
+# the core; linking mgba alone does not export them (same as the app target).
+target_compile_definitions(test_inventory_rom PRIVATE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_inventory_rom PRIVATE mgba)
+set(FE8_ARCHANAE_ROM "" CACHE FILEPATH "Local Archanae ROM for inventory integration tests")
+set(FE8_SACRED_ECHOES_ROM "" CACHE FILEPATH "Local Sacred Echoes ROM for inventory integration tests")
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME inventory_rom_archanae
+        COMMAND test_inventory_rom "${FE8_ARCHANAE_ROM}" archanae)
+    set_tests_properties(inventory_rom_archanae PROPERTIES TIMEOUT 90)
+endif()
+if(FE8_SACRED_ECHOES_ROM)
+    add_test(NAME inventory_rom_sacred_echoes
+        COMMAND test_inventory_rom "${FE8_SACRED_ECHOES_ROM}" sacred-echoes)
+    set_tests_properties(inventory_rom_sacred_echoes PROPERTIES TIMEOUT 90)
+endif()
+
+if(APPLE)
+    add_executable(test_inventory_hover_native
+        test_inventory_hover.c
+        ../app/src/prebattle_inventory_ui.c
+        ../app/src/prebattle_inventory.c
+        ../app/src/fe8_catalog.c
+        ../app/src/host_text_macos.m)
+    target_include_directories(test_inventory_hover_native PRIVATE ../app/src)
+    target_link_libraries(test_inventory_hover_native PRIVATE
+        "-framework CoreGraphics" "-framework CoreText")
+    add_test(NAME inventory_hover_native COMMAND test_inventory_hover_native)
+
+    add_executable(test_host_text_native
+        test_host_text.c ../app/src/host_text_macos.m)
+    target_include_directories(test_host_text_native PRIVATE ../app/src)
+    target_compile_definitions(test_host_text_native PRIVATE FE8_TEST_NATIVE_TEXT)
+    target_link_libraries(test_host_text_native PRIVATE
+        "-framework CoreGraphics" "-framework CoreText")
+    add_test(NAME host_text_native COMMAND test_host_text_native)
+endif()

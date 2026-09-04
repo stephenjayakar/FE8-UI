@@ -102,6 +102,20 @@ int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
         window_x, window_y, canvas_x, canvas_y);
 }
 
+int fe8_host_video_event_to_canvas(const Fe8HostVideo *video,
+    int event_x, int event_y, int *canvas_x, int *canvas_y) {
+    /* The SDL renderer's event filter has already mapped these coordinates
+       to its logical canvas. Applying window scaling again shifts clicks
+       away from the hovered label after a resize or density change. */
+    if (!video || !video->backend || !canvas_x || !canvas_y ||
+            event_x < 0 || event_y < 0 ||
+            event_x >= video->canvas_width || event_y >= video->canvas_height)
+        return 0;
+    *canvas_x = event_x;
+    *canvas_y = event_y;
+    return 1;
+}
+
 int fe8_host_video_adjust_zoom(
     Fe8HostVideo *video, double wheel_delta, double sensitivity) {
     Fe8HostVideoSdl *backend = video ? video->backend : NULL;

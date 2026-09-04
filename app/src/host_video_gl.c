@@ -258,6 +258,13 @@ int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
         window_x, window_y, canvas_x, canvas_y);
 }
 
+int fe8_host_video_event_to_canvas(const Fe8HostVideo *video,
+    int event_x, int event_y, int *canvas_x, int *canvas_y) {
+    /* OpenGL has no SDL_Renderer event filter: mouse events are window-local. */
+    return fe8_host_video_window_to_canvas(video, event_x, event_y,
+        canvas_x, canvas_y);
+}
+
 int fe8_host_video_adjust_zoom(
     Fe8HostVideo *video, double wheel_delta, double sensitivity) {
     Fe8HostVideoGl *backend = video ? video->backend : NULL;

@@ -85,6 +85,38 @@ int main(void) {
         UINT32_C(0x80FFFFFF), FE8_HOST_TEXT_REGULAR, 0);
     fe8_host_text_end(&canvas);
 
+    /* Both native and portable backends must use the same ABGR pixel order. */
+    memset(regular, 0, sizeof(regular));
+    assert(fe8_host_text_begin(&canvas, regular, WIDTH, WIDTH, HEIGHT));
+    fe8_host_text_draw(&canvas, 2, 2, 80, 16, "RED", 10.0f,
+        UINT32_C(0xFF0000FF), FE8_HOST_TEXT_REGULAR, 0);
+    fe8_host_text_end(&canvas);
+    assert(count_nonzero(regular, WIDTH * HEIGHT) > 0);
+    for (int i = 0; i < WIDTH * HEIGHT; ++i) {
+        assert((regular[i] & UINT32_C(0x00FFFF00)) == 0);
+        if (regular[i] >> 24) assert(regular[i] & 0xFF);
+    }
+
+    /* Long labels truncate, but must never paint over adjacent columns. */
+    memset(regular, 0, sizeof(regular));
+    assert(fe8_host_text_begin(&canvas, regular, WIDTH, WIDTH, HEIGHT));
+    fe8_host_text_draw(&canvas, 4, 3, 39, 15,
+        "Pegasus Knight, an unusually long class name", 10.0f,
+        UINT32_C(0xFFFFFFFF), FE8_HOST_TEXT_REGULAR, 0);
+    fe8_host_text_end(&canvas);
+    assert(count_nonzero(regular, WIDTH * HEIGHT) > 0);
+    assert(count_nonzero_region(regular, WIDTH, 43, 0, WIDTH, HEIGHT) == 0);
+    assert(count_nonzero_rows(regular, WIDTH, WIDTH, 18, HEIGHT) == 0);
+    /* On the bitmap backend the three dots are exact glyphs, not clipped
+       fragments. Native typography is checked for containment above. */
+#ifndef FE8_TEST_NATIVE_TEXT
+    memset(semibold, 0, sizeof(semibold));
+    assert(fe8_host_text_begin(&canvas, semibold, WIDTH, WIDTH, HEIGHT));
+    fe8_host_text_draw(&canvas, 4, 3, 39, 15, "Pega...", 10.0f,
+        UINT32_C(0xFFFFFFFF), FE8_HOST_TEXT_REGULAR, 0);
+    fe8_host_text_end(&canvas);
+    assert(memcmp(regular, semibold, sizeof(regular)) == 0);
+#endif
     puts("host text tests passed");
     return 0;
 }

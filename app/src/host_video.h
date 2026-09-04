@@ -25,6 +25,10 @@ int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader shader);
 int fe8_host_video_present(Fe8HostVideo *video, const void *pixels);
 int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
     int window_x, int window_y, int *canvas_x, int *canvas_y);
+/* SDL_RenderSetLogicalSize transforms mouse-event coordinates, but not
+   SDL_GetMouseState. Keep event and raw window positions distinct. */
+int fe8_host_video_event_to_canvas(const Fe8HostVideo *video,
+    int event_x, int event_y, int *canvas_x, int *canvas_y);
 int fe8_host_video_adjust_zoom(
     Fe8HostVideo *video, double wheel_delta, double sensitivity);
 int fe8_host_video_refresh_layout(Fe8HostVideo *video);

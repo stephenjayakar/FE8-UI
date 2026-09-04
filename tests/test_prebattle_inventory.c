@@ -81,6 +81,18 @@ int main(void) {
     memcpy(rom + 0x25030, "Fire", 5);
     put_rom32(0x08020000 + 20, 0x88025040);
     memcpy(rom + 0x25040, "A dependable blade.", 20);
+    put_rom32(0x08020000 + 28, 0x88025100);
+    strcpy((char *)rom + 0x25100, "A brave traveler.\x01" "Always helps others.");
+    put_rom32(0x08020000 + 32, 0x88025200);
+    memcpy(rom + 0x25200, "Skilled with axes.", 18);
+    put_rom32(0x08020000 + 36, 0x88025300);
+    { /* Real NarrowFont encoding, with an ordinary ASCII i in the middle. */
+        const uint8_t narrow[] = {
+            0xA8,0x85,0x87,0x81,0x90,0x96,0x90,0xBC,
+            0xA5,0x8B,'i',0x87,0x88,0x95,0,
+        };
+        memcpy(rom + 0x25300, narrow, sizeof(narrow));
+    }
     /* Compressed text 6: "AB", a one-byte line-break command, "CD",
        then the zero-first-byte terminator. The LSB-first paths are
        00, 01, 10, and 11, encoded as 0xD8. */
@@ -125,6 +137,14 @@ int main(void) {
         assert(strcmp(decoded, "Alice") == 0);
         assert(fe8_catalog_text(&memory, &catalog, 6, decoded, sizeof(decoded)));
         assert(strcmp(decoded, "AB CD") == 0);
+        {
+            Fe8Catalog archanae = catalog;
+            archanae.item_table = 0x09AA54F8;
+            assert(fe8_catalog_text(&memory, &archanae, 9, decoded, sizeof(decoded)));
+            assert(strcmp(decoded, "Pegasus Knight") == 0);
+            assert(fe8_catalog_text(&memory, &catalog, 9, decoded, sizeof(decoded)));
+            assert(strcmp(decoded, "Pegasus Knight") != 0);
+        }
         assert(fe8_catalog_item(&memory, &catalog, 0x2801, &item));
         assert(strcmp(item.name, "Test Blade") == 0 && item.uses == 40 && item.might == 7);
         assert(item.min_range == 1 && item.max_range == 2);
@@ -139,9 +159,11 @@ int main(void) {
     put32(first + 4, 0x08010100);
     put32(second + 4, 0x08010100);
     put_rom16(character_a, 1);
+    put_rom16(character_a + 2, 7);
     put_rom16(character_b, 1);
     put_rom32(character_a + 0x28, UA_LOCK_1);
     put_rom16(0x08010100, 2);
+    put_rom16(0x08010100 + 2, 8);
     put_rom32(0x08010100 + 0x28, UINT32_C(1u << 17));
     rom[character_a - 0x08000000 + 4] = 0x11;
     rom[character_b - 0x08000000 + 4] = 0x22;
@@ -172,6 +194,10 @@ int main(void) {
     assert(snapshot.units[0].character_id == 0x11);
     assert(strcmp(snapshot.units[0].name, "Alice") == 0);
     assert(strcmp(snapshot.units[0].class_name, "Fighter") == 0);
+    assert(strcmp(snapshot.units[0].description,
+        "A brave traveler. Always helps others.") == 0);
+    assert(strcmp(snapshot.units[0].class_description, "Skilled with axes.") == 0);
+    assert(snapshot.units[1].description[0] == '\0');
     assert(snapshot.units[0].exp == 44 && snapshot.units[0].hp == 20 &&
         snapshot.units[0].max_hp == 30);
     assert(snapshot.units[0].power == 9 && snapshot.units[0].skill == 8 &&
@@ -230,6 +256,18 @@ int main(void) {
         assert(read8(NULL, first + 0x22) == 0x38);
         assert(read8(NULL, second + 0x22) == 0);
     }
+    /* A populated message 0 is not a biography. Invalid class pointers and
+       missing/repointed text clear the previous snapshot's help, not its name. */
+    put_rom32(0x08020000, 0x88025100);
+    put_rom16(character_a + 2, 0);
+    put32(first + 4, 0x03000000);
+    put_rom16(character_b + 2, 10);
+    put_rom32(0x08020000 + 40, 0x02001234);
+    assert(fe8_extract_prebattle_inventory(&memory, &profile, &catalog, &snapshot));
+    assert(snapshot.units[0].description[0] == '\0');
+    assert(snapshot.units[0].class_description[0] == '\0');
+    assert(strcmp(snapshot.units[0].class_name, "Unknown class") == 0);
+    assert(snapshot.units[1].description[0] == '\0');
     puts("pre-battle inventory tests passed");
     return 0;
 }
