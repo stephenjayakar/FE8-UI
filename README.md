@@ -97,6 +97,22 @@ project. The newer pin is deliberate: states produced by mGBA 0.11 cannot be
 restored by the older 0.10.3 state decoder. Linux produces
 `build/fe8-mgba-sdl`; macOS produces `build/fe8-mgba-sdl.app`.
 
+## Install
+
+Build and install with:
+
+```sh
+./install.sh
+```
+
+This installs the application to `/Applications` on macOS and the command-line
+frontend to `/usr/local/bin` on Linux; it prompts for `sudo` only if needed.
+Use a user-owned prefix to avoid elevated permissions, for example:
+
+```sh
+./install.sh --prefix "$HOME/.local"
+```
+
 ## Run
 
 On Linux, launch the portable command-line frontend directly:

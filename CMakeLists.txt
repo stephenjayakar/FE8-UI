@@ -27,7 +27,10 @@ if(NOT EXISTS "${FE8_MGBA_SOURCE_DIR}/CMakeLists.txt")
         "The required mGBA submodule is missing. Run: "
         "git submodule update --init third_party/mgba")
 endif()
-add_subdirectory("${FE8_MGBA_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/mgba")
+
+# mGBA is an implementation dependency, not part of this project's install
+# payload. EXCLUDE_FROM_ALL keeps its install rules out of this project.
+add_subdirectory("${FE8_MGBA_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/mgba" EXCLUDE_FROM_ALL)
 
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
@@ -124,6 +127,14 @@ if(MSVC)
     target_compile_options(fe8-mgba-sdl PRIVATE /W4)
 else()
     target_compile_options(fe8-mgba-sdl PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(APPLE)
+    install(TARGETS fe8-mgba-sdl
+        BUNDLE DESTINATION ".")
+else()
+    install(TARGETS fe8-mgba-sdl
+        RUNTIME DESTINATION bin)
 endif()
 
 if(FE8_BUILD_TESTS)
