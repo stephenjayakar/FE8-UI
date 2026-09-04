@@ -33,7 +33,7 @@ jobs:
           flags=()
           if [[ "$RUNNER_OS" == macOS ]]; then
             text=app/src/host_text_macos.m
-            flags=(-DFE8_TEST_NATIVE_TEXT -framework CoreGraphics -framework CoreText)
+            flags=(-DFE8_TEST_NATIVE_TEXT -framework CoreGraphics -framework CoreText -framework CoreFoundation)
           fi
           cc -std=c11 -Wall -Wextra -UNDEBUG -Iapp/src "${flags[@]}" \
             tests/test_inventory_hover.c app/src/prebattle_inventory_ui.c \

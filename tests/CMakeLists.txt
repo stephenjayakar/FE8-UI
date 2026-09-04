@@ -194,7 +194,7 @@ if(APPLE)
         ../app/src/host_text_macos.m)
     target_include_directories(test_inventory_hover_native PRIVATE ../app/src)
     target_link_libraries(test_inventory_hover_native PRIVATE
-        "-framework CoreGraphics" "-framework CoreText")
+        "-framework CoreGraphics" "-framework CoreText" "-framework CoreFoundation")
     add_test(NAME inventory_hover_native COMMAND test_inventory_hover_native)
 
     add_executable(test_host_text_native
@@ -202,6 +202,6 @@ if(APPLE)
     target_include_directories(test_host_text_native PRIVATE ../app/src)
     target_compile_definitions(test_host_text_native PRIVATE FE8_TEST_NATIVE_TEXT)
     target_link_libraries(test_host_text_native PRIVATE
-        "-framework CoreGraphics" "-framework CoreText")
+        "-framework CoreGraphics" "-framework CoreText" "-framework CoreFoundation")
     add_test(NAME host_text_native COMMAND test_host_text_native)
 endif()
