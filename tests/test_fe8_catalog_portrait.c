@@ -28,7 +28,7 @@ static void put32(uint32_t address, uint32_t value) {
 
 static void put_raw(uint32_t address, const uint8_t *data, size_t size) {
     put32(address, (uint32_t)(size + 4) << 8);
-    memcpy(rom + address - ROM_BASE + 4, data, size);
+    memcpy(rom + (address - ROM_BASE) + 4, data, size);
 }
 
 static void put_lz_literals(uint32_t address, uint8_t value, size_t size) {
