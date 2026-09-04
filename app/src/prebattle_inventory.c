@@ -236,6 +236,18 @@ bool fe8_extract_prebattle_inventory(
                 !fe8_catalog_text(memory, catalog, read16(memory, class_data),
                     unit->class_name, sizeof(unit->class_name)))
             strcpy(unit->class_name, "Unknown class");
+        /* CharacterData and ClassData both store their help-text ID at +2.
+           Resolve through the ROM's own message table (including hack text),
+           never a host-side list of character or class descriptions. */
+        if (!read16(memory, character + 2) ||
+                !fe8_catalog_text(memory, catalog, read16(memory, character + 2),
+                unit->description, sizeof(unit->description)))
+            unit->description[0] = '\0';
+        if (valid_range(class_data, 4, FE8_ROM_START, FE8_ROM_END) &&
+                (!read16(memory, class_data + 2) ||
+                 !fe8_catalog_text(memory, catalog, read16(memory, class_data + 2),
+                    unit->class_description, sizeof(unit->class_description))))
+            unit->class_description[0] = '\0';
         unit->portrait_valid = fe8_catalog_portrait(memory, catalog,
             unit->portrait_id, unit->portrait, unit->portrait_palette);
         for (slot = 0; slot < FE8_INVENTORY_ITEM_SLOTS; ++slot)

@@ -54,6 +54,39 @@ static void append_character(char *out, size_t cap, size_t *length, uint8_t c) {
     }
 }
 
+/* The tested Archanae ROM uses NarrowFont's alternate alphabet. These
+   are character encodings, not UTF-8: ordinary i/l/m/w and I/M/N/T/W
+   are deliberately reused. Keep the mapping profile-scoped so unrelated
+   hacks' control bytes are not interpreted as this alphabet. Encoding table:
+   FEBuilderGBA, config/patch2/FE8U/NarrowFont/PATCH_Narrowfont.txt. */
+static void append_catalog_character(const Fe8Catalog *catalog, char *out,
+    size_t cap, size_t *length, uint8_t c) {
+    if (catalog->item_table == ARCHANAE_ITEM_TABLE) {
+        if (c >= 0x81 && c <= 0x90)
+            c = (uint8_t)"abcdefghjknopqrs"[c - 0x81];
+        else if (c >= 0x95 && c <= 0xA0)
+            c = (uint8_t)"tuvxyzABCDEF"[c - 0x95];
+        else if (c >= 0xA2 && c <= 0xA9)
+            c = (uint8_t)"GHJKLOPQ"[c - 0xA2];
+        else if (c >= 0xAC && c <= 0xB2)
+            c = (uint8_t)"RSUVXYZ"[c - 0xAC];
+        else if (c == 0xBC)
+            c = ' ';
+        else if (c >= 0xB3 && c <= 0xBA) {
+            static const char *const types[] = {
+                "[Sword]", "[Lance]", "[Axe]", "[Bow]",
+                "[Light]", "[Anima]", "[Dark]", "[Staff]",
+            };
+            const char *label = types[c - 0xB3];
+            append_character(out, cap, length, 1);
+            while (*label)
+                append_character(out, cap, length, (uint8_t)*label++);
+            c = ' ';
+        }
+    }
+    append_character(out, cap, length, c);
+}
+
 bool fe8_catalog_text(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     uint16_t text_id, char *output, size_t output_size) {
     uint32_t raw;
@@ -72,7 +105,7 @@ bool fe8_catalog_text(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
             uint8_t c = r8(memory, input + guard);
             if (!c)
                 break;
-            append_character(output, output_size, &length, c);
+            append_catalog_character(catalog, output, output_size, &length, c);
         }
     } else {
         uint32_t node = catalog->huffman_root;
@@ -90,11 +123,11 @@ bool fe8_catalog_text(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
                 uint8_t second = (uint8_t)(value >> 8);
                 if (!first)
                     break;
-                append_character(output, output_size, &length, first);
+                append_catalog_character(catalog, output, output_size, &length, first);
                 /* A zero second byte is a one-byte Huffman symbol. Only a
                  * zero first byte terminates the message. */
                 if (second)
-                    append_character(output, output_size, &length, second);
+                    append_catalog_character(catalog, output, output_size, &length, second);
                 node = catalog->huffman_root;
             }
         }

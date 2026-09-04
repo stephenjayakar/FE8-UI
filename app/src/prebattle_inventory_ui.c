@@ -12,11 +12,12 @@
 enum {
     MARGIN = 8,
     HEADER_H = 38,
-    FOOTER_H = 54,
-    ROSTER_ROW_H = 22,
-    ITEM_ROW_H = 28,
-    POOL_ROW_H = 30,
-    SECTION_HEADER_H = 18,
+    FOOTER_H = 74,
+    ROSTER_ROW_H = 30,
+    POOL_ROW_H = 32,
+    SECTION_HEADER_H = 22,
+    POOL_HEADER_H = 40,
+    SCROLLBAR_W = 5,
     UNIT_CARD_H = 72,
     USE_BADGE_W = 44,
     TYPE_BADGE_W = 34,
@@ -36,6 +37,11 @@ typedef struct Fe8InventoryUiLayout {
     int scope_width;
     int sort_x;
     int sort_width;
+    int item_row_height;
+    int detail_x;
+    int detail_width;
+    int name_y;
+    int class_y;
 } Fe8InventoryUiLayout;
 
 static Fe8HostTextCanvas *text_canvas;
@@ -106,7 +112,7 @@ static void text_box(uint32_t *pixels, int stride, int width, int height,
     clipped[length] = '\0';
     fe8_host_text_draw(text_canvas, x * render_scale, y * render_scale,
         box_width * render_scale, (scale == 2 ? 20 : 14) * render_scale,
-        clipped, (scale == 2 ? 16.0f : 9.5f) * render_scale, color,
+        clipped, (scale == 2 ? 16.0f : 9.5f) * render_scale, canvas_color(color),
         scale == 2 ? FE8_HOST_TEXT_SEMIBOLD : FE8_HOST_TEXT_REGULAR, 0);
 }
 
@@ -115,7 +121,10 @@ static int body_top(void) {
 }
 
 static int body_bottom(int height) {
-    return height - MARGIN - FOOTER_H;
+    /* Spend extra height on readable help, without taking any of the five
+       loadout slots away at the minimum 480x320 logical canvas. */
+    return height - MARGIN - clamp_int(FOOTER_H + (height - 320) / 3,
+        FOOTER_H, 104);
 }
 
 static void layout_for(int width, int height, Fe8InventoryUiLayout *layout) {
@@ -123,7 +132,7 @@ static void layout_for(int width, int height, Fe8InventoryUiLayout *layout) {
     int roster_width = clamp_int(inner_width * 21 / 100, 92, 126);
     int unit_width = clamp_int(inner_width * 41 / 100, 180, 260);
     int pool_width = inner_width - roster_width - unit_width;
-    int controls_width;
+
     if (pool_width < 112) {
         int needed = 112 - pool_width;
         int unit_reduction = needed < unit_width - 164 ? needed : unit_width - 164;
@@ -142,25 +151,40 @@ static void layout_for(int width, int height, Fe8InventoryUiLayout *layout) {
     layout->unit_width = unit_width;
     layout->pool_x = MARGIN + roster_width + unit_width;
     layout->pool_width = width - MARGIN - layout->pool_x;
-    controls_width = layout->pool_width - 46;
-    if (controls_width < 76)
-        controls_width = layout->pool_width;
-    layout->scope_x = layout->pool_x + 4;
-    layout->scope_width = clamp_int(controls_width * 45 / 100, 38, 58);
-    layout->sort_x = layout->scope_x + layout->scope_width + 3;
-    layout->sort_width = clamp_int(
-        controls_width - layout->scope_width - 3, 38, 62);
+    layout->scope_x = layout->pool_x + 6;
+    layout->scope_width = (layout->pool_width - 20) / 2;
+    layout->sort_x = layout->scope_x + layout->scope_width + 4;
+    layout->sort_width = layout->scope_width;
+    layout->item_row_height = clamp_int(
+        (layout->bottom - layout->top - UNIT_CARD_H) / FE8_INVENTORY_ITEM_SLOTS,
+        24, 32);
+    layout->detail_x = MARGIN + roster_width + 88;
+    layout->detail_width = unit_width - 94;
+    layout->name_y = layout->top + 4;
+    layout->class_y = layout->top + 20;
 }
 
 static int roster_rows(const Fe8InventoryUiLayout *layout) {
     int rows = (layout->bottom - layout->top - SECTION_HEADER_H) /
         ROSTER_ROW_H;
-    return rows > 0 ? rows : 1;
+    return rows > 0 ? rows : 0;
 }
 
 static int pool_rows(const Fe8InventoryUiLayout *layout) {
-    int rows = (layout->bottom - layout->top - SECTION_HEADER_H) / POOL_ROW_H;
-    return rows > 0 ? rows : 1;
+    int rows = (layout->bottom - layout->top - POOL_HEADER_H) / POOL_ROW_H;
+    return rows > 0 ? rows : 0;
+}
+
+static int roster_offset(const Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, const Fe8InventoryUiLayout *layout) {
+    int maximum = snapshot->unit_count - roster_rows(layout);
+    return clamp_int(ui->roster_scroll, 0, maximum > 0 ? maximum : 0);
+}
+
+static int pool_offset(const Fe8InventoryUi *ui,
+    const Fe8InventoryUiLayout *layout) {
+    int maximum = ui->pool_count - pool_rows(layout);
+    return clamp_int(ui->pool_scroll, 0, maximum > 0 ? maximum : 0);
 }
 
 static int endpoint_equal(Fe8InventoryEndpoint first,
@@ -367,6 +391,9 @@ void fe8_inventory_ui_rebuild(Fe8InventoryUi *ui,
     if (!ui)
         return;
     ui->pool_count = 0;
+    ui->hover_kind = FE8_INVENTORY_HIT_NONE;
+    ui->hover_unit_address = 0;
+    ui->has_inspected = 0;
     if (!snapshot) {
         ui->pool_scroll = 0;
         return;
@@ -499,12 +526,19 @@ void fe8_inventory_ui_scroll(Fe8InventoryUi *ui, int rows,
     height /= scale;
     pointer_x /= scale;
     layout_for(width, height, &layout);
+    if (pointer_x >= width - MARGIN || pointer_x < MARGIN)
+        return;
     if (pointer_x >= layout.pool_x) {
+        ui->pool_scroll = pool_offset(ui, &layout);
         value = &ui->pool_scroll;
         maximum = ui->pool_count - pool_rows(&layout);
-    } else {
+    } else if (snapshot && pointer_x < MARGIN + layout.roster_width) {
+        ui->roster_scroll = roster_offset(ui, snapshot, &layout);
         value = &ui->roster_scroll;
         maximum = snapshot ? snapshot->unit_count - roster_rows(&layout) : 0;
+    }
+    else {
+        return;
     }
     if (maximum < 0)
         maximum = 0;
@@ -533,32 +567,45 @@ Fe8InventoryHitKind fe8_inventory_ui_hit_test(const Fe8InventoryUi *ui,
             y < layout.top || y >= layout.bottom)
         return FE8_INVENTORY_HIT_NONE;
     if (x < MARGIN + layout.roster_width) {
-        if (y < layout.top + SECTION_HEADER_H)
+        int row_y = y - layout.top - SECTION_HEADER_H;
+        if (x >= MARGIN + layout.roster_width - SCROLLBAR_W || row_y < 0 ||
+                row_y >= roster_rows(&layout) * ROSTER_ROW_H)
             return FE8_INVENTORY_HIT_NONE;
-        *index = ui->roster_scroll +
-            (y - layout.top - SECTION_HEADER_H) / ROSTER_ROW_H;
-        return *index >= 0 && *index < snapshot->unit_count ?
-            FE8_INVENTORY_HIT_ROSTER : FE8_INVENTORY_HIT_NONE;
+        *index = roster_offset(ui, snapshot, &layout) + row_y / ROSTER_ROW_H;
+        if (*index < 0 || *index >= snapshot->unit_count)
+            return FE8_INVENTORY_HIT_NONE;
+        return row_y % ROSTER_ROW_H >= 16 ?
+            FE8_INVENTORY_HIT_ROSTER_CLASS : FE8_INVENTORY_HIT_ROSTER;
     }
     if (x < layout.pool_x) {
         int item_top = layout.top + UNIT_CARD_H;
-        if (y < item_top)
+        if (!target_unit(ui, snapshot))
             return FE8_INVENTORY_HIT_NONE;
-        *index = (y - item_top) / ITEM_ROW_H;
-        return ui->current_unit >= 0 &&
-            ui->current_unit < snapshot->unit_count &&
-            *index >= 0 && *index < FE8_INVENTORY_ITEM_SLOTS ?
-            FE8_INVENTORY_HIT_UNIT_ITEM : FE8_INVENTORY_HIT_NONE;
+        if (x >= layout.detail_x && x < layout.detail_x + layout.detail_width) {
+            *index = ui->current_unit;
+            if (y >= layout.name_y && y < layout.name_y + 14)
+                return FE8_INVENTORY_HIT_UNIT_NAME;
+            if (y >= layout.class_y && y < layout.class_y + 14)
+                return FE8_INVENTORY_HIT_UNIT_CLASS;
+        }
+        if (y < item_top || y >= item_top +
+                FE8_INVENTORY_ITEM_SLOTS * layout.item_row_height)
+            return FE8_INVENTORY_HIT_NONE;
+        *index = (y - item_top) / layout.item_row_height;
+        return FE8_INVENTORY_HIT_UNIT_ITEM;
     }
-    if (y < layout.top + SECTION_HEADER_H) {
+    if (y >= layout.top + 20 && y < layout.top + 38) {
         if (x >= layout.scope_x && x < layout.scope_x + layout.scope_width)
             return FE8_INVENTORY_HIT_POOL_SCOPE;
         if (x >= layout.sort_x && x < layout.sort_x + layout.sort_width)
             return FE8_INVENTORY_HIT_POOL_SORT;
-        return FE8_INVENTORY_HIT_NONE;
     }
-    *index = ui->pool_scroll +
-        (y - layout.top - SECTION_HEADER_H) / POOL_ROW_H;
+    if (y < layout.top + POOL_HEADER_H ||
+            y >= layout.top + POOL_HEADER_H + pool_rows(&layout) * POOL_ROW_H ||
+            x >= width - MARGIN - SCROLLBAR_W)
+        return FE8_INVENTORY_HIT_NONE;
+    *index = pool_offset(ui, &layout) +
+        (y - layout.top - POOL_HEADER_H) / POOL_ROW_H;
     return *index >= 0 && *index < ui->pool_count ?
         FE8_INVENTORY_HIT_POOL_ITEM : FE8_INVENTORY_HIT_NONE;
 }
@@ -588,15 +635,67 @@ Fe8InventoryEndpoint fe8_inventory_ui_endpoint(const Fe8InventoryUi *ui,
 void fe8_inventory_ui_inspect(Fe8InventoryUi *ui,
     const Fe8InventorySnapshot *snapshot, Fe8InventoryHitKind kind, int index) {
     Fe8InventoryEndpoint endpoint;
-    if (!ui || !snapshot ||
-            (kind != FE8_INVENTORY_HIT_UNIT_ITEM &&
-             kind != FE8_INVENTORY_HIT_POOL_ITEM))
+    if (!ui)
         return;
-    endpoint = fe8_inventory_ui_endpoint(ui, snapshot, kind, index);
-    if (!fe8_inventory_ui_endpoint_item(snapshot, endpoint))
+    ui->has_inspected = 0;
+    ui->hover_kind = FE8_INVENTORY_HIT_NONE;
+    ui->hover_unit_address = 0;
+    if (!snapshot || !ui->active)
         return;
-    ui->inspected = endpoint;
-    ui->has_inspected = 1;
+    if (kind == FE8_INVENTORY_HIT_UNIT_NAME ||
+            kind == FE8_INVENTORY_HIT_UNIT_CLASS ||
+            kind == FE8_INVENTORY_HIT_ROSTER ||
+            kind == FE8_INVENTORY_HIT_ROSTER_CLASS) {
+        if (index >= 0 && index < snapshot->unit_count) {
+            ui->hover_kind = kind;
+            ui->hover_unit_address = snapshot->units[index].address;
+        }
+        return;
+    }
+    if (kind == FE8_INVENTORY_HIT_POOL_SCOPE ||
+            kind == FE8_INVENTORY_HIT_POOL_SORT) {
+        ui->hover_kind = kind;
+        return;
+    }
+    if ((kind == FE8_INVENTORY_HIT_UNIT_ITEM &&
+            target_unit(ui, snapshot) && index >= 0 &&
+            index < FE8_INVENTORY_ITEM_SLOTS) ||
+            (kind == FE8_INVENTORY_HIT_POOL_ITEM && index >= 0 &&
+             index < ui->pool_count)) {
+        endpoint = fe8_inventory_ui_endpoint(ui, snapshot, kind, index);
+        ui->inspected = endpoint;
+        ui->hover_kind = kind;
+        ui->has_inspected = 1;
+    }
+}
+
+const char *fe8_inventory_ui_unit_help(const Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, const char **title) {
+    unsigned index;
+    int is_class;
+    if (title)
+        *title = NULL;
+    if (!ui || !snapshot || !ui->active)
+        return NULL;
+    is_class = ui->hover_kind == FE8_INVENTORY_HIT_UNIT_CLASS ||
+        ui->hover_kind == FE8_INVENTORY_HIT_ROSTER_CLASS;
+    if (!is_class && ui->hover_kind != FE8_INVENTORY_HIT_UNIT_NAME &&
+            ui->hover_kind != FE8_INVENTORY_HIT_ROSTER)
+        return NULL;
+    for (index = 0; index < snapshot->unit_count; ++index) {
+        const Fe8InventoryUnit *unit = &snapshot->units[index];
+        const char *description;
+        if (unit->address != ui->hover_unit_address)
+            continue;
+        if (title)
+            *title = is_class ? unit->class_name : unit->name;
+        description = is_class ? unit->class_description : unit->description;
+        if (description[0])
+            return description;
+        return is_class ? "No class description is available in this ROM." :
+            "No character description is available in this ROM.";
+    }
+    return NULL;
 }
 
 static void portrait(uint32_t *pixels, int stride, int width, int height,
@@ -750,7 +849,7 @@ static void draw_selected_accent(uint32_t *pixels, int stride,
 
 static void unit_item_row(uint32_t *pixels, int stride, int width, int height,
     int x, int y, int row_width, const Fe8InventoryUnit *unit,
-    const Fe8ItemInfo *info, uint16_t encoded, int selected) {
+    const Fe8ItemInfo *info, uint16_t encoded, int selected, int hovered, int row_height) {
     char details[64];
     char uses[24];
     uint32_t foreground = info->movable ?
@@ -759,9 +858,12 @@ static void unit_item_row(uint32_t *pixels, int stride, int width, int height,
         encoded ? (info->movable ? UINT32_C(0xFF202B38) :
             UINT32_C(0xFF292D35)) : UINT32_C(0xFF171D25);
     rect(pixels, stride, width, height, x + 2, y + 1,
-        row_width - 4, ITEM_ROW_H - 2, background);
+        row_width - 4, row_height - 2, background);
     draw_selected_accent(pixels, stride, width, height,
-        x, y, ITEM_ROW_H, selected);
+        x, y, row_height, selected);
+    if (hovered)
+        rect(pixels, stride, width, height, x + 5, y + 1, row_width - 10, 1,
+            UINT32_C(0xFF6C8BA6));
     if (!encoded) {
         text_box(pixels, stride, width, height, x + 8, y + 9,
             row_width - 16, "EMPTY SLOT", UINT32_C(0xFF73869A), 1, 16);
@@ -778,18 +880,18 @@ static void unit_item_row(uint32_t *pixels, int stride, int width, int height,
         snprintf(details, sizeof(details), "%s%s",
             uses, info->movable ? "" : " / fixed");
     }
-    text_box(pixels, stride, width, height, x + 8, y + 15,
+    text_box(pixels, stride, width, height, x + 8, y + 13,
         row_width - USE_BADGE_W - 19, details,
         UINT32_C(0xFFB8CCE0), 1, 28);
     use_badge(pixels, stride, width, height,
-        x + row_width - USE_BADGE_W - 5, y + 7,
+        x + row_width - USE_BADGE_W - 5, y + (row_height - 14) / 2,
         fe8_inventory_item_use_state(unit, info));
 }
 
 static void pool_item_row(uint32_t *pixels, int stride, int width, int height,
     int x, int y, int row_width, const Fe8InventorySnapshot *snapshot,
     const Fe8InventoryUnit *target, const Fe8InventoryListEntry *entry,
-    int selected) {
+    int selected, int hovered) {
     char owner[72];
     char uses[24];
     int name_x;
@@ -818,9 +920,12 @@ static void pool_item_row(uint32_t *pixels, int stride, int width, int height,
         row_width - 4, POOL_ROW_H - 2, background);
     draw_selected_accent(pixels, stride, width, height,
         x, y, POOL_ROW_H, selected);
-    type_badge(pixels, stride, width, height, x + 7, y + 3, entry->info);
-    name_x = x + 7 + TYPE_BADGE_W + 4;
-    name_width = row_width - TYPE_BADGE_W - USES_BOX_W - 25;
+    if (hovered)
+        rect(pixels, stride, width, height, x + 5, y + 1, row_width - 10, 1,
+            UINT32_C(0xFF6C8BA6));
+    type_badge(pixels, stride, width, height, x + 7, y + 17, entry->info);
+    name_x = x + 8;
+    name_width = row_width - USES_BOX_W - 22;
     text_box(pixels, stride, width, height, name_x, y + 2,
         name_width, entry->info ? entry->info->name : "Unknown item",
         foreground, 1, 28);
@@ -829,20 +934,19 @@ static void pool_item_row(uint32_t *pixels, int stride, int width, int height,
         x + row_width - USES_BOX_W - 7, y + 3, USES_BOX_W,
         uses, UINT32_C(0xFFFFD46A), 1, 4);
     if (entry->unit_index >= 0 && entry->unit_index < snapshot->unit_count) {
-        snprintf(owner, sizeof(owner), "%s / slot %u%s",
+        snprintf(owner, sizeof(owner), "%s%s",
             snapshot->units[entry->unit_index].name,
-            entry->endpoint.slot + 1,
             entry->info && entry->info->movable ? "" : " / fixed");
     } else {
         snprintf(owner, sizeof(owner), "Supply%s",
             entry->info && entry->info->movable ? "" : " / fixed");
     }
-    owner_width = target ? row_width - USE_BADGE_W - 19 : row_width - 16;
-    text_box(pixels, stride, width, height, x + 8, y + 17,
+    owner_width = row_width - TYPE_BADGE_W - (target ? USE_BADGE_W : 0) - 24;
+    text_box(pixels, stride, width, height, x + TYPE_BADGE_W + 11, y + 19,
         owner_width, owner, UINT32_C(0xFF9CB0C4), 1, 34);
     if (target && entry->info) {
         use_badge(pixels, stride, width, height,
-            x + row_width - USE_BADGE_W - 5, y + 15,
+            x + row_width - USE_BADGE_W - 5, y + 16,
             fe8_inventory_item_use_state(target, entry->info));
     }
 }
@@ -904,11 +1008,41 @@ static void item_summary(char *output, size_t output_size,
 }
 
 static void draw_control(uint32_t *pixels, int stride, int width, int height,
-    int x, int y, int control_width, const char *label) {
-    rect(pixels, stride, width, height, x, y, control_width, 14,
-        UINT32_C(0xFF273545));
+    int x, int y, int control_width, const char *label, int hovered) {
+    rect(pixels, stride, width, height, x, y, control_width, 18,
+        hovered ? UINT32_C(0xFF354C64) : UINT32_C(0xFF273545));
     text_box(pixels, stride, width, height, x + 4, y + 3,
-        control_width - 8, label, UINT32_C(0xFFC9D9EA), 1, 12);
+        control_width - 8, label, UINT32_C(0xFFC9D9EA), 1, 20);
+}
+
+static void scrollbar(uint32_t *pixels, int stride, int width, int height,
+    int x, int y, int rows, int row_height, int count, int offset) {
+    int track_height = rows * row_height;
+    int thumb_height;
+    int thumb_y;
+    if (count <= rows || rows <= 0)
+        return;
+    thumb_height = clamp_int(track_height * rows / count, 12, track_height);
+    thumb_y = y + (track_height - thumb_height) * offset / (count - rows);
+    rect(pixels, stride, width, height, x, y, 2, track_height,
+        UINT32_C(0xFF25313F));
+    rect(pixels, stride, width, height, x, thumb_y, 2, thumb_height,
+        UINT32_C(0xFF6C8BA6));
+}
+
+static void help_label(uint32_t *pixels, int stride, int width, int height,
+    int x, int y, int label_width, const char *value, uint32_t color,
+    int hovered) {
+    if (hovered)
+        rect(pixels, stride, width, height, x - 2, y - 1,
+            label_width + 4, 15, UINT32_C(0xFF2D4055));
+    text_box(pixels, stride, width, height, x, y, label_width,
+        value, color, 1, 0);
+    /* A subtle dotted underline makes name/class help discoverable without
+       a question-mark glyph stealing space from long ROM-hack names. */
+    for (int dot = 0; dot < label_width; dot += 4)
+        rect(pixels, stride, width, height, x + dot, y + 12, 1, 1,
+            hovered ? UINT32_C(0xFF9BC9F7) : UINT32_C(0xFF41546A));
 }
 
 void fe8_inventory_ui_draw(const Fe8InventoryUi *ui,
@@ -923,187 +1057,228 @@ void fe8_inventory_ui_draw(const Fe8InventoryUi *ui,
     int logical_height;
     int row;
     char buffer[160];
-    if (!ui || !snapshot || !pixels)
+    if (!ui || !snapshot || !pixels || width <= 0 || height <= 0 || stride < width)
         return;
-    render_scale = ui->render_scale ? ui->render_scale : 1;
+    render_scale = ui->render_scale > 0 ? ui->render_scale : 1;
     logical_width = width / render_scale;
     logical_height = height / render_scale;
     layout_for(logical_width, logical_height, &layout);
     unit = target_unit(ui, snapshot);
 
     rect(pixels, stride, logical_width, logical_height,
-        0, 0, logical_width, logical_height, UINT32_C(0xFF0D1117));
+        0, 0, logical_width, logical_height, UINT32_C(0xFF0D141D));
     rect(pixels, stride, logical_width, logical_height,
         MARGIN, MARGIN, logical_width - MARGIN * 2,
-        logical_height - MARGIN * 2, UINT32_C(0xFF151B23));
+        logical_height - MARGIN * 2, UINT32_C(0xFF161F2A));
     if (!fe8_host_text_begin(&canvas, pixels, stride, actual_width, actual_height)) {
         render_scale = 1;
         return;
     }
     text_canvas = &canvas;
     text_box(pixels, stride, logical_width, logical_height,
-        MARGIN + 10, MARGIN + 5, 310,
-        snapshot->prebattle ? "Preparation inventory" : "Inventory manager",
-        UINT32_C(0xFFF4F7FA), 2, 32);
+        MARGIN + 10, MARGIN + 4, logical_width - 164,
+        snapshot->prebattle ? "Preparations" : "Inventory",
+        UINT32_C(0xFFF4F7FA), 2, 0);
+    snprintf(buffer, sizeof(buffer), "Supply  %u / %u",
+        snapshot->supply_count, snapshot->supply_capacity);
+    text_box(pixels, stride, logical_width, logical_height,
+        logical_width - MARGIN - 119, MARGIN + 9, 112,
+        buffer, UINT32_C(0xFF9DB9D4), 1, 0);
     text_box(pixels, stride, logical_width, logical_height,
         MARGIN + 10, MARGIN + 25, logical_width - MARGIN * 2 - 20,
-        ui->status, UINT32_C(0xFF9CA8B7), 1, 96);
+        ui->status, ui->has_selection ? UINT32_C(0xFFFFD890) :
+            UINT32_C(0xFF9EAFBF), 1, 0);
 
     rect(pixels, stride, logical_width, logical_height,
         MARGIN + layout.roster_width - 1, layout.top, 1,
-        layout.bottom - layout.top, UINT32_C(0xFF303A47));
+        layout.bottom - layout.top, UINT32_C(0xFF303E4E));
     rect(pixels, stride, logical_width, logical_height,
         layout.pool_x - 1, layout.top, 1,
-        layout.bottom - layout.top, UINT32_C(0xFF303A47));
+        layout.bottom - layout.top, UINT32_C(0xFF303E4E));
 
+    snprintf(buffer, sizeof(buffer), "Roster  %u", snapshot->unit_count);
     text_box(pixels, stride, logical_width, logical_height,
         MARGIN + 7, layout.top + 5, layout.roster_width - 14,
-        "Target unit", UINT32_C(0xFF8AB4E8), 1, 20);
+        buffer, UINT32_C(0xFF8AB4E8), 1, 0);
     for (row = 0; row < roster_rows(&layout); ++row) {
-        int index = ui->roster_scroll + row;
+        int index = roster_offset(ui, snapshot, &layout) + row;
         int y = layout.top + SECTION_HEADER_H + row * ROSTER_ROW_H;
+        int hovered;
         if (index >= snapshot->unit_count)
             break;
-        if (index == ui->current_unit) {
+        hovered = ui->hover_unit_address == snapshot->units[index].address &&
+            (ui->hover_kind == FE8_INVENTORY_HIT_ROSTER ||
+             ui->hover_kind == FE8_INVENTORY_HIT_ROSTER_CLASS);
+        if (index == ui->current_unit || hovered) {
             rect(pixels, stride, logical_width, logical_height,
-                MARGIN + 2, y, layout.roster_width - 4, ROSTER_ROW_H,
-                UINT32_C(0xFF253A52));
-            rect(pixels, stride, logical_width, logical_height,
-                MARGIN + 2, y, 3, ROSTER_ROW_H, UINT32_C(0xFF4B9BFF));
+                MARGIN + 2, y + 1, layout.roster_width - 8, ROSTER_ROW_H - 2,
+                index == ui->current_unit ? UINT32_C(0xFF283D53) :
+                    UINT32_C(0xFF223142));
+            if (index == ui->current_unit)
+                rect(pixels, stride, logical_width, logical_height,
+                    MARGIN + 2, y + 1, 2, ROSTER_ROW_H - 2,
+                    UINT32_C(0xFF6CB6F5));
         }
         text_box(pixels, stride, logical_width, logical_height,
-            MARGIN + 7, y + 8, layout.roster_width - 14,
-            snapshot->units[index].name, UINT32_C(0xFFF4F7FA), 1, 18);
+            MARGIN + 8, y + 4, layout.roster_width - 20,
+            snapshot->units[index].name, UINT32_C(0xFFF4F7FA), 1, 0);
+        text_box(pixels, stride, logical_width, logical_height,
+            MARGIN + 8, y + 18, layout.roster_width - 20,
+            snapshot->units[index].class_name, UINT32_C(0xFF99B0C7), 1, 0);
     }
+    scrollbar(pixels, stride, logical_width, logical_height,
+        MARGIN + layout.roster_width - 4, layout.top + SECTION_HEADER_H,
+        roster_rows(&layout), ROSTER_ROW_H, snapshot->unit_count,
+        roster_offset(ui, snapshot, &layout));
 
     if (unit) {
         int unit_x = MARGIN + layout.roster_width;
-        int detail_x = unit_x + 88;
-        int detail_width = layout.unit_width - 94;
+        int hovering_unit = ui->hover_unit_address == unit->address;
         portrait(pixels, stride, logical_width, logical_height,
             unit_x + 4, layout.top, unit);
-        text_box(pixels, stride, logical_width, logical_height,
-            detail_x, layout.top + 5, detail_width,
-            unit->name, UINT32_C(0xFFFFE49A), 1, 18);
-        text_box(pixels, stride, logical_width, logical_height,
-            detail_x, layout.top + 18, detail_width,
-            unit->class_name, UINT32_C(0xFFA8C8E8), 1, 18);
-        snprintf(buffer, sizeof(buffer), "LV%u  HP%u/%u",
+        help_label(pixels, stride, logical_width, logical_height,
+            layout.detail_x, layout.name_y, layout.detail_width,
+            unit->name, UINT32_C(0xFFFFE49A), hovering_unit &&
+                ui->hover_kind == FE8_INVENTORY_HIT_UNIT_NAME);
+        help_label(pixels, stride, logical_width, logical_height,
+            layout.detail_x, layout.class_y, layout.detail_width,
+            unit->class_name, UINT32_C(0xFFACCEEF), hovering_unit &&
+                ui->hover_kind == FE8_INVENTORY_HIT_UNIT_CLASS);
+        snprintf(buffer, sizeof(buffer), "Lv %u  HP %u/%u",
             unit->level, unit->hp, unit->max_hp);
         text_box(pixels, stride, logical_width, logical_height,
-            detail_x, layout.top + 33, detail_width,
-            buffer, UINT32_C(0xFFF3F7FA), 1, 20);
-        snprintf(buffer, sizeof(buffer), "POW%u  SPD%u", unit->power, unit->speed);
+            layout.detail_x, layout.top + 34, layout.detail_width,
+            buffer, UINT32_C(0xFFF3F7FA), 1, 0);
+        snprintf(buffer, sizeof(buffer), "Pow %u  Spd %u", unit->power, unit->speed);
         text_box(pixels, stride, logical_width, logical_height,
-            detail_x, layout.top + 47, detail_width,
-            buffer, UINT32_C(0xFFE7EEF5), 1, 20);
-        snprintf(buffer, sizeof(buffer), "DEF%u  RES%u", unit->defense,
-            unit->resistance);
+            layout.detail_x, layout.top + 47, layout.detail_width,
+            buffer, UINT32_C(0xFFB8CADC), 1, 0);
+        snprintf(buffer, sizeof(buffer), "Def %u  Res %u", unit->defense, unit->resistance);
         text_box(pixels, stride, logical_width, logical_height,
-            detail_x, layout.top + 60, detail_width,
-            buffer, UINT32_C(0xFFE7EEF5), 1, 20);
+            layout.detail_x, layout.top + 60, layout.detail_width,
+            buffer, UINT32_C(0xFFB8CADC), 1, 0);
         for (row = 0; row < FE8_INVENTORY_ITEM_SLOTS; ++row) {
             Fe8InventoryEndpoint endpoint = {
-                FE8_INVENTORY_ENDPOINT_UNIT,
-                unit->address,
-                (unsigned)row,
+                FE8_INVENTORY_ENDPOINT_UNIT, unit->address, (unsigned)row,
             };
-            int selected = ui->has_selection &&
-                endpoint_equal(ui->selected, endpoint);
+            int y = layout.top + UNIT_CARD_H + row * layout.item_row_height;
+            int selected = ui->has_selection && endpoint_equal(ui->selected, endpoint);
+            int hovered = ui->has_inspected && endpoint_equal(ui->inspected, endpoint);
+            if (y + layout.item_row_height > layout.bottom)
+                break;
             unit_item_row(pixels, stride, logical_width, logical_height,
-                unit_x, layout.top + UNIT_CARD_H + row * ITEM_ROW_H,
-                layout.unit_width, unit, &unit->item_info[row],
-                unit->items[row], selected);
+                unit_x, y, layout.unit_width, unit, &unit->item_info[row],
+                unit->items[row], selected, hovered, layout.item_row_height);
         }
     }
 
-    snprintf(buffer, sizeof(buffer), "A %s",
-        fe8_inventory_ui_scope_name(ui->pool_scope));
-    draw_control(pixels, stride, logical_width, logical_height,
-        layout.scope_x, layout.top + 2, layout.scope_width, buffer);
-    snprintf(buffer, sizeof(buffer), "S %s",
-        fe8_inventory_ui_sort_name(ui->pool_sort));
-    draw_control(pixels, stride, logical_width, logical_height,
-        layout.sort_x, layout.top + 2, layout.sort_width, buffer);
+    text_box(pixels, stride, logical_width, logical_height,
+        layout.pool_x + 7, layout.top + 5, layout.pool_width - 53,
+        ui->pool_scope == FE8_INVENTORY_POOL_ALL ? "All items" : "Supply items",
+        UINT32_C(0xFF8AB4E8), 1, 0);
     snprintf(buffer, sizeof(buffer), "%d", ui->pool_count -
         (snapshot->first_empty_supply < snapshot->supply_capacity ? 1 : 0));
     text_box(pixels, stride, logical_width, logical_height,
-        layout.pool_x + layout.pool_width - 38, layout.top + 5, 32,
-        buffer, UINT32_C(0xFFB8CCE0), 1, 5);
-
+        layout.pool_x + layout.pool_width - 37, layout.top + 5, 30,
+        buffer, UINT32_C(0xFFB8CCE0), 1, 0);
+    snprintf(buffer, sizeof(buffer), "A: %s",
+        fe8_inventory_ui_scope_name(ui->pool_scope));
+    draw_control(pixels, stride, logical_width, logical_height,
+        layout.scope_x, layout.top + 20, layout.scope_width, buffer,
+        ui->hover_kind == FE8_INVENTORY_HIT_POOL_SCOPE);
+    snprintf(buffer, sizeof(buffer), "S: %s",
+        fe8_inventory_ui_sort_name(ui->pool_sort));
+    draw_control(pixels, stride, logical_width, logical_height,
+        layout.sort_x, layout.top + 20, layout.sort_width, buffer,
+        ui->hover_kind == FE8_INVENTORY_HIT_POOL_SORT);
     for (row = 0; row < pool_rows(&layout); ++row) {
-        int index = ui->pool_scroll + row;
-        int y = layout.top + SECTION_HEADER_H + row * POOL_ROW_H;
+        int index = pool_offset(ui, &layout) + row;
+        int y = layout.top + POOL_HEADER_H + row * POOL_ROW_H;
         Fe8InventoryListEntry entry;
         int selected;
+        int hovered;
         if (!fe8_inventory_ui_pool_entry(ui, index, &entry))
             break;
-        selected = ui->has_selection && endpoint_equal(ui->selected,
-            entry.endpoint);
+        selected = ui->has_selection && endpoint_equal(ui->selected, entry.endpoint);
+        hovered = ui->has_inspected && endpoint_equal(ui->inspected, entry.endpoint);
         pool_item_row(pixels, stride, logical_width, logical_height,
-            layout.pool_x, y, layout.pool_width, snapshot, unit, &entry,
-            selected);
+            layout.pool_x, y, layout.pool_width - SCROLLBAR_W, snapshot, unit,
+            &entry, selected, hovered);
     }
+    scrollbar(pixels, stride, logical_width, logical_height,
+        logical_width - MARGIN - 3, layout.top + POOL_HEADER_H,
+        pool_rows(&layout), POOL_ROW_H, ui->pool_count, pool_offset(ui, &layout));
 
     rect(pixels, stride, logical_width, logical_height,
+        MARGIN, layout.bottom, logical_width - MARGIN * 2,
+        logical_height - MARGIN - layout.bottom, UINT32_C(0xFF1C2A39));
+    rect(pixels, stride, logical_width, logical_height,
         MARGIN, layout.bottom, logical_width - MARGIN * 2, 1,
-        UINT32_C(0xFF303A47));
+        UINT32_C(0xFF3A526B));
     {
+        const char *help_title = NULL;
+        const char *help = fe8_inventory_ui_unit_help(ui, snapshot, &help_title);
         const Fe8ItemInfo *info = NULL;
         uint16_t encoded = 0;
         char detail[160];
         char summary[160];
-        if (ui->has_inspected) {
-            info = endpoint_info(snapshot, ui->inspected);
-            encoded = fe8_inventory_ui_endpoint_item(snapshot, ui->inspected);
-        } else if (ui->has_selection) {
-            info = endpoint_info(snapshot, ui->selected);
-            encoded = fe8_inventory_ui_endpoint_item(snapshot, ui->selected);
-        } else if (unit) {
-            for (row = 0; row < FE8_INVENTORY_ITEM_SLOTS; ++row) {
-                if (unit->items[row]) {
-                    info = &unit->item_info[row];
-                    encoded = unit->items[row];
-                    break;
-                }
-            }
-        }
-        if (info && info->id && encoded) {
+        int description_y = layout.bottom + 23;
+        if (help) {
+            int is_class = ui->hover_kind == FE8_INVENTORY_HIT_UNIT_CLASS ||
+                ui->hover_kind == FE8_INVENTORY_HIT_ROSTER_CLASS;
+            snprintf(buffer, sizeof(buffer), "%s  /  %s",
+                is_class ? "Class" : "Character", help_title);
             text_box(pixels, stride, logical_width, logical_height,
-                MARGIN + 9, layout.bottom + 5, 120,
-                info->name, UINT32_C(0xFFF4F7FA), 1, 30);
-            compatibility_detail(detail, sizeof(detail), unit, info);
-            text_box(pixels, stride, logical_width, logical_height,
-                MARGIN + 132, layout.bottom + 5,
-                logical_width - MARGIN * 2 - 141,
-                detail, UINT32_C(0xFFFFD890), 1, 70);
-            item_summary(summary, sizeof(summary), encoded, info);
-            text_box(pixels, stride, logical_width, logical_height,
-                MARGIN + 9, layout.bottom + 18,
-                logical_width - MARGIN * 2 - 18,
-                summary, UINT32_C(0xFF9FB1C4), 1, 100);
-            if (info->description[0]) {
-                fe8_host_text_draw(&canvas,
-                    (MARGIN + 9) * render_scale,
-                    (layout.bottom + 31) * render_scale,
-                    (logical_width - MARGIN * 2 - 18) * render_scale,
-                    20 * render_scale, info->description,
-                    9.5f * render_scale, UINT32_C(0xFFB9C2CE),
-                    FE8_HOST_TEXT_REGULAR, 1);
-            }
+                MARGIN + 10, layout.bottom + 7, logical_width - MARGIN * 2 - 20,
+                buffer, UINT32_C(0xFFFFE49A), 1, 0);
         } else {
-            text_box(pixels, stride, logical_width, logical_height,
-                MARGIN + 9, layout.bottom + 13,
-                logical_width - MARGIN * 2 - 18,
-                "A: All/Supply   S: Sort   U: Undo   Right-click: Clear selection",
-                UINT32_C(0xFF8F9AA8), 1, 100);
-            text_box(pixels, stride, logical_width, logical_height,
-                MARGIN + 9, layout.bottom + 29,
-                logical_width - MARGIN * 2 - 18,
-                "Click an item, then click a unit slot or the empty supply row.",
-                UINT32_C(0xFF8F9AA8), 1, 100);
+            if (ui->has_inspected) {
+                info = endpoint_info(snapshot, ui->inspected);
+                encoded = fe8_inventory_ui_endpoint_item(snapshot, ui->inspected);
+            } else if (ui->has_selection) {
+                info = endpoint_info(snapshot, ui->selected);
+                encoded = fe8_inventory_ui_endpoint_item(snapshot, ui->selected);
+            }
+            if (info && info->id && encoded) {
+                text_box(pixels, stride, logical_width, logical_height,
+                    MARGIN + 10, layout.bottom + 5, 132,
+                    info->name, UINT32_C(0xFFFFE49A), 1, 0);
+                compatibility_detail(detail, sizeof(detail), unit, info);
+                text_box(pixels, stride, logical_width, logical_height,
+                    MARGIN + 148, layout.bottom + 5,
+                    logical_width - MARGIN * 2 - 158,
+                    detail, UINT32_C(0xFFB8D2E9), 1, 0);
+                item_summary(summary, sizeof(summary), encoded, info);
+                text_box(pixels, stride, logical_width, logical_height,
+                    MARGIN + 10, layout.bottom + 18,
+                    logical_width - MARGIN * 2 - 20,
+                    summary, UINT32_C(0xFF9FB1C4), 1, 0);
+                help = info->description[0] ? info->description :
+                    "No item description is available in this ROM.";
+                description_y = layout.bottom + 32;
+            } else {
+                text_box(pixels, stride, logical_width, logical_height,
+                    MARGIN + 10, layout.bottom + 7,
+                    logical_width - MARGIN * 2 - 20,
+                    "Hover a name, class or item to inspect it.",
+                    UINT32_C(0xFFD1E1EE), 1, 0);
+                help = ui->has_selection ?
+                    "Your item stays selected while you browse. Click a slot to move it." :
+                    "Choose a unit, then click an item and its destination slot.";
+            }
         }
+        fe8_host_text_draw(&canvas, (MARGIN + 10) * render_scale,
+            description_y * render_scale,
+            (logical_width - MARGIN * 2 - 20) * render_scale,
+            (logical_height - MARGIN - 14 - description_y) * render_scale,
+            help, 9.5f * render_scale, canvas_color(UINT32_C(0xFFBECEDC)),
+            FE8_HOST_TEXT_REGULAR, 1);
     }
+    text_box(pixels, stride, logical_width, logical_height,
+        MARGIN + 10, logical_height - MARGIN - 11,
+        logical_width - MARGIN * 2 - 20,
+        "A: All/Supply   S: Sort   U: Undo   Right-click: Cancel   I/Esc: Close",
+        UINT32_C(0xFF91A8BE), 1, 0);
     fe8_host_text_end(&canvas);
     text_canvas = NULL;
     render_scale = 1;

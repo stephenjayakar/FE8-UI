@@ -32,8 +32,13 @@ renders the selected character's full menu portrait. It shows level, HP,
 remaining uses, combat stats, source owner, and whether the selected target can
 use each weapon or staff. Compatibility badges distinguish ready gear, missing
 weapon ranks, personal locks, status restrictions, and ordinary non-weapon
-items. Long names, uses, ownership, and badges occupy separate clipped columns
-so narrow inventory layouts do not overlap. ROM-specific addresses and limits
+items. Hover a character's name or class in either the roster or portrait card
+for its in-game description in the bottom help panel. Hovering never changes
+the selected target or a pending item transfer; moving away restores item help.
+Missing help text is explicitly marked rather than borrowed from another unit.
+Long labels ellipsize, and hovering exposes their full names. Item names,
+uses, ownership, and badges have separate space; visible scrollbars, hover
+accents, and a persistent shortcut strip make the controls discoverable. ROM-specific addresses and limits
 live in a selected `Fe8Profile`;
 retail FE8U and Sacred Echoes have separate inventory layouts, so another hack
 can be supported without changing the UI or transaction engine. This is the

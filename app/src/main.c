@@ -878,7 +878,7 @@ int main(int argc, char **argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_MOUSEMOTION) {
                 if ((settings.mouse_enabled || inventory_ui.active) &&
-                        fe8_host_video_window_to_canvas(
+                        fe8_host_video_event_to_canvas(
                         &video, event.motion.x, event.motion.y,
                         &host_pointer_canvas_x, &host_pointer_canvas_y)) {
                     host_pointer_visible = 1;
@@ -1005,7 +1005,7 @@ int main(int argc, char **argv) {
                     int canvas_x;
                     int canvas_y;
                     int index;
-                    if (fe8_host_video_window_to_canvas(&video,
+                    if (fe8_host_video_event_to_canvas(&video,
                             event.button.x, event.button.y, &canvas_x, &canvas_y)) {
                         Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
                             &inventory_snapshot, canvas_width, canvas_height,
@@ -1016,7 +1016,8 @@ int main(int argc, char **argv) {
                         } else if (hit == FE8_INVENTORY_HIT_POOL_SORT) {
                             fe8_inventory_ui_cycle_sort(&inventory_ui,
                                 &inventory_snapshot);
-                        } else if (hit == FE8_INVENTORY_HIT_ROSTER &&
+                        } else if ((hit == FE8_INVENTORY_HIT_ROSTER ||
+                                hit == FE8_INVENTORY_HIT_ROSTER_CLASS) &&
                                 index >= 0 && index < inventory_snapshot.unit_count) {
                             inventory_ui.current_unit = index;
                             if (inventory_ui.has_selection)
@@ -1160,7 +1161,7 @@ int main(int argc, char **argv) {
                 int shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
                 if (snapshot_valid && visual_profile_active &&
                         snapshot.input_lock == 0) {
-                    if (!fe8_host_video_window_to_canvas(&video,
+                    if (!fe8_host_video_event_to_canvas(&video,
                             event.button.x, event.button.y, &canvas_x, &canvas_y))
                         continue;
                     if (shift) {
@@ -1202,7 +1203,7 @@ int main(int argc, char **argv) {
                     settings.mouse_enabled) {
                 int canvas_x;
                 int canvas_y;
-                if (!pan.moved && fe8_host_video_window_to_canvas(&video,
+                if (!pan.moved && fe8_host_video_event_to_canvas(&video,
                         event.button.x, event.button.y, &canvas_x, &canvas_y)) {
                     int map_x;
                     int map_y;
@@ -1224,7 +1225,7 @@ int main(int argc, char **argv) {
                     visual_profile_active && snapshot.input_lock == 0) {
                 int canvas_x;
                 int canvas_y;
-                if (!fe8_host_video_window_to_canvas(&video,
+                if (!fe8_host_video_event_to_canvas(&video,
                         event.motion.x, event.motion.y, &canvas_x, &canvas_y)) {
                     pointer_canvas_valid = 0;
                     pointer_tile_valid = 0;
@@ -1533,9 +1534,26 @@ int main(int argc, char **argv) {
             canvas_width, canvas_height,
             extension_active ? frame_placement.x : gba_x,
             extension_active ? frame_placement.y : gba_y);
-        if (inventory_ui.active)
+        if (inventory_ui.active) {
+            int window_x;
+            int window_y;
+            int index = -1;
+            Fe8InventoryHitKind hit = FE8_INVENTORY_HIT_NONE;
+            /* Re-evaluate stationary pointers after scrolling, sorting, unit
+               changes and resize too. A motion-only inspector leaves stale
+               help (or a stale highlight) under a changed layout. */
+            SDL_GetMouseState(&window_x, &window_y);
+            host_pointer_visible = SDL_GetMouseFocus() == video.window &&
+                fe8_host_video_window_to_canvas(&video, window_x, window_y,
+                    &host_pointer_canvas_x, &host_pointer_canvas_y);
+            if (host_pointer_visible)
+                hit = fe8_inventory_ui_hit_test(&inventory_ui, &inventory_snapshot,
+                    canvas_width, canvas_height, host_pointer_canvas_x,
+                    host_pointer_canvas_y, &index);
+            fe8_inventory_ui_inspect(&inventory_ui, &inventory_snapshot, hit, index);
             fe8_inventory_ui_draw(&inventory_ui, &inventory_snapshot,
                 canvas, canvas_width, canvas_width, canvas_height);
+        }
         if ((settings.mouse_enabled || inventory_ui.active) && host_pointer_visible)
             fe8_host_draw_mouse_cursor(canvas, canvas_width,
                 canvas_width, canvas_height,

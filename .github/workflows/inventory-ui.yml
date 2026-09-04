@@ -1,0 +1,45 @@
+name: Inventory UI regression
+
+on:
+  push:
+    branches: [feature/inventory-ui-polish]
+  pull_request:
+    paths:
+      - 'app/src/*inventory*'
+      - 'app/src/host_text*'
+      - 'app/src/fe8_catalog*'
+      - 'tests/*inventory*'
+      - 'tests/test_host_text.c'
+      - '.github/workflows/inventory-ui.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hover-and-text:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run native or portable UI regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-ui-tests
+          text=app/src/host_text_bitmap.c
+          flags=()
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            text=app/src/host_text_macos.m
+            flags=(-DFE8_TEST_NATIVE_TEXT -framework CoreGraphics -framework CoreText -framework CoreFoundation)
+          fi
+          cc -std=c11 -Wall -Wextra -UNDEBUG -Iapp/src "${flags[@]}" \
+            tests/test_inventory_hover.c app/src/prebattle_inventory_ui.c \
+            app/src/prebattle_inventory.c app/src/fe8_catalog.c "$text" \
+            -o build-ui-tests/inventory-hover
+          cc -std=c11 -Wall -Wextra -UNDEBUG -Iapp/src "${flags[@]}" \
+            tests/test_host_text.c "$text" -o build-ui-tests/host-text
+          build-ui-tests/inventory-hover
+          build-ui-tests/host-text

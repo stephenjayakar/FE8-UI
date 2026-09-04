@@ -182,6 +182,45 @@ void fe8_host_text_draw(Fe8HostTextCanvas *canvas, int x, int y,
     if (clip_bottom > context->height) clip_bottom = context->height;
     if (clip_left >= clip_right || clip_top >= clip_bottom) return;
 
+    /* Single-line labels end at a complete glyph and reserve an ellipsis,
+       rather than displaying half a character against the next column. */
+    if (!wrap) {
+        const unsigned char *end = (const unsigned char *)text;
+        int full_width = 0;
+        int available = clip_right - origin_x;
+        int dot_advance = character_advance('.', scale);
+        int dots = available / dot_advance;
+        int truncated;
+        unsigned char ch;
+        if (dots > 3) dots = 3;
+        while (*end && *end != '\n') {
+            end = next_character(end, &ch);
+            if (ch != '\r') full_width += character_advance(ch, scale);
+        }
+        truncated = full_width > available;
+        cursor = (const unsigned char *)text;
+        while (cursor < end) {
+            int advance;
+            cursor = next_character(cursor, &ch);
+            if (ch == '\r') continue;
+            advance = character_advance(ch, scale);
+            if (cursor_x + advance > clip_right -
+                    (truncated ? dots * dot_advance : 0))
+                break;
+            draw_glyph(context, ch, cursor_x, cursor_y, scale, color, weight,
+                clip_left, clip_top, clip_right, clip_bottom);
+            cursor_x += advance;
+        }
+        if (truncated) {
+            for (int i = 0; i < dots; ++i) {
+                draw_glyph(context, '.', cursor_x, cursor_y, scale, color, weight,
+                    clip_left, clip_top, clip_right, clip_bottom);
+                cursor_x += dot_advance;
+            }
+        }
+        return;
+    }
+
     at_word_start = 1;
     cursor = (const unsigned char *)text;
     while (*cursor && cursor_y + 8 * scale <= clip_bottom) {

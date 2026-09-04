@@ -18,6 +18,9 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_POOL_ITEM,
     FE8_INVENTORY_HIT_POOL_SCOPE,
     FE8_INVENTORY_HIT_POOL_SORT,
+    FE8_INVENTORY_HIT_UNIT_NAME,
+    FE8_INVENTORY_HIT_UNIT_CLASS,
+    FE8_INVENTORY_HIT_ROSTER_CLASS,
     /* Source compatibility for callers that still use the old right-pane name. */
     FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_POOL_ITEM,
 } Fe8InventoryHitKind;
@@ -56,6 +59,10 @@ typedef struct Fe8InventoryUi {
     int has_selection;
     Fe8InventoryEndpoint inspected;
     int has_inspected;
+    /* Hover is separate from the item being moved. Unit help is keyed by
+       address, not a roster index that could become stale after a refresh. */
+    Fe8InventoryHitKind hover_kind;
+    uint32_t hover_unit_address;
     char status[96];
 } Fe8InventoryUi;
 
@@ -87,6 +94,9 @@ int fe8_inventory_ui_endpoint_movable(const Fe8InventorySnapshot *snapshot,
     Fe8InventoryEndpoint endpoint);
 void fe8_inventory_ui_inspect(Fe8InventoryUi *ui,
     const Fe8InventorySnapshot *snapshot, Fe8InventoryHitKind kind, int index);
+/* Returns ROM-backed name/class help for the current hover, or NULL. */
+const char *fe8_inventory_ui_unit_help(const Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, const char **title);
 void fe8_inventory_ui_draw(const Fe8InventoryUi *ui,
     const Fe8InventorySnapshot *snapshot, uint32_t *pixels, int stride,
     int width, int height);

@@ -10,9 +10,11 @@ int fe8_host_text_begin(Fe8HostTextCanvas *canvas, uint32_t *pixels,
     if (!canvas || !pixels || stride < width || width <= 0 || height <= 0)
         return 0;
     color_space = CGColorSpaceCreateDeviceRGB();
+    /* Host pixels are ABGR integers: RGBA bytes on our little-endian hosts,
+       matching the SDL/mGBA canvas and the portable text renderer. */
     context = CGBitmapContextCreate(pixels, (size_t)width, (size_t)height, 8,
         (size_t)stride * sizeof(*pixels), color_space,
-        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+        kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(color_space);
     if (!context)
         return 0;
@@ -43,7 +45,7 @@ void fe8_host_text_draw(Fe8HostTextCanvas *canvas, int x, int y,
     CFAttributedStringRef attributed;
     CFMutableDictionaryRef attributes;
     CGFloat components[4];
-    if (!canvas || !canvas->context || !text || !*text || width <= 0 || height <= 0)
+    if (!canvas || !canvas->context || !text || !*text || width <= 0 || height <= 0 || size <= 0.0f)
         return;
     context = (CGContextRef)canvas->context;
     font = system_font(size, weight);
@@ -59,6 +61,12 @@ void fe8_host_text_draw(Fe8HostTextCanvas *canvas, int x, int y,
     CFDictionarySetValue(attributes, kCTFontAttributeName, font);
     CFDictionarySetValue(attributes, kCTForegroundColorAttributeName, foreground);
     string = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
+    if (!string) {
+        CFRelease(attributes);
+        CGColorRelease(foreground);
+        CFRelease(font);
+        return;
+    }
     attributed = CFAttributedStringCreate(NULL, string, attributes);
     CGContextSaveGState(context);
     CGContextSetTextMatrix(context, CGAffineTransformIdentity);
@@ -80,6 +88,17 @@ void fe8_host_text_draw(Fe8HostTextCanvas *canvas, int x, int y,
     } else {
         CTLineRef line = CTLineCreateWithAttributedString(attributed);
         CGFloat ascent = 0;
+        if (CTLineGetTypographicBounds(line, NULL, NULL, NULL) > width) {
+            CFAttributedStringRef ellipsis = CFAttributedStringCreate(NULL,
+                CFSTR("\u2026"), attributes);
+            CTLineRef token = CTLineCreateWithAttributedString(ellipsis);
+            CTLineRef truncated = CTLineCreateTruncatedLine(line, width,
+                kCTLineTruncationEnd, token);
+            CFRelease(line);
+            line = truncated ? truncated : (CTLineRef)CFRetain(token);
+            CFRelease(token);
+            CFRelease(ellipsis);
+        }
         CTLineGetTypographicBounds(line, &ascent, NULL, NULL);
         CGContextSetTextPosition(context, x, canvas->height - y - ascent);
         CTLineDraw(line, context);

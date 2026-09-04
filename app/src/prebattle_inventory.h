@@ -11,6 +11,7 @@ enum {
     FE8_INVENTORY_UNIT_CAPACITY = 62,
     FE8_INVENTORY_ITEM_SLOTS = 5,
     FE8_INVENTORY_WEAPON_TYPES = 8,
+    FE8_INVENTORY_DESCRIPTION_SIZE = 256,
     FE8_SUPPLY_RETAIL_CAPACITY = 100,
     FE8_SUPPLY_MAX_CAPACITY = 200,
 };
@@ -43,6 +44,8 @@ typedef struct Fe8InventoryUnit {
     uint16_t portrait_id;
     char name[28];
     char class_name[28];
+    char description[FE8_INVENTORY_DESCRIPTION_SIZE];
+    char class_description[FE8_INVENTORY_DESCRIPTION_SIZE];
     uint8_t portrait[FE8_PORTRAIT_WIDTH * FE8_PORTRAIT_HEIGHT];
     uint32_t portrait_palette[FE8_PORTRAIT_PALETTE_SIZE];
     bool portrait_valid;
