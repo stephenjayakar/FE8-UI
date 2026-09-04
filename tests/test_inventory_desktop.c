@@ -35,20 +35,23 @@ static void fixture(void) {
     original = s;
 }
 static Fe8InventoryHitKind hit(Fe8InventoryUi *ui, int w, int h, int x, int y, int *index) {
+    float scale = fe8_inventory_desktop_scale(ui, w, h);
     return fe8_inventory_ui_hit_test(ui, &s, w, h,
-        (int)(x * ui->desktop_scale + .5f), (int)(y * ui->desktop_scale + .5f), index);
+        (int)(x * scale + .5f), (int)(y * scale + .5f), index);
 }
-static void check(int w, int h, float scale, int comfortable) {
+static void check_zoom(int w, int h, float scale, int comfortable, int zoom) {
     Fe8InventoryUi ui;
     Fe8InventoryDesktopLayout l;
     int index;
     fe8_inventory_ui_init(&ui); fe8_inventory_ui_open(&ui, &s);
     ui.desktop = 1; ui.desktop_scale = scale; ui.comfortable = comfortable;
+    ui.zoom_percent = zoom;
+    scale = fe8_inventory_desktop_scale(&ui, w, h);
     fe8_inventory_desktop_layout(&ui, w, h, &l);
     assert(l.table_rows > 0 && l.roster_rows > 0);
     assert(l.column_width[0] >= 100);
-    if (w == 960 && scale == 1 && !comfortable) assert(l.table_rows == 15);
-    if (w == 1280 && scale == 1 && !comfortable) assert(l.table_rows == 21);
+    if (w == 960 && h == 640 && scale == 1 && !comfortable) assert(l.table_rows == 15);
+    if (w == 1280 && h == 800 && scale == 1 && !comfortable) assert(l.table_rows == 21);
     if (w / scale >= 1200) for (int i = 0; i < 11; ++i) assert(l.column_width[i] > 0);
     int end = l.pool_x;
     for (int i = 0; i < 11; ++i) {
@@ -100,6 +103,63 @@ static void check(int w, int h, float scale, int comfortable) {
     assert(memcmp(&s, &original, sizeof(s)) == 0);
     free(pixels);
 }
+static void check(int w, int h, float scale, int comfortable) {
+    check_zoom(w, h, scale, comfortable, 100);
+}
+static void scaling_controls(void) {
+    Fe8InventoryUi ui;
+    Fe8InventoryDesktopLayout small, normal, large;
+    fe8_inventory_ui_init(&ui);
+    assert(ui.zoom_percent == 100);
+    fe8_inventory_ui_adjust_scale(&ui, 1, 1920, 1200);
+    assert(ui.zoom_percent == 100); /* No game zoom or inactive UI changes. */
+    fe8_inventory_ui_open(&ui, &s);
+    ui.desktop = 1; ui.desktop_scale = 1;
+    ui.current_unit = 4;
+    ui.selected = fe8_inventory_ui_endpoint(&ui, &s, FE8_INVENTORY_HIT_UNIT_ITEM, 3);
+    ui.has_selection = 1;
+    ui.pool_scroll = 20; ui.roster_scroll = 5;
+    ui.hover_kind = FE8_INVENTORY_HIT_UNIT_CLASS;
+    ui.hover_unit_address = s.units[4].address;
+    ui.has_inspected = 1;
+    fe8_inventory_desktop_layout(&ui, 960, 640, &normal);
+    fe8_inventory_ui_adjust_scale(&ui, -1, 960, 640);
+    assert(ui.zoom_percent == 90);
+    assert(ui.has_selection && ui.current_unit == 4 && ui.selected.slot == 3);
+    assert(ui.selected.unit_address == s.units[4].address);
+    assert(ui.pool_scroll == 20 && ui.roster_scroll == 5);
+    assert(!ui.has_inspected && ui.hover_kind == FE8_INVENTORY_HIT_NONE && !ui.hover_unit_address);
+    fe8_inventory_desktop_layout(&ui, 960, 640, &small);
+    assert(small.table_rows > normal.table_rows);
+    for (int i = 0; i < 30; ++i) fe8_inventory_ui_adjust_scale(&ui, -1, 960, 640);
+    assert(ui.zoom_percent == 80);
+    fe8_inventory_ui_adjust_scale(&ui, 0, 960, 640);
+    assert(ui.zoom_percent == 100);
+    fe8_inventory_ui_adjust_scale(&ui, 1, 960, 640);
+    assert(ui.zoom_percent == 110);
+    fe8_inventory_desktop_layout(&ui, 960, 640, &large);
+    assert(large.table_rows < normal.table_rows);
+    for (int i = 0; i < 30; ++i) fe8_inventory_ui_adjust_scale(&ui, 1, 1920, 1200);
+    assert(ui.zoom_percent == 200);
+    /* Resize and DPI changes fit the display, but keep the chosen preference. */
+    assert(fe8_inventory_ui_scale_percent(&ui, 960, 640) == 130);
+    assert(fe8_inventory_ui_scale_percent(&ui, 640, 480) == 100);
+    assert(ui.zoom_percent == 200);
+    fe8_inventory_ui_adjust_scale(&ui, 1, 960, 640);
+    assert(ui.zoom_percent == 200); /* A capped + must not lose the preference. */
+    assert(strstr(ui.status, "window limit"));
+    ui.desktop_scale = 2;
+    assert(fe8_inventory_ui_scale_percent(&ui, 1920, 1280) == 130);
+    assert(fe8_inventory_ui_scale_percent(&ui, 3840, 2400) == 200);
+    assert(fe8_inventory_desktop_scale(&ui, 3840, 2400) == 4.0f);
+    fe8_inventory_ui_adjust_scale(&ui, -1, 1920, 1280);
+    assert(ui.zoom_percent == 120); /* Step from what the user actually sees. */
+    fe8_inventory_ui_open(&ui, &s);
+    assert(ui.zoom_percent == 120); /* Reopening preserves session preference. */
+    fe8_inventory_ui_adjust_scale(&ui, 0, 1920, 1280);
+    assert(ui.zoom_percent == 100 && !ui.comfortable);
+    assert(memcmp(&s, &original, sizeof(s)) == 0);
+}
 static void empty_supply(void) {
     Fe8InventoryUi ui;
     Fe8InventoryDesktopLayout l;
@@ -127,6 +187,16 @@ int main(void) {
     check(960, 640, 1, 0); check(1280, 800, 1, 0); check(1280, 800, 1, 1);
     check(1920, 1080, 1.5f, 0); check(2560, 1600, 2, 0);
     check(1600, 1000, 1.25f, 0);
+    scaling_controls();
+    for (int zoom = 80; zoom <= 200; zoom += 10) {
+        check_zoom(1280, 960, 1, 0, zoom);
+        check_zoom(2560, 1920, 2, 1, zoom);
+        check_zoom(960, 640, 1, 0, zoom);
+    }
+    check_zoom(640, 480, 1, 0, 200); /* Minimum-size clamp, still interactive. */
+    check_zoom(704, 528, 1, 0, 110); /* Exact fractional fit. */
+    check_zoom(880, 660, 1.25f, 1, 110);
+    check_zoom(1408, 1056, 2, 0, 110);
     empty_supply();
     puts("Desktop rows, columns, scaling, hover, sorting, selection, scroll and pinned supply passed");
     return 0;

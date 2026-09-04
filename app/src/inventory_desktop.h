@@ -11,6 +11,12 @@ typedef struct Fe8InventoryDesktopLayout {
     int column_x[11], column_width[11];
 } Fe8InventoryDesktopLayout;
 
+/* Effective size is capped to keep the complete minimum layout usable. */
+int fe8_inventory_ui_scale_percent(const Fe8InventoryUi *ui, int width, int height);
+float fe8_inventory_desktop_scale(const Fe8InventoryUi *ui, int width, int height);
+/* Negative/positive direction steps by 10%; zero resets to 100%. */
+void fe8_inventory_ui_adjust_scale(Fe8InventoryUi *ui, int direction, int width, int height);
+
 void fe8_inventory_desktop_layout(const Fe8InventoryUi *ui, int width, int height,
     Fe8InventoryDesktopLayout *layout);
 void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui,

@@ -66,8 +66,10 @@ static void check_real_transfer(struct mCore *core, const Fe8MemoryReader *reade
     Fe8InventoryDesktopLayout layout;
     fe8_inventory_desktop_layout(ui, WIDTH, HEIGHT, &layout);
     int index;
+    float scale = fe8_inventory_desktop_scale(ui, WIDTH, HEIGHT);
     Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(ui, snapshot, WIDTH, HEIGHT,
-        30, layout.items_y + destination.slot * layout.side_row_height + 3, &index);
+        (int)(30 * scale + .5f),
+        (int)((layout.items_y + destination.slot * layout.side_row_height + 3) * scale + .5f), &index);
     assert(hit == FE8_INVENTORY_HIT_UNIT_ITEM && index == (int)destination.slot);
     Fe8InventoryEndpoint resolved = fe8_inventory_ui_endpoint(ui, snapshot, hit, index);
     assert(resolved.unit_address == destination.unit_address && resolved.slot == destination.slot);
@@ -238,7 +240,23 @@ int main(int argc, char **argv) {
         }
     }
 #ifdef FE8_TEST_DESKTOP
-    check_real_transfer(core, &reader, profile, snapshot, ui, original_ram, ewram, ewram_size);
+    for (int percent = 80; percent <= 130; percent += 10) {
+        fe8_inventory_ui_adjust_scale(ui, 0, WIDTH, HEIGHT);
+        int direction = percent < 100 ? -1 : 1;
+        for (int step = 0; step < abs(percent - 100) / 10; ++step)
+            fe8_inventory_ui_adjust_scale(ui, direction, WIDTH, HEIGHT);
+        assert(fe8_inventory_ui_scale_percent(ui, WIDTH, HEIGHT) == percent);
+        check_real_transfer(core, &reader, profile, snapshot, ui, original_ram, ewram, ewram_size);
+        ui->current_unit = 0;
+        hover_label(ui, snapshot, FE8_INVENTORY_HIT_UNIT_CLASS);
+        fe8_inventory_ui_draw(ui, snapshot, pixels, WIDTH, WIDTH, HEIGHT);
+        if (argc == 4) {
+            char suffix[32];
+            snprintf(suffix, sizeof(suffix), "scale-%d", percent);
+            capture(argv[3], suffix, pixels);
+        }
+    }
+    fe8_inventory_ui_adjust_scale(ui, 0, WIDTH, HEIGHT);
 #endif
     if (argc == 4) {
         char path[1024];

@@ -437,6 +437,7 @@ void fe8_inventory_ui_init(Fe8InventoryUi *ui) {
     memset(ui, 0, sizeof(*ui));
     ui->current_unit = 0;
     ui->render_scale = 1;
+    ui->zoom_percent = 100;
     ui->pool_scope = FE8_INVENTORY_POOL_ALL;
     ui->pool_sort = FE8_INVENTORY_SORT_TYPE;
 }

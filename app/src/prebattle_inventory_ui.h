@@ -55,6 +55,7 @@ typedef struct Fe8InventoryUi {
     int render_scale; /* Legacy pixel-art layout, retained for fallback tests. */
     int desktop;
     float desktop_scale; /* Drawable pixels per desktop point, NOT game zoom. */
+    int zoom_percent; /* User UI size, separate from drawable/Retina density. */
     int comfortable;
     int previous_min_width, previous_min_height;
     Fe8InventoryPoolScope pool_scope;

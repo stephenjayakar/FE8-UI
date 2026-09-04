@@ -32,7 +32,15 @@ zoom. The left sidebar combines the selected character, five loadout slots, and
 recipient roster; the right side shows a single-line item table. At 960x640,
 Compact fits 15 table rows; at 1280x800 it fits 21. Larger windows reveal more
 rows rather than magnifying the menu. Press **D** or click **Compact / Comfortable**
-to change row spacing. Click Item, Type, Uses, or Owner headers to sort directly.
+to change row spacing. Press **+** (or **=**) / **-** to enlarge / shrink the
+entire inventory UI in 10% steps; keypad **+** and **-** work too. Press **0** to
+reset to 100%. The current percentage appears beside the Supply count. Scale
+ranges from 80% to 200%, capped to keep the layout usable in the current window.
+Resizing temporarily fits a larger scale to the available space; enlarging the
+window restores it. The preference is retained when closing/reopening inventory
+for this session, without changing game zoom or the selected item. Text is
+re-rasterized at each size, not stretched from a low-resolution image.
+Click Item, Type, Uses, or Owner headers to sort directly.
 Combat columns collapse first in narrow windows; the complete item stats remain
 in hover help. The empty supply destination stays pinned below the table.
 

@@ -300,3 +300,18 @@ The CI matrix builds the complete application on Linux and macOS and runs the
 available tests (no ROMs are uploaded to CI). The local full-ROM suite can also
 be configured with `-fsanitize=address,undefined -fno-omit-frame-pointer` in
 `CMAKE_C_FLAGS` and `-fsanitize=address,undefined` in `CMAKE_EXE_LINKER_FLAGS`.
+
+### Inventory UI scale shortcuts
+
+`+` / `=` and keypad `+` increase inventory size; `-` and keypad `-` decrease
+it, in 10% steps. `0` restores 100%. This changes host layout and font sizes,
+not the framebuffer resolution or game zoom. The display percentage is capped
+by the current window size so all five slots and the recipient list remain
+accessible; the requested session preference survives resize and reopening.
+
+The desktop regression exercises every scale from 80% to 200%, the current
+window limit, reset, selection preservation, scroll endpoints, guard pixels,
+and fractional/2x DPI. Real-ROM tests repeat transfer, hover and byte-exact undo
+at 80% through 130% for both Archanea and Sacred Echoes. Local SDL/X11 checks
+also cover the actual main/keypad keys, stationary-pointer help, selection,
+resize, and close/reopen behavior. ROMs, states and screenshots remain local.

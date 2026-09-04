@@ -2,7 +2,7 @@ name: Inventory UI regression
 
 on:
   push:
-    branches: [feature/inventory-ui-polish, feature/inventory-dense-hidpi]
+    branches: [feature/inventory-ui-polish, feature/inventory-dense-hidpi, feature/inventory-ui-scale]
   pull_request:
     paths:
       - 'app/src/*inventory*'

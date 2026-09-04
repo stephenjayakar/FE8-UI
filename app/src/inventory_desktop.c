@@ -18,8 +18,53 @@ typedef struct Painter {
 } Painter;
 
 static int clamp(int n, int lo, int hi) { return n < lo ? lo : n > hi ? hi : n; }
-static float scale_for(const Fe8InventoryUi *ui) {
+enum { SCALE_MIN = 80, SCALE_MAX = 200, SCALE_STEP = 10 };
+
+static float pixel_density(const Fe8InventoryUi *ui) {
     return ui && ui->desktop_scale > 0 ? ui->desktop_scale : 1.0f;
+}
+
+static int maximum_scale_percent(const Fe8InventoryUi *ui, int width, int height) {
+    double density = pixel_density(ui);
+    double fit = width / (640.0 * density);
+    double vertical_fit = height / (480.0 * density);
+    if (vertical_fit < fit) fit = vertical_fit;
+    /* Round down to a whole step. Do not let zoom hide the five slots,
+       recipient list, pinned supply destination or exit instructions. */
+    if (fit >= SCALE_MAX / 100.0) return SCALE_MAX;
+    if (fit <= SCALE_MIN / 100.0) return SCALE_MIN;
+    return ((int)(fit * 100.0 + 0.0001) / SCALE_STEP) * SCALE_STEP;
+}
+
+int fe8_inventory_ui_scale_percent(const Fe8InventoryUi *ui, int width, int height) {
+    int requested = ui && ui->zoom_percent > 0 ? ui->zoom_percent : 100;
+    return clamp(requested, SCALE_MIN, maximum_scale_percent(ui, width, height));
+}
+
+float fe8_inventory_desktop_scale(const Fe8InventoryUi *ui, int width, int height) {
+    return pixel_density(ui) * fe8_inventory_ui_scale_percent(ui, width, height) / 100.0f;
+}
+
+void fe8_inventory_ui_adjust_scale(Fe8InventoryUi *ui, int direction, int width, int height) {
+    int percent;
+    if (!ui || !ui->active || !ui->desktop) return;
+    percent = fe8_inventory_ui_scale_percent(ui, width, height);
+    /* Step from the displayed scale, even after a resize temporarily fits a
+       larger preference to a smaller window. Reset always stores 100%. */
+    if (direction == 0) {
+        ui->zoom_percent = 100;
+    } else {
+        int next = clamp(percent + (direction > 0 ? SCALE_STEP : -SCALE_STEP),
+            SCALE_MIN, maximum_scale_percent(ui, width, height));
+        if (next != percent) ui->zoom_percent = next;
+    }
+    percent = fe8_inventory_ui_scale_percent(ui, width, height);
+    ui->hover_kind = FE8_INVENTORY_HIT_NONE;
+    ui->hover_unit_address = 0;
+    ui->has_inspected = 0;
+    snprintf(ui->status, sizeof(ui->status), "UI scale %d%%%s", percent,
+        direction > 0 && percent == maximum_scale_percent(ui, width, height) && percent < SCALE_MAX ?
+        " (window limit). Enlarge the window for more." : ". +/- to resize, 0 to reset.");
 }
 static uint32_t abgr(uint32_t c) {
     return (c & 0xFF00FF00) | ((c & 0xFF0000) >> 16) | ((c & 0xFF) << 16);
@@ -61,9 +106,12 @@ void fe8_inventory_desktop_layout(const Fe8InventoryUi *ui, int width, int heigh
     /* Item, Type, Uses, Owner, Rank, Mt, Hit, Crit, Wt, Range, Use. */
     static const int widths[11] = {0, 64, 62, 114, 38, 36, 42, 38, 34, 52, 78};
     int reserved = 0;
+    float scale = fe8_inventory_desktop_scale(ui, width, height);
     memset(l, 0, sizeof(*l));
-    l->width = (int)(width / scale_for(ui));
-    l->height = (int)(height / scale_for(ui));
+    /* Avoid losing a whole logical pixel to floating-point roundoff at exact
+       fit boundaries such as a 704x528 window with 110% UI scale. */
+    l->width = (int)(width / scale + 0.0001f);
+    l->height = (int)(height / scale + 0.0001f);
     l->sidebar = clamp(l->width / 4, 232, 292);
     l->pool_x = PAD + l->sidebar + GAP;
     l->pool_width = l->width - PAD - l->pool_x;
@@ -118,7 +166,7 @@ void fe8_inventory_desktop_scroll(Fe8InventoryUi *ui, const Fe8InventorySnapshot
     int width, int height, int x, int rows) {
     Fe8InventoryDesktopLayout l;
     fe8_inventory_desktop_layout(ui, width, height, &l);
-    x = (int)(x / scale_for(ui));
+    x = (int)(x / fe8_inventory_desktop_scale(ui, width, height));
     if (x >= l.pool_x && x < l.width - PAD)
         ui->pool_scroll = offset(offset(ui->pool_scroll, item_count(ui), l.table_rows) + rows,
             item_count(ui), l.table_rows);
@@ -136,7 +184,8 @@ Fe8InventoryHitKind fe8_inventory_desktop_hit(const Fe8InventoryUi *ui,
         return FE8_INVENTORY_HIT_NONE;
     fe8_inventory_desktop_layout(ui, width, height, &l);
     if (l.width < 640 || l.height < 480) return FE8_INVENTORY_HIT_NONE;
-    x = (int)(x / scale_for(ui)); y = (int)(y / scale_for(ui));
+    float scale = fe8_inventory_desktop_scale(ui, width, height);
+    x = (int)(x / scale); y = (int)(y / scale);
     if (x < PAD || x >= l.width - PAD || y < l.top || y >= l.bottom)
         return FE8_INVENTORY_HIT_NONE;
     if (x < PAD + l.sidebar - GUTTER) {
@@ -229,7 +278,8 @@ static const Fe8ItemInfo *info_for(const Fe8InventorySnapshot *s, Fe8InventoryEn
 void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui, const Fe8InventorySnapshot *s,
     uint32_t *pixels, int stride, int width, int height) {
     Fe8InventoryDesktopLayout l;
-    Painter p = {.pixels = pixels, .stride = stride, .width = width, .height = height, .scale = scale_for(ui)};
+    Painter p = {.pixels = pixels, .stride = stride, .width = width, .height = height,
+        .scale = fe8_inventory_desktop_scale(ui, width, height)};
     const Fe8InventoryUnit *u = target(ui, s);
     char b[256];
     if (!pixels || stride < width || width <= 0 || height <= 0) return;
@@ -245,9 +295,10 @@ void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui, const Fe8InventorySnap
         return;
     }
     label(&p, PAD, 13, 180, 30, s->prebattle ? "Preparations" : "Inventory", TEXT, 22, 1, 0);
-    label(&p, 200, 20, l.width - 420, 20, ui->status, ui->has_selection ? 0xFFE4C389 : MUTED, 13, 0, 0);
-    snprintf(b, sizeof(b), "Supply  %u / %u", s->supply_count, s->supply_capacity);
-    label(&p, l.width - 188, 20, 176, 20, b, MUTED, 13, 0, 0);
+    label(&p, 200, 20, l.width - 440, 20, ui->status, ui->has_selection ? 0xFFE4C389 : MUTED, 13, 0, 0);
+    snprintf(b, sizeof(b), "%d%%  |  Supply %u / %u",
+        fe8_inventory_ui_scale_percent(ui, width, height), s->supply_count, s->supply_capacity);
+    label(&p, l.width - 228, 20, 216, 20, b, MUTED, 13, 0, 0);
     fill(&p, PAD, l.top, l.sidebar, l.bottom - l.top, PANEL);
     fill(&p, l.pool_x, l.top + 36, l.pool_width, l.bottom - l.top - 36, PANEL);
 
@@ -412,6 +463,6 @@ void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui, const Fe8InventorySnap
     int desc_y = l.help_y + (i && weapon(i) ? 49 : 32);
     label(&p, PAD, desc_y, l.width - 24, l.height - 26 - desc_y, help, TEXT, 13, 0, 1);
     label(&p, PAD, l.height - 21, l.width - 24, 19,
-        "A  All / Supply     S  Sort     D  Density     U  Undo     Right-click  Cancel     I / Esc  Close", MUTED, 12, 0, 0);
+        "+/- Scale   0 Reset   A Scope   S Sort   D Density   U Undo   Right-click Cancel   I/Esc Close", MUTED, 12, 0, 0);
     fe8_host_text_end(&p.text);
 }

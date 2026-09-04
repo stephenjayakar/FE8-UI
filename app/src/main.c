@@ -468,6 +468,27 @@ static float inventory_point_scale(const Fe8HostVideo *video) {
     return width > 0 ? (float)video->canvas_width / width : 1.0f;
 }
 
+/* Both the main keyboard (+ is Shift-= on US layouts) and keypad work.
+   Key symbols also support layouts with a dedicated plus/minus key. */
+static int inventory_scale_shortcut(Fe8InventoryUi *ui, const SDL_Event *event,
+    int width, int height) {
+    int direction;
+    SDL_Keycode key;
+    if (event->type != SDL_KEYDOWN || !ui->active || !ui->desktop)
+        return 0;
+    key = event->key.keysym.sym;
+    switch (key) {
+    case SDLK_PLUS: case SDLK_EQUALS: case SDLK_KP_PLUS: direction = 1; break;
+    case SDLK_MINUS: case SDLK_KP_MINUS: direction = -1; break;
+    case SDLK_0: case SDLK_KP_0: direction = 0; break;
+    default: return 0;
+    }
+    fe8_inventory_ui_adjust_scale(ui, direction, width, height);
+    fprintf(stderr, "Inventory UI scale: %d%%\n",
+        fe8_inventory_ui_scale_percent(ui, width, height));
+    return 1;
+}
+
 static int set_inventory_presentation(Fe8HostVideo *video,
     Fe8HostPixel **canvas, int *canvas_width, int *canvas_height,
     Fe8ExtendedViewport *viewport, int *gba_x, int *gba_y,
@@ -967,6 +988,8 @@ int main(int argc, char **argv) {
             }
             if (inventory_ui.active) {
                 inventory_ui.desktop_scale = inventory_point_scale(&video);
+                if (inventory_scale_shortcut(&inventory_ui, &event, canvas_width, canvas_height))
+                    continue;
                 if (event.type == SDL_QUIT) {
                     running = 0;
                 } else if (event.type == SDL_MOUSEMOTION) {
