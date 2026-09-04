@@ -8,6 +8,7 @@ typedef struct Fe8DisplayScaling {
     int minimum_view_height;
     int drawable_width;
     int drawable_height;
+    int native_resolution; /* Desktop UI: one canvas pixel per drawable pixel. */
     double zoom_factor;
     double base_pixel_scale;
     double pixel_scale;

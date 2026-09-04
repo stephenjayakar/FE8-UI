@@ -27,6 +27,23 @@ toggle between **All** carried gear and **Supply** only. Press **U** to undo the
 most recent move, right-click to clear a selection, and **I** or **Escape** to
 close.
 
+The inventory is a full-resolution desktop interface, independent of the game
+zoom. The left sidebar combines the selected character, five loadout slots, and
+recipient roster; the right side shows a single-line item table. At 960x640,
+Compact fits 15 table rows; at 1280x800 it fits 21. Larger windows reveal more
+rows rather than magnifying the menu. Press **D** or click **Compact / Comfortable**
+to change row spacing. Click Item, Type, Uses, or Owner headers to sort directly.
+Combat columns collapse first in narrow windows; the complete item stats remain
+in hover help. The empty supply destination stays pinned below the table.
+
+Text is rasterized at the display's drawable resolution (CoreText on macOS,
+FreeType on other platforms); portraits retain their original pixel art. Linux
+requires `libfreetype-dev` and a system font such as `fonts-dejavu-core`.
+`FE8_UI_FONT=/path/to/font.ttf` selects an alternative system font. No font or ROM
+assets are bundled. If no scalable font can be found, a warning is logged and
+the emergency bitmap renderer is used. Inventory requires a 640x480 window;
+closing it restores the game's prior minimum window size and zoom.
+
 The manager decodes the active ROM's own character, class, and item text and
 renders the selected character's full menu portrait. It shows level, HP,
 remaining uses, combat stats, source owner, and whether the selected target can

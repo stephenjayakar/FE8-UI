@@ -21,6 +21,8 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_UNIT_NAME,
     FE8_INVENTORY_HIT_UNIT_CLASS,
     FE8_INVENTORY_HIT_ROSTER_CLASS,
+    FE8_INVENTORY_HIT_DENSITY,
+    FE8_INVENTORY_HIT_SORT_COLUMN,
     /* Source compatibility for callers that still use the old right-pane name. */
     FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_POOL_ITEM,
 } Fe8InventoryHitKind;
@@ -50,7 +52,11 @@ typedef struct Fe8InventoryUi {
     int roster_scroll;
     int pool_scroll;
     int current_unit;
-    int render_scale;
+    int render_scale; /* Legacy pixel-art layout, retained for fallback tests. */
+    int desktop;
+    float desktop_scale; /* Drawable pixels per desktop point, NOT game zoom. */
+    int comfortable;
+    int previous_min_width, previous_min_height;
     Fe8InventoryPoolScope pool_scope;
     Fe8InventorySort pool_sort;
     Fe8InventoryListEntry pool[FE8_INVENTORY_POOL_CAPACITY];

@@ -117,6 +117,20 @@ int main(void) {
     fe8_host_text_end(&canvas);
     assert(memcmp(regular, semibold, sizeof(regular)) == 0);
 #endif
+#ifdef FE8_TEST_SCALABLE_TEXT
+    /* Coverage must be fractional; a nearest-scaled bitmap cannot pass this. */
+    for (int i = 0; i < WIDTH * HEIGHT; ++i) regular[i] = 0xFF000000;
+    assert(fe8_host_text_begin(&canvas, regular, WIDTH, WIDTH, HEIGHT));
+    fe8_host_text_draw(&canvas, 2, 2, 90, 28, "Smooth Ag", 13.0f,
+        UINT32_C(0xFFFFFFFF), FE8_HOST_TEXT_REGULAR, 0);
+    int fractional = 0;
+    for (int i = 0; i < WIDTH * HEIGHT; ++i)
+        if ((regular[i] & 255) > 0 && (regular[i] & 255) < 255) ++fractional;
+    assert(fractional > 10);
+    fe8_host_text_draw(&canvas, 0, 0, 90, 40, "UTF-8 \xC3\xA9 \xE2\x88\x9E \xF0", 13.0f,
+        UINT32_C(0xFFFFFFFF), FE8_HOST_TEXT_REGULAR, 1);
+    fe8_host_text_end(&canvas);
+#endif
     puts("host text tests passed");
     return 0;
 }

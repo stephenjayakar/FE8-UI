@@ -136,6 +136,7 @@ add_test(NAME fe8_catalog_effectiveness COMMAND test_fe8_catalog_effectiveness)
 add_executable(test_prebattle_inventory_ui
     test_prebattle_inventory_ui.c
     ../app/src/prebattle_inventory_ui.c
+    ../app/src/inventory_desktop.c
     ../app/src/prebattle_inventory.c
     ../app/src/fe8_catalog.c
     ../app/src/host_text_bitmap.c)
@@ -151,6 +152,7 @@ add_test(NAME host_text COMMAND test_host_text)
 add_executable(test_inventory_hover
     test_inventory_hover.c
     ../app/src/prebattle_inventory_ui.c
+    ../app/src/inventory_desktop.c
     ../app/src/prebattle_inventory.c
     ../app/src/fe8_catalog.c
     ../app/src/host_text_bitmap.c)
@@ -164,6 +166,7 @@ add_executable(test_inventory_rom
     ../app/src/fe8_profile.c
     ../app/src/prebattle_inventory.c
     ../app/src/prebattle_inventory_ui.c
+    ../app/src/inventory_desktop.c
     ../app/src/fe8_catalog.c
     ../app/src/host_text_bitmap.c)
 target_include_directories(test_inventory_rom PRIVATE ../app/src)
@@ -189,6 +192,7 @@ if(APPLE)
     add_executable(test_inventory_hover_native
         test_inventory_hover.c
         ../app/src/prebattle_inventory_ui.c
+    ../app/src/inventory_desktop.c
         ../app/src/prebattle_inventory.c
         ../app/src/fe8_catalog.c
         ../app/src/host_text_macos.m)
@@ -204,4 +208,40 @@ if(APPLE)
     target_link_libraries(test_host_text_native PRIVATE
         "-framework CoreGraphics" "-framework CoreText" "-framework CoreFoundation")
     add_test(NAME host_text_native COMMAND test_host_text_native)
+endif()
+
+# The desktop path is tested separately from the retained bitmap layout.
+if(APPLE)
+    set(DESKTOP_TEXT_SOURCE ../app/src/host_text_macos.m)
+    set(DESKTOP_TEXT_LIBS "-framework CoreGraphics" "-framework CoreText" "-framework CoreFoundation")
+else()
+    set(DESKTOP_TEXT_SOURCE "")
+    set(DESKTOP_TEXT_LIBS fe8_desktop_text)
+endif()
+add_executable(test_inventory_desktop test_inventory_desktop.c
+    ../app/src/prebattle_inventory_ui.c ../app/src/inventory_desktop.c
+    ../app/src/prebattle_inventory.c ../app/src/fe8_catalog.c ${DESKTOP_TEXT_SOURCE})
+target_include_directories(test_inventory_desktop PRIVATE ../app/src)
+target_link_libraries(test_inventory_desktop PRIVATE ${DESKTOP_TEXT_LIBS})
+add_test(NAME inventory_desktop COMMAND test_inventory_desktop)
+add_executable(test_desktop_text test_host_text.c ${DESKTOP_TEXT_SOURCE})
+target_include_directories(test_desktop_text PRIVATE ../app/src)
+target_compile_definitions(test_desktop_text PRIVATE FE8_TEST_NATIVE_TEXT FE8_TEST_SCALABLE_TEXT)
+target_link_libraries(test_desktop_text PRIVATE ${DESKTOP_TEXT_LIBS})
+add_test(NAME desktop_text COMMAND test_desktop_text)
+add_executable(test_inventory_rom_dense test_inventory_rom.c
+    ../app/src/address_space.c ../app/src/fe8_profile.c
+    ../app/src/prebattle_inventory.c ../app/src/prebattle_inventory_ui.c
+    ../app/src/inventory_desktop.c ../app/src/fe8_catalog.c ${DESKTOP_TEXT_SOURCE})
+target_include_directories(test_inventory_rom_dense PRIVATE ../app/src)
+target_compile_definitions(test_inventory_rom_dense PRIVATE FE8_TEST_DESKTOP
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_inventory_rom_dense PRIVATE mgba ${DESKTOP_TEXT_LIBS})
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME inventory_dense_archanae COMMAND test_inventory_rom_dense "${FE8_ARCHANAE_ROM}" archanae)
+    set_tests_properties(inventory_dense_archanae PROPERTIES TIMEOUT 90)
+endif()
+if(FE8_SACRED_ECHOES_ROM)
+    add_test(NAME inventory_dense_sacred_echoes COMMAND test_inventory_rom_dense "${FE8_SACRED_ECHOES_ROM}" sacred-echoes)
+    set_tests_properties(inventory_dense_sacred_echoes PROPERTIES TIMEOUT 90)
 endif()

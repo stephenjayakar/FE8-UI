@@ -25,6 +25,7 @@
 #include "mouse_controller.h"
 #include "prebattle_inventory.h"
 #include "prebattle_inventory_ui.h"
+#include "inventory_desktop.h"
 #include "viewport_controller.h"
 
 #include <errno.h>
@@ -461,15 +462,29 @@ static int resize_canvas(Fe8HostPixel **canvas,
     return 1;
 }
 
+static float inventory_point_scale(const Fe8HostVideo *video) {
+    int width = 0, height = 0;
+    SDL_GetWindowSize(video->window, &width, &height);
+    return width > 0 ? (float)video->canvas_width / width : 1.0f;
+}
+
 static int set_inventory_presentation(Fe8HostVideo *video,
     Fe8HostPixel **canvas, int *canvas_width, int *canvas_height,
     Fe8ExtendedViewport *viewport, int *gba_x, int *gba_y,
     Fe8InventoryUi *ui, int enabled, enum Fe8HostShader game_shader) {
-    int density = enabled ? 2 : 1;
+    int density = enabled ? 0 : 1;
+    if (enabled && !ui->desktop) {
+        SDL_GetWindowMinimumSize(video->window, &ui->previous_min_width, &ui->previous_min_height);
+        SDL_SetWindowMinimumSize(video->window, 640, 480);
+    } else if (!enabled && ui->desktop) {
+        SDL_SetWindowMinimumSize(video->window, ui->previous_min_width, ui->previous_min_height);
+    }
     if (!fe8_host_video_set_content_density(video, density) ||
             !resize_canvas(canvas, canvas_width, canvas_height, viewport, video))
         return 0;
-    ui->render_scale = density;
+    ui->desktop = enabled;
+    ui->desktop_scale = inventory_point_scale(video);
+    ui->render_scale = 1;
     *gba_x = (*canvas_width - GBA_WIDTH) / 2;
     *gba_y = (*canvas_height - GBA_HEIGHT) / 2;
     viewport->gba_x = *gba_x;
@@ -721,6 +736,8 @@ int main(int argc, char **argv) {
 
     while (running) {
         SDL_Event event;
+        if (inventory_ui.active)
+            inventory_ui.desktop_scale = inventory_point_scale(&video);
         if (state_reload_generation != applied_state_reload_generation) {
             applied_state_reload_generation = state_reload_generation;
             if (inventory_ui.active)
@@ -753,7 +770,7 @@ int main(int argc, char **argv) {
             frozen_valid = 0;
             gba_x = (canvas_width - GBA_WIDTH) / 2;
             gba_y = (canvas_height - GBA_HEIGHT) / 2;
-            if (snapshot_valid) {
+            if (snapshot_valid && !inventory_ui.active) {
                 int desired_gba_x = snapshot.camera_x + canvas_width / 2 -
                     old_center_world_x;
                 int desired_gba_y = snapshot.camera_y + canvas_height / 2 -
@@ -882,7 +899,7 @@ int main(int argc, char **argv) {
                         &video, event.motion.x, event.motion.y,
                         &host_pointer_canvas_x, &host_pointer_canvas_y)) {
                     host_pointer_visible = 1;
-                    if (!system_cursor_hidden) {
+                    if (!inventory_ui.active && !system_cursor_hidden) {
                         SDL_ShowCursor(SDL_DISABLE);
                         system_cursor_hidden = 1;
                     }
@@ -909,8 +926,10 @@ int main(int argc, char **argv) {
                 if (fe8_host_video_window_to_canvas(&video, window_x, window_y,
                         &host_pointer_canvas_x, &host_pointer_canvas_y)) {
                     host_pointer_visible = 1;
-                    SDL_ShowCursor(SDL_DISABLE);
-                    system_cursor_hidden = 1;
+                    if (!inventory_ui.active) {
+                        SDL_ShowCursor(SDL_DISABLE);
+                        system_cursor_hidden = 1;
+                    }
                 }
             }
             if (event.type == SDL_KEYDOWN && !event.key.repeat &&
@@ -947,6 +966,7 @@ int main(int argc, char **argv) {
                 continue;
             }
             if (inventory_ui.active) {
+                inventory_ui.desktop_scale = inventory_point_scale(&video);
                 if (event.type == SDL_QUIT) {
                     running = 0;
                 } else if (event.type == SDL_MOUSEMOTION) {
@@ -972,6 +992,9 @@ int main(int argc, char **argv) {
                         event.key.keysym.scancode == SDL_SCANCODE_S) {
                     fe8_inventory_ui_cycle_sort(&inventory_ui,
                         &inventory_snapshot);
+                } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                        event.key.keysym.scancode == SDL_SCANCODE_D) {
+                    fe8_inventory_ui_toggle_density(&inventory_ui);
                 } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                         event.key.keysym.scancode == SDL_SCANCODE_U &&
                         inventory_undo.valid) {
@@ -1010,7 +1033,14 @@ int main(int argc, char **argv) {
                         Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
                             &inventory_snapshot, canvas_width, canvas_height,
                             canvas_x, canvas_y, &index);
-                        if (hit == FE8_INVENTORY_HIT_POOL_SCOPE) {
+                        if (hit == FE8_INVENTORY_HIT_DENSITY) {
+                            fe8_inventory_ui_toggle_density(&inventory_ui);
+                        } else if (hit == FE8_INVENTORY_HIT_SORT_COLUMN &&
+                                index >= 0 && index < FE8_INVENTORY_SORT_COUNT) {
+                            inventory_ui.pool_sort = (Fe8InventorySort)index;
+                            inventory_ui.pool_scroll = 0;
+                            fe8_inventory_ui_rebuild(&inventory_ui, &inventory_snapshot);
+                        } else if (hit == FE8_INVENTORY_HIT_POOL_SCOPE) {
                             fe8_inventory_ui_toggle_scope(&inventory_ui,
                                 &inventory_snapshot);
                         } else if (hit == FE8_INVENTORY_HIT_POOL_SORT) {
@@ -1542,6 +1572,7 @@ int main(int argc, char **argv) {
             /* Re-evaluate stationary pointers after scrolling, sorting, unit
                changes and resize too. A motion-only inspector leaves stale
                help (or a stale highlight) under a changed layout. */
+            inventory_ui.desktop_scale = inventory_point_scale(&video);
             SDL_GetMouseState(&window_x, &window_y);
             host_pointer_visible = SDL_GetMouseFocus() == video.window &&
                 fe8_host_video_window_to_canvas(&video, window_x, window_y,
@@ -1554,7 +1585,11 @@ int main(int argc, char **argv) {
             fe8_inventory_ui_draw(&inventory_ui, &inventory_snapshot,
                 canvas, canvas_width, canvas_width, canvas_height);
         }
-        if ((settings.mouse_enabled || inventory_ui.active) && host_pointer_visible)
+        if (inventory_ui.active) {
+            SDL_ShowCursor(SDL_ENABLE);
+            system_cursor_hidden = 0;
+        }
+        if (settings.mouse_enabled && !inventory_ui.active && host_pointer_visible)
             fe8_host_draw_mouse_cursor(canvas, canvas_width,
                 canvas_width, canvas_height,
                 host_pointer_canvas_x, host_pointer_canvas_y);

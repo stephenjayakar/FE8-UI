@@ -2,44 +2,46 @@ name: Inventory UI regression
 
 on:
   push:
-    branches: [feature/inventory-ui-polish]
+    branches: [feature/inventory-ui-polish, feature/inventory-dense-hidpi]
   pull_request:
     paths:
       - 'app/src/*inventory*'
       - 'app/src/host_text*'
-      - 'app/src/fe8_catalog*'
+      - 'app/src/host_video*'
+      - 'app/src/display_scaling*'
+      - 'app/src/main.c'
       - 'tests/*inventory*'
       - 'tests/test_host_text.c'
+      - 'tests/test_display_scaling.c'
+      - '**/CMakeLists.txt'
       - '.github/workflows/inventory-ui.yml'
 
 permissions:
   contents: read
 
 jobs:
-  hover-and-text:
+  build-and-test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-14]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Build and run native or portable UI regression tests
-        shell: bash
+      - name: Initialize pinned emulator
+        run: git submodule update --init --depth 1 third_party/mgba
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
         run: |
-          set -euo pipefail
-          mkdir -p build-ui-tests
-          text=app/src/host_text_bitmap.c
-          flags=()
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            text=app/src/host_text_macos.m
-            flags=(-DFE8_TEST_NATIVE_TEXT -framework CoreGraphics -framework CoreText -framework CoreFoundation)
-          fi
-          cc -std=c11 -Wall -Wextra -UNDEBUG -Iapp/src "${flags[@]}" \
-            tests/test_inventory_hover.c app/src/prebattle_inventory_ui.c \
-            app/src/prebattle_inventory.c app/src/fe8_catalog.c "$text" \
-            -o build-ui-tests/inventory-hover
-          cc -std=c11 -Wall -Wextra -UNDEBUG -Iapp/src "${flags[@]}" \
-            tests/test_host_text.c "$text" -o build-ui-tests/host-text
-          build-ui-tests/inventory-hover
-          build-ui-tests/host-text
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libfreetype-dev fonts-dejavu-core zlib1g-dev ninja-build
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew list sdl2 >/dev/null 2>&1 || brew install sdl2
+      - name: Build the application and tests
+        run: |
+          cmake -S . -B build-native -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build-native --parallel 3
+      - name: Native text, desktop layout and existing regressions
+        run: ctest --test-dir build-native --output-on-failure

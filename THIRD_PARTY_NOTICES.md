@@ -62,3 +62,12 @@ project's MIT license. Its repository does not provide a general-purpose
 software license. No ROM, Nintendo-owned game data, artwork, music, or other
 copyrighted game content is distributed here. Users must supply legally
 obtained ROM files themselves.
+
+## FreeType (non-Apple desktop text)
+
+The non-Apple frontend links to the system FreeType library. FreeType is available
+under the FreeType License or GNU GPL version 2; this frontend uses it under the
+FreeType License. FreeType and system fonts are not copied into this repository
+or the application source package. Binary distributors bundling FreeType must
+include its applicable license and attribution; system font redistribution has
+its own licensing requirements. See https://freetype.org/license.html.

@@ -9,6 +9,12 @@ static int minimum_int(int a, int b) {
 static int calculate_layout(Fe8DisplayScaling *scaling) {
     int old_width = scaling->canvas_width;
     int old_height = scaling->canvas_height;
+    if (scaling->native_resolution) {
+        scaling->canvas_width = scaling->drawable_width;
+        scaling->canvas_height = scaling->drawable_height;
+        scaling->pixel_scale = 1.0;
+        return scaling->canvas_width != old_width || scaling->canvas_height != old_height;
+    }
     double width_scale = (double)scaling->drawable_width /
         scaling->minimum_canvas_width;
     double height_scale = (double)scaling->drawable_height /
@@ -62,7 +68,7 @@ int fe8_display_scaling_adjust(Fe8DisplayScaling *scaling,
     double old_zoom;
     double factor = 1.0;
     double magnitude;
-    if (!scaling || wheel_delta == 0.0 || sensitivity <= 0.0)
+    if (!scaling || scaling->native_resolution || wheel_delta == 0.0 || sensitivity <= 0.0)
         return 0;
     old_zoom = scaling->zoom_factor;
     /* Avoid libm for this small exponent by multiplying once per

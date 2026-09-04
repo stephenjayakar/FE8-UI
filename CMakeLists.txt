@@ -57,6 +57,7 @@ add_executable(fe8-mgba-sdl
     app/src/fe8_catalog.c
     app/src/prebattle_inventory.c
     app/src/prebattle_inventory_ui.c
+    app/src/inventory_desktop.c
     app/src/pointer_mapping.c
     app/src/viewport_controller.c
     app/src/display_scaling.c
@@ -103,9 +104,14 @@ if(APPLE)
         COMMENT "Ad-hoc signing macOS application bundle"
         VERBATIM)
 else()
+    find_package(Freetype REQUIRED)
+    add_library(fe8_desktop_text STATIC
+        app/src/host_text_freetype.c app/src/host_text_bitmap.c)
+    target_compile_definitions(fe8_desktop_text PRIVATE FE8_BITMAP_FALLBACK)
+    target_link_libraries(fe8_desktop_text PUBLIC Freetype::Freetype)
+    target_link_libraries(fe8-mgba-sdl PRIVATE fe8_desktop_text)
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_sdl.c
-        app/src/host_text_bitmap.c
         app/src/macos_library_stub.c
         app/src/macos_settings_stub.c)
 endif()

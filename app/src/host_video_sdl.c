@@ -144,8 +144,10 @@ int fe8_host_video_set_content_density(Fe8HostVideo *video, int density) {
     Fe8HostVideoSdl *backend = video ? video->backend : NULL;
     int output_width;
     int output_height;
-    if (!backend || density < 1 || density > 3)
+    if (!backend || density < 0 || density > 3)
         return 0;
+    video->scaling.native_resolution = density == 0;
+    if (density == 0) density = 1;
     video->scaling.minimum_canvas_width = video->base_canvas_width * density;
     video->scaling.minimum_canvas_height = video->base_canvas_height * density;
     SDL_GetRendererOutputSize(backend->renderer, &output_width, &output_height);

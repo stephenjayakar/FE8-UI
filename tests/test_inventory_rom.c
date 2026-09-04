@@ -7,6 +7,9 @@
 
 #include "address_space.h"
 #include "prebattle_inventory_ui.h"
+#ifdef FE8_TEST_DESKTOP
+#include "inventory_desktop.h"
+#endif
 
 #include <assert.h>
 #include <fcntl.h>
@@ -14,12 +17,71 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { WIDTH = 960, HEIGHT = 640, MAX_FRAMES = 40000 };
+#ifdef FE8_TEST_DESKTOP
+#define WIDTH 1280
+#define HEIGHT 800
+#else
+#define WIDTH 960
+#define HEIGHT 640
+#endif
+enum { MAX_FRAMES = 40000 };
 
 static uint8_t read8(void *context, uint32_t address) {
     struct mCore *core = context;
     return core->busRead8(core, address);
 }
+
+#ifdef FE8_TEST_DESKTOP
+static void hover_label(Fe8InventoryUi *, const Fe8InventorySnapshot *, Fe8InventoryHitKind);
+static void write8(void *context, uint32_t address, uint8_t value) {
+    struct mCore *core = context;
+    core->busWrite8(core, address, value);
+}
+static void check_real_transfer(struct mCore *core, const Fe8MemoryReader *reader,
+    const Fe8Profile *profile, Fe8InventorySnapshot *snapshot, Fe8InventoryUi *ui,
+    const uint8_t *original, const void *ewram, size_t ram_size) {
+    Fe8MemoryWriter writer = {core, write8};
+    Fe8InventoryEndpoint source = {0}, destination = {0};
+    uint16_t encoded = 0;
+    int destination_unit = -1;
+    for (int n = 0; n < snapshot->unit_count && !encoded; ++n)
+        for (int j = 0; j < 5 && !encoded; ++j)
+            if (snapshot->units[n].items[j] && snapshot->units[n].item_info[j].movable) {
+                source = (Fe8InventoryEndpoint){FE8_INVENTORY_ENDPOINT_UNIT, snapshot->units[n].address, (unsigned)j};
+                encoded = snapshot->units[n].items[j];
+            }
+    assert(encoded);
+    for (int n = 0; n < snapshot->unit_count && destination_unit < 0; ++n)
+        for (int j = 0; j < 5 && destination_unit < 0; ++j)
+            if (snapshot->units[n].address != source.unit_address && !snapshot->units[n].items[j]) {
+                destination = (Fe8InventoryEndpoint){FE8_INVENTORY_ENDPOINT_UNIT, snapshot->units[n].address, (unsigned)j};
+                destination_unit = n;
+            }
+    assert(destination_unit >= 0);
+    ui->selected = source; ui->has_selection = 1; ui->current_unit = destination_unit;
+    fe8_inventory_ui_cycle_sort(ui, snapshot);
+    fe8_inventory_ui_toggle_density(ui);
+    hover_label(ui, snapshot, FE8_INVENTORY_HIT_UNIT_CLASS);
+    assert(ui->has_selection && ui->selected.unit_address == source.unit_address && ui->selected.slot == source.slot);
+    Fe8InventoryDesktopLayout layout;
+    fe8_inventory_desktop_layout(ui, WIDTH, HEIGHT, &layout);
+    int index;
+    Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(ui, snapshot, WIDTH, HEIGHT,
+        30, layout.items_y + destination.slot * layout.side_row_height + 3, &index);
+    assert(hit == FE8_INVENTORY_HIT_UNIT_ITEM && index == (int)destination.slot);
+    Fe8InventoryEndpoint resolved = fe8_inventory_ui_endpoint(ui, snapshot, hit, index);
+    assert(resolved.unit_address == destination.unit_address && resolved.slot == destination.slot);
+    assert(memcmp(original, ewram, ram_size) == 0);
+    assert(fe8_swap_inventory_endpoints(reader, &writer, profile, source, encoded, resolved, 0));
+    uint32_t address = resolved.unit_address + 0x1E + resolved.slot * 2;
+    assert(core->busRead16(core, address) == encoded);
+    assert(fe8_swap_inventory_endpoints(reader, &writer, profile, source, 0, resolved, encoded));
+    assert(memcmp(original, ewram, ram_size) == 0);
+    ui->has_selection = 0;
+    fe8_inventory_ui_toggle_density(ui);
+    puts("  Real-ROM transfer after hover/sort/density changes and undo preserved RAM exactly");
+}
+#endif
 
 static void map_memory(Fe8AddressSpace *space, struct mCore *core) {
     const uint32_t bases[] = {
@@ -143,6 +205,10 @@ int main(int argc, char **argv) {
     fe8_inventory_ui_init(ui);
     fe8_inventory_ui_open(ui, snapshot);
     ui->render_scale = 2;
+#ifdef FE8_TEST_DESKTOP
+    ui->desktop = 1;
+    ui->desktop_scale = 1;
+#endif
     for (int unit = 0; unit < snapshot->unit_count; ++unit) {
         ui->current_unit = unit;
         for (int is_class = 0; is_class <= 1; ++is_class) {
@@ -171,6 +237,9 @@ int main(int argc, char **argv) {
                 is_class ? target->class_name : "Character", help);
         }
     }
+#ifdef FE8_TEST_DESKTOP
+    check_real_transfer(core, &reader, profile, snapshot, ui, original_ram, ewram, ewram_size);
+#endif
     if (argc == 4) {
         char path[1024];
         int length = snprintf(path, sizeof(path), "%s.ss", argv[3]);

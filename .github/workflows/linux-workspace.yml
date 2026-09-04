@@ -31,6 +31,8 @@ jobs:
             ninja-build \
             pkg-config \
             libsdl2-dev \
+            libfreetype-dev \
+            fonts-dejavu-core \
             zlib1g-dev
 
       - name: Build and run frontend tests through workspace script

@@ -1,5 +1,6 @@
 #include "prebattle_inventory_ui.h"
 #include "host_text.h"
+#include "inventory_desktop.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -514,6 +515,10 @@ int fe8_inventory_ui_pool_entry(const Fe8InventoryUi *ui, int index,
 
 void fe8_inventory_ui_scroll(Fe8InventoryUi *ui, int rows,
     const Fe8InventorySnapshot *snapshot, int width, int height, int pointer_x) {
+    if (ui && ui->desktop) {
+        fe8_inventory_desktop_scroll(ui, snapshot, width, height, pointer_x, rows);
+        return;
+    }
     Fe8InventoryUiLayout layout;
     int *value;
     int maximum;
@@ -552,6 +557,8 @@ void fe8_inventory_ui_scroll(Fe8InventoryUi *ui, int rows,
 Fe8InventoryHitKind fe8_inventory_ui_hit_test(const Fe8InventoryUi *ui,
     const Fe8InventorySnapshot *snapshot, int width, int height,
     int x, int y, int *index) {
+    if (ui && ui->desktop)
+        return fe8_inventory_desktop_hit(ui, snapshot, width, height, x, y, index);
     Fe8InventoryUiLayout layout;
     int scale;
     if (!ui || !snapshot || !index)
@@ -653,7 +660,9 @@ void fe8_inventory_ui_inspect(Fe8InventoryUi *ui,
         return;
     }
     if (kind == FE8_INVENTORY_HIT_POOL_SCOPE ||
-            kind == FE8_INVENTORY_HIT_POOL_SORT) {
+            kind == FE8_INVENTORY_HIT_POOL_SORT ||
+            kind == FE8_INVENTORY_HIT_DENSITY ||
+            kind == FE8_INVENTORY_HIT_SORT_COLUMN) {
         ui->hover_kind = kind;
         return;
     }
@@ -1048,6 +1057,10 @@ static void help_label(uint32_t *pixels, int stride, int width, int height,
 void fe8_inventory_ui_draw(const Fe8InventoryUi *ui,
     const Fe8InventorySnapshot *snapshot, uint32_t *pixels,
     int stride, int width, int height) {
+    if (ui && snapshot && ui->desktop) {
+        fe8_inventory_desktop_draw(ui, snapshot, pixels, stride, width, height);
+        return;
+    }
     Fe8InventoryUiLayout layout;
     Fe8HostTextCanvas canvas;
     const Fe8InventoryUnit *unit;

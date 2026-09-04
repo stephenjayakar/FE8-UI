@@ -274,3 +274,29 @@ unit slots must remain visible at the minimum 480x320 logical size. Archanae's
 NarrowFont-encoded Pegasus Knight name and weapon icons in class help must decode
 legibly; Sacred Echoes must continue showing unbreakable uses as INF and prevent
 transfers of learned spells.
+
+## Full-resolution desktop inventory
+
+`inventory_desktop` covers the default desktop path separately from the retained
+bitmap-layout regressions: all five loadout hit targets, compact and comfortable
+rows, 640x480 through 2560x1600 drawing, 1x/1.25x/1.5x/2x point scaling, column
+containment, header sort targets, 510-item final-page scrolling, and the pinned
+empty-supply destination for every sort. It also checks that drawing and hover do
+not modify the snapshot. `desktop_text` requires fractional antialias coverage,
+checks clipping and wrapping, and exercises UTF-8 including a truncated sequence.
+
+With `FE8_ARCHANAE_ROM` and `FE8_SACRED_ECHOES_ROM` set, the two additional
+`inventory_dense_*` integration cases advance the unmodified ROM with A/Start,
+render its real roster through the desktop text backend, resolve every name and
+class hover, and move then undo a real item after sorting/density/hover changes.
+The undo must restore EWRAM byte for byte. Optional local captures and states:
+
+```sh
+build/tests/test_inventory_rom_dense /path/to/game.gba archanae /tmp/archanea
+build/tests/test_inventory_rom_dense /path/to/game.gba sacred-echoes /tmp/sacred
+```
+
+The CI matrix builds the complete application on Linux and macOS and runs the
+available tests (no ROMs are uploaded to CI). The local full-ROM suite can also
+be configured with `-fsanitize=address,undefined -fno-omit-frame-pointer` in
+`CMAKE_C_FLAGS` and `-fsanitize=address,undefined` in `CMAKE_EXE_LINKER_FLAGS`.

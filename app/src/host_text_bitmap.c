@@ -1,3 +1,9 @@
+/* When linked alongside FreeType, expose the emergency fallback privately. */
+#ifdef FE8_BITMAP_FALLBACK
+#define fe8_host_text_begin fe8_bitmap_text_begin
+#define fe8_host_text_draw fe8_bitmap_text_draw
+#define fe8_host_text_end fe8_bitmap_text_end
+#endif
 #include "host_text.h"
 #include "font8x8_basic.h"
 

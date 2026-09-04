@@ -32,6 +32,7 @@ int fe8_host_video_event_to_canvas(const Fe8HostVideo *video,
 int fe8_host_video_adjust_zoom(
     Fe8HostVideo *video, double wheel_delta, double sensitivity);
 int fe8_host_video_refresh_layout(Fe8HostVideo *video);
+/* Density 0 selects native drawable resolution without changing game zoom. */
 int fe8_host_video_set_content_density(Fe8HostVideo *video, int density);
 void fe8_host_video_log_status(const Fe8HostVideo *video);
 void fe8_host_video_deinit(Fe8HostVideo *video);

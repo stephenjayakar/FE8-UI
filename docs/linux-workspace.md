@@ -7,7 +7,7 @@ The frontend has a non-Apple SDL video backend, but Linux requires the SDL2 and 
 ```sh
 sudo apt-get update
 sudo apt-get install --yes --no-install-recommends \
-  build-essential cmake ninja-build pkg-config libsdl2-dev zlib1g-dev
+  build-essential cmake ninja-build pkg-config libsdl2-dev zlib1g-dev libfreetype-dev fonts-dejavu-core
 ```
 
 Use a recursive checkout, or initialize only the required dependency:
@@ -38,7 +38,12 @@ export PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig"
 ./scripts/build-linux-workspace.sh
 ```
 
-The target system still needs the normal SDL2 runtime library when launching the executable.
+The offline SDK described above covers SDL2 only. Desktop inventory text also
+requires FreeType headers and a link-time library when building (set
+`FREETYPE_INCLUDE_DIRS` and `FREETYPE_LIBRARY_RELEASE` for a separate offline SDK),
+and a system font such as DejaVu Sans.
+
+The target system still needs the normal SDL2 and FreeType runtime libraries when launching the executable.
 
 ## Run and capture a frame
 
