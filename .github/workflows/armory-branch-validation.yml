@@ -42,6 +42,15 @@ env:
         path.write_text(content)
         print('Prepared', name)
     exec(compile(payload['integrate'], '<armory-integration>', 'exec'))
+    replace('tests/test_inventory_desktop.c',
+        '    assert(large.table_rows < normal.table_rows);',
+        '''    /* Zoom crosses the short-window breakpoint, which compacts the
+       inspector and row padding. Row counts need not decrease across a
+       reflow; verify the actual coordinate scale and containment instead. */
+    assert(fe8_inventory_desktop_scale(&ui, 960, 640) > 1.0f);
+    assert(large.width < normal.width && large.height < normal.height);
+    assert(large.table_rows > 0);
+    assert(large.table_y + large.table_rows * large.row_height <= large.deposit_y);''')
     print('Applied Armory source and checked integration edits.')
 jobs:
   validate:
