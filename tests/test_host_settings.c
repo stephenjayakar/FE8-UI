@@ -77,7 +77,31 @@ static void test_shader_presets(void) {
     fe8_host_shader_set_config(FE8_HOST_SHADER_CRT, &config);
 }
 
+static void test_renderer_toggle(void) {
+    Fe8HostSettings settings;
+    fe8_host_settings_init(&settings);
+    uint32_t bit = UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS;
+    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_E);
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_E) == bit);
+    assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_E) == 0);
+    assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS),
+        "Extended Renderer") == 0);
+    settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] = SDL_SCANCODE_F9;
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_E) == 0);
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F9) == bit);
+    fe8_host_set_extensions_enabled(&settings, 0);
+    assert(!settings.extensions_enabled && settings.revision == 1);
+    fe8_host_set_extensions_enabled(&settings, 0);
+    assert(settings.revision == 1);
+    fe8_host_set_extensions_enabled(&settings, 42);
+    assert(settings.extensions_enabled == 1 && settings.revision == 2);
+    assert(settings.audio_enabled && settings.mouse_enabled && settings.vsync_enabled);
+    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F9);
+    fe8_host_set_extensions_enabled(NULL, 1);
+}
+
 int main(void) {
+    test_renderer_toggle();
     Fe8HostSettings settings;
     fe8_host_settings_init(&settings);
     test_shader_presets();

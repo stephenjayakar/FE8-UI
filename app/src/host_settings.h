@@ -47,6 +47,7 @@ enum Fe8HostHotkey {
     FE8_HOST_HOTKEY_SPEED_UP = 0,
     FE8_HOST_HOTKEY_QUICK_SAVE,
     FE8_HOST_HOTKEY_QUICK_LOAD,
+    FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS,
     FE8_HOST_HOTKEY_COUNT
 };
 
@@ -76,6 +77,7 @@ typedef struct Fe8HostSettings {
 
 void fe8_host_settings_init(Fe8HostSettings *settings);
 Fe8HostSettings *fe8_host_settings_current(void);
+void fe8_host_set_extensions_enabled(Fe8HostSettings *settings, int enabled);
 uint32_t fe8_host_key_for_scancode(
     const Fe8HostSettings *settings, SDL_Scancode scancode);
 uint32_t fe8_host_hotkey_for_scancode(

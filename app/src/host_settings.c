@@ -114,6 +114,7 @@ void fe8_host_settings_init(Fe8HostSettings *settings) {
         SDL_SCANCODE_SPACE,
         SDL_SCANCODE_F5,
         SDL_SCANCODE_F8,
+        SDL_SCANCODE_E,
     };
     memset(settings, 0, sizeof(*settings));
     memcpy(settings->bindings, defaults, sizeof(defaults));
@@ -131,6 +132,14 @@ void fe8_host_settings_init(Fe8HostSettings *settings) {
 
 Fe8HostSettings *fe8_host_settings_current(void) {
     return current_settings;
+}
+
+void fe8_host_set_extensions_enabled(Fe8HostSettings *settings, int enabled) {
+    enabled = enabled != 0;
+    if (settings && settings->extensions_enabled != enabled) {
+        settings->extensions_enabled = enabled;
+        ++settings->revision;
+    }
 }
 
 double fe8_host_clamp_zoom_sensitivity(double sensitivity) {
@@ -170,7 +179,7 @@ const char *fe8_host_button_name(enum Fe8HostButton button) {
 
 const char *fe8_host_hotkey_name(enum Fe8HostHotkey hotkey) {
     static const char *names[FE8_HOST_HOTKEY_COUNT] = {
-        "Speed Up", "Quick Save", "Quick Load"
+        "Speed Up", "Quick Save", "Quick Load", "Extended Renderer"
     };
     return hotkey >= 0 && hotkey < FE8_HOST_HOTKEY_COUNT ? names[hotkey] : "Unknown";
 }
