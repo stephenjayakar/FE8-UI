@@ -1,87 +1,49 @@
-name: Armory branch validation
+name: Armory native regression
+
 on:
   push:
-    branches: [inventory-armory-redesign]
-    paths: [.github/workflows/armory-branch-validation.yml]
+    paths:
+      - app/src/**
+      - tests/**
+      - CMakeLists.txt
+      - third_party/mgba
+      - .github/workflows/armory-branch-validation.yml
+  pull_request:
+    paths:
+      - app/src/**
+      - tests/**
+      - CMakeLists.txt
+      - third_party/mgba
+      - .github/workflows/armory-branch-validation.yml
   workflow_dispatch:
+
 permissions:
   contents: read
-env:
-  ARMORY_APPLY: |
-    import base64, gzip, hashlib, json, os, urllib.request
-    from pathlib import Path
-    assert os.environ['GITHUB_REF'] == 'refs/heads/inventory-armory-redesign'
-    shas = [
-        'e0187b81c4fa29d536987e21c9a6479b9ed11a3e',
-        '619ad8ce690071934e81577e17d3374e17ce3be0',
-        'b97bd944854f242b29bf8e6343168ab25ff6217c',
-        'a5b80ec10f8b4f7f9615420ea0d5b637c5daea7d',
-        'ae2499c36cb6808af27ab47c8900f3bacee2686f',
-    ]
-    # Source-only transport for the isolated development workspace. Each
-    # fragment is content-addressed; the decoded manifest is checked again.
-    parts = []
-    for sha in shas:
-        url = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs/' + sha
-        request = urllib.request.Request(url, headers={
-            'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-            'Accept': 'application/vnd.github+json',
-        })
-        with urllib.request.urlopen(request, timeout=30) as response:
-            parts.append(base64.b64decode(json.load(response)['content']))
-    data = gzip.decompress(base64.b64decode(b''.join(parts)))
-    assert hashlib.sha256(data).hexdigest() == '5f0abe61e140b9963e61d6a79342d32293082f78704cbb1aaf9107c44c6729f0'
-    payload = json.loads(data)
-    assert set(payload['files']) == {
-        'app/src/inventory_desktop.c', 'app/src/inventory_desktop.h',
-        'tests/test_inventory_workspace.c', 'docs/inventory-armory.md',
-    }
-    for name, content in payload['files'].items():
-        path = Path(name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-        print('Prepared', name)
-    exec(compile(payload['integrate'], '<armory-integration>', 'exec'))
-    replace('tests/test_inventory_desktop.c',
-        '    assert(large.table_rows < normal.table_rows);',
-        '''    /* Zoom crosses the short-window breakpoint, which compacts the
-       inspector and row padding. Row counts need not decrease across a
-       reflow; verify the actual coordinate scale and containment instead. */
-    assert(fe8_inventory_desktop_scale(&ui, 960, 640) > 1.0f);
-    assert(large.width < normal.width && large.height < normal.height);
-    assert(large.table_rows > 0);
-    assert(large.table_y + large.table_rows * large.row_height <= large.deposit_y);''')
-    print('Applied Armory source and checked integration edits.')
+
 jobs:
   validate:
-    if: github.ref == 'refs/heads/inventory-armory-redesign'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Apply source-only redesign
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: python3 -c "$ARMORY_APPLY"
+      - name: Initialize pinned emulator dependency
+        run: git submodule update --init --depth 1 third_party/mgba
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y ninja-build libsdl2-dev libfreetype6-dev zlib1g-dev fonts-dejavu-core
       - name: macOS dependencies
         if: runner.os == 'macOS'
         run: brew install ninja sdl2
-      - name: Configure and build the complete application
+      - name: Build the complete application and regression tests
         shell: bash
         run: |
           args=()
           if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFE8_BUILD_TESTS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "${args[@]}"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFE8_BUILD_TESTS=ON "${args[@]}"
           cmake --build build --parallel 3
       - name: Run the full regression suite
         run: ctest --test-dir build --output-on-failure
@@ -95,26 +57,23 @@ jobs:
           name: armory-native-captures-${{ runner.os }}
           path: build/armory-captures/*.ppm
           if-no-files-found: error
-  publish:
-    needs: validate
-    if: github.ref == 'refs/heads/inventory-armory-redesign'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: inventory-armory-redesign
-      - name: Publish only validated source to the feature branch
-        env:
-          GH_TOKEN: ${{ github.token }}
+          retention-days: 7
+      - name: Package Linux regression harnesses for offline ROM testing
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          python3 -c "$ARMORY_APPLY"
-          git diff --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/inventory_desktop.c app/src/inventory_desktop.h app/src/prebattle_inventory_ui.h app/src/prebattle_inventory_ui.c app/src/main.c tests/test_inventory_desktop.c tests/test_inventory_workspace.c tests/CMakeLists.txt docs/inventory-armory.md
-          git commit -m "Redesign inventory as an explicit-action Armory workspace"
-          git push origin HEAD:refs/heads/inventory-armory-redesign
+          mkdir -p build/armory-harnesses
+          cp build/tests/test_inventory_workspace build/tests/test_inventory_rom build/tests/test_inventory_rom_dense build/armory-harnesses/
+          cp LICENSE THIRD_PARTY_NOTICES.md build/armory-harnesses/
+          cp third_party/mgba/LICENSE build/armory-harnesses/LICENSE-mGBA
+          git rev-parse HEAD > build/armory-harnesses/COMMIT.txt
+          # Only executable code and notices. ROMs, saves, fonts, and extracted
+          # assets are never uploaded; the test accepts local inputs at runtime.
+          tar -C build -czf build/armory-linux-harnesses.tar.gz armory-harnesses
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: armory-linux-harnesses
+          path: build/armory-linux-harnesses.tar.gz
+          if-no-files-found: error
+          retention-days: 7
