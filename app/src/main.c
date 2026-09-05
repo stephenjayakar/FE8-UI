@@ -692,8 +692,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Inventory metadata unavailable for this ROM\n");
     render_memory.context = &address_space;
     render_memory.read8 = fe8_address_space_read8;
-    family_match = settings.extensions_enabled && fe8_detect_fe8u_family(&profile_memory);
-    fprintf(stderr, "FE8 extensions: %s\n", family_match ? profile->profile_name :
+    family_match = fe8_detect_fe8u_family(&profile_memory);
+    fprintf(stderr, "FE8 extensions: %s\n", family_match && settings.extensions_enabled ? profile->profile_name :
         (!settings.extensions_enabled ? "disabled by settings" : "disabled (unknown ROM)"));
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO) != 0) {
@@ -810,6 +810,10 @@ int main(int argc, char **argv) {
         if (settings.revision != settings_revision) {
             keyboard_keys = 0;
             hotkeys_down = 0;
+            fe8_mouse_cancel(&mouse);
+            pan.dragging = 0;
+            pointer_canvas_valid = 0;
+            pointer_tile_valid = 0;
             set_speed_up_mode(0, &speed_up_active, &video, &audio,
                 audio_initialized, &settings, &frame_deadline);
             if (settings.mouse_enabled != applied_mouse_enabled) {
@@ -828,10 +832,11 @@ int main(int argc, char **argv) {
                 fe8_host_audio_set_enabled(&audio, settings.audio_enabled);
             if (!fe8_host_video_set_vsync(&video, settings.vsync_enabled))
                 fprintf(stderr, "Unable to change VSync: %s\n", SDL_GetError());
-            if (!fe8_host_video_set_shader(&video, settings.shader))
+            if (!fe8_host_video_set_shader(&video,
+                    inventory_ui.active ? FE8_HOST_SHADER_OFF : settings.shader))
                 fprintf(stderr, "Unable to apply shader '%s'\n",
                     fe8_host_shader_name(settings.shader));
-            family_match = settings.extensions_enabled && fe8_detect_fe8u_family(&profile_memory);
+            family_match = fe8_detect_fe8u_family(&profile_memory);
             visual_profile_active = 0;
             fe8_presentation_reset(&presentation);
             frozen_valid = 0;
@@ -867,7 +872,7 @@ int main(int argc, char **argv) {
                 inventory_snapshot.unit_count, inventory_snapshot.supply_count,
                 inventory_snapshot.supply_address, inventory_snapshot.supply_capacity);
         }
-        if (snapshot_valid) {
+        if (snapshot_valid && visual_profile_active && !inventory_ui.active) {
             map_state.map_width = snapshot.map_width;
             map_state.map_height = snapshot.map_height;
             map_state.camera_x = snapshot.camera_x;
@@ -952,6 +957,23 @@ int main(int argc, char **argv) {
                         system_cursor_hidden = 1;
                     }
                 }
+            }
+            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &
+                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS))) {
+                if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+                    fe8_macos_toggle_extensions(&settings);
+                    fe8_presentation_reset(&presentation);
+                    frozen_valid = 0;
+                    visual_profile_active = 0;
+                    fe8_mouse_cancel(&mouse);
+                    pan.dragging = 0;
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
+                    fprintf(stderr, "Extended renderer: %s\n",
+                        settings.extensions_enabled ? "on" : "off");
+                }
+                continue;
             }
             if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                     event.key.keysym.scancode == SDL_SCANCODE_I) {
@@ -1388,7 +1410,7 @@ int main(int argc, char **argv) {
         extension_active = 0;
         rendered_map_sprites = 0;
         Fe8FramePlacement frame_placement = {gba_x, gba_y, 0};
-        if (snapshot_valid) {
+        if (settings.extensions_enabled && snapshot_valid && !inventory_ui.active) {
             int same_map = map_identity_valid &&
                 map_identity_chapter == snapshot.chapter &&
                 map_identity_width == snapshot.map_width &&
@@ -1431,7 +1453,8 @@ int main(int argc, char **argv) {
                 fe8_presentation_reset(&presentation);
                 frozen_valid = 0;
             }
-            if (presentation.state == FE8_PRESENTATION_FROZEN && frozen_valid &&
+            if (snapshot.combat_panel_active &&
+                    presentation.state == FE8_PRESENTATION_FROZEN && frozen_valid &&
                     frozen_canvas_width == canvas_width &&
                     frozen_canvas_height == canvas_height) {
                 Fe8FramePlacement validation;
@@ -1527,13 +1550,6 @@ int main(int argc, char **argv) {
                         presentation.state == FE8_PRESENTATION_LIVE ? "active" :
                         presentation.state == FE8_PRESENTATION_FROZEN ? "frozen" :
                         "inactive", frame_placement.match_percent);
-                if (previous_state == FE8_PRESENTATION_LIVE &&
-                        presentation.state == FE8_PRESENTATION_FROZEN) {
-                    fe8_mouse_cancel(&mouse);
-                    pan.dragging = 0;
-                    pointer_canvas_valid = 0;
-                    pointer_tile_valid = 0;
-                }
                 if (options.terrain_capture_path && !terrain_capture_saved &&
                         frame_count >= options.capture_after) {
                     if (!save_canvas_bmp(options.terrain_capture_path,
@@ -1555,20 +1571,26 @@ int main(int argc, char **argv) {
             previous_camera_valid = 1;
         } else {
             previous_camera_valid = 0;
-            if (frozen_valid &&
-                    (presentation.state == FE8_PRESENTATION_LIVE ||
-                     presentation.state == FE8_PRESENTATION_FROZEN) &&
-                    frozen_canvas_width == canvas_width &&
-                    frozen_canvas_height == canvas_height) {
-                fe8_presentation_update(&presentation, true, false, false);
-                visual_profile_active = 0;
-                memcpy(canvas, frozen_canvas,
-                    (size_t)canvas_width * canvas_height * sizeof(*canvas));
-                frame_placement = frozen_placement;
-                extension_active = 1;
-            }
+            fe8_presentation_reset(&presentation);
+            visual_profile_active = 0;
+        }
+        if (!visual_profile_active) {
+            /* Cancel map travel, but preserve direct A/B pulses in native menus. */
+            if (mouse.active)
+                fe8_mouse_cancel(&mouse);
+            pan.dragging = 0;
+            pointer_canvas_valid = 0;
+            pointer_tile_valid = 0;
         }
         if (!extension_active) {
+            /* Pre-battle menus can retain plausible map RAM while replacing
+             * the screen. Drop the old camera/freeze instead of carrying its
+             * off-screen placement through inventory navigation or resizes. */
+            frozen_valid = 0;
+            previous_camera_valid = 0;
+            pan.x = pan.y = 0;
+            viewport.gba_x = gba_x;
+            viewport.gba_y = gba_y;
             size_t index;
             for (index = 0; index < (size_t)canvas_width * canvas_height; ++index)
                 canvas[index] = UINT32_C(0xFF101418);
@@ -1583,10 +1605,10 @@ int main(int argc, char **argv) {
          * FE8's one-frame PPU scroll delay. A fixed center creates seams and
          * an apparent one-tile mouse offset whenever the map is centered or
          * panned. Outside a validated map, retain the normal centered frame. */
+        frame_placement = fe8_presentation_frame_placement(
+            extension_active != 0, canvas_width, canvas_height, frame_placement);
         composite_framebuffer(host_frame, GBA_WIDTH, canvas,
-            canvas_width, canvas_height,
-            extension_active ? frame_placement.x : gba_x,
-            extension_active ? frame_placement.y : gba_y);
+            canvas_width, canvas_height, frame_placement.x, frame_placement.y);
         if (inventory_ui.active) {
             int window_x;
             int window_y;

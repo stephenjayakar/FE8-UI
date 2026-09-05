@@ -101,6 +101,28 @@ int main(void) {
     assert(settings.hotkeys[FE8_HOST_HOTKEY_SPEED_UP] == SDL_SCANCODE_SPACE);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_SAVE] == SDL_SCANCODE_F5);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_LOAD] == SDL_SCANCODE_F8);
+    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F6);
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) ==
+        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));
+    assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_F6) == 0);
+    assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS),
+        "Extended Renderer") == 0);
+    settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] = SDL_SCANCODE_F7;
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) == 0);
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==
+        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));
+    {
+        Fe8HostSettings expected = settings;
+        expected.extensions_enabled = 0;
+        ++expected.revision;
+        fe8_host_toggle_extensions(&settings);
+        assert(memcmp(&settings, &expected, sizeof(settings)) == 0);
+        expected.extensions_enabled = 1;
+        ++expected.revision;
+        fe8_host_toggle_extensions(&settings);
+        assert(memcmp(&settings, &expected, sizeof(settings)) == 0);
+        fe8_host_toggle_extensions(NULL);
+    }
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_Z) ==
         (UINT32_C(1) << FE8_HOST_A));
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_RIGHT) ==
