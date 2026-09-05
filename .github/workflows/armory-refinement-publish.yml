@@ -1,0 +1,101 @@
+name: Validate Armory refinements
+on:
+  push:
+    branches: [inventory-armory-redesign]
+    paths: [.github/workflows/armory-refinement-publish.yml]
+permissions:
+  contents: read
+env:
+  APPLY_PATCH: |
+    import base64, gzip, hashlib, json, os, subprocess, urllib.request
+    from pathlib import Path
+    assert os.environ['GITHUB_REF'] == 'refs/heads/inventory-armory-redesign'
+    parts = []
+    for sha in ['3dfeb4b45b6d5acb59177406fb1bb2b4f1341a45', '8155385924f04fcd3954bd1ec8ad42fd9c62c7a4', '3d4ca62995021cfc4a8b9be72c55893ba568f318', '69360f0af493a8e193ecebe21476a48067f0203b']:
+        url = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs/' + sha
+        request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            parts.append(base64.b64decode(json.load(response)['content']))
+    patch = gzip.decompress(base64.b64decode(b''.join(parts)))
+    assert hashlib.sha256(patch).hexdigest() == '71a1f89033add853e8aa0ee04df767679e5cf5ece66fea9f7c0c1b5e3f12b7e4'
+    expected = {
+        'README.md': '5ab06d8eeeb35d211de5f4a4ba23fa80738165f63a1f1aeb993f9fb976a3107f',
+        'app/src/fe8_catalog.c': '0b502390b274cf67d289b45ec70ddc1a047aaecbd72c7dcf3c94d1441f51cfdb',
+        'app/src/fe8_catalog.h': '00b5e1e4393284df8781b4e2e7ce0fe5e360a612ccd0df2e7f64407113037dc9',
+        'app/src/fe8_profile.c': 'f0f517e2dceb91fabf89603348baa2672ffb008cd4af91f4c95b505d8e995d8d',
+        'app/src/fe8_profile.h': '4b94851650e465e662f4b94991117fbccbd40d0aac420e0b402daf5b4c6e9daf',
+        'app/src/inventory_desktop.c': 'e72eed702ee8255e7eeb4044aa963985577ecf96578022056bb7a30d62c2f7f2',
+        'app/src/inventory_desktop.h': 'b2ffde66d4f91ae44e7a3348080c1bfb66e11ee6338cc5adbe1bd9d421587048',
+        'app/src/main.c': '9f93e668f6cd6e03f7de9b4e4dd569ce567eeb8b9ca0110214514df8d25c60b7',
+        'app/src/prebattle_inventory.c': '7c08f9b7fa7a34f46282407b116ee756a89c2574ead9d7d9a87960f6b75a004c',
+        'app/src/prebattle_inventory.h': 'c6ec2bc3deb3ead581384352f4dd83e87806dcf81210537342cac232eab4e641',
+        'app/src/prebattle_inventory_ui.c': 'eed864809b34d06b663e3dceab0be79f4adb628b037bef33e7e4cc42d98de64f',
+        'app/src/prebattle_inventory_ui.h': '99cfde489360253bb5b44fd4dea446bf6faede0510b154c53f277d40541b6605',
+        'docs/inventory-armory.md': '0677370bcdd52c1d82f0572c8aa6107cb6a307af5b1f52d0e9000483428157ab',
+        'tests/CMakeLists.txt': '0e132d1d6481efba19913bcd24c4b5cf92415349894bd208d4f5ae02a9b2ea4c',
+        'tests/test_fe8_catalog_locks.c': '761b0535eb53ec0971fd10d49ee8e14cdac2973906b3c397c1e879ea3e59adc4',
+        'tests/test_inventory_rom.c': '204cf9cf547a9690ed00be4083f7d3aa68f9cf7f28814314b20cbba4eb6caafc',
+        'tests/test_inventory_workspace.c': 'c3fed0b846e47b947870c01e17c31793809df9ba22896715097742c1b199fd46',
+    }
+    names = subprocess.check_output(['git', 'apply', '--numstat', '-'], input=patch).decode().splitlines()
+    assert {line.split('\t')[2] for line in names} == set(expected)
+    subprocess.run(['git', 'apply', '--check', '--whitespace=error', '-'], input=patch, check=True)
+    subprocess.run(['git', 'apply', '--whitespace=error', '-'], input=patch, check=True)
+    for name, digest in expected.items():
+        assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+    print('Applied and verified 17 source/test/documentation files; no ROMs or assets.')
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply reviewed source patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 -c "$APPLY_PATCH"
+      - name: Initialize pinned emulator
+        run: git submodule update --init --depth 1 third_party/mgba
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build libsdl2-dev libfreetype-dev zlib1g-dev fonts-dejavu-core
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja sdl2
+      - name: Build complete application
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFE8_BUILD_TESTS=ON "${args[@]}"
+          cmake --build build --parallel 3
+      - name: Full regression suite
+        run: ctest --test-dir build --output-on-failure
+  publish:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: inventory-armory-redesign
+      - name: Publish validated source and remove this temporary transport
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -c "$APPLY_PATCH"
+          git rm .github/workflows/armory-refinement-publish.yml
+          git diff --check
+          git add README.md docs/inventory-armory.md app/src/fe8_catalog.c app/src/fe8_catalog.h app/src/fe8_profile.c app/src/fe8_profile.h app/src/inventory_desktop.c app/src/inventory_desktop.h app/src/main.c app/src/prebattle_inventory.c app/src/prebattle_inventory.h app/src/prebattle_inventory_ui.c app/src/prebattle_inventory_ui.h tests/CMakeLists.txt tests/test_fe8_catalog_locks.c tests/test_inventory_rom.c tests/test_inventory_workspace.c
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Fix Archanae personal weapons and make Armory transfers direct' -m 'Decode the profile-scoped character/class lock table; verify Borderland Sword against the native predicate. Add inline Give/Store, double-click transfers, and guarded drag-and-drop while preserving inspection and undo. Remove the tagline. Local full suite: 28/28 including both supplied ROMs; Linux/macOS native builds validated before publishing. No ROMs, saves, fonts or extracted assets.'
+          git push origin HEAD:refs/heads/inventory-armory-redesign
