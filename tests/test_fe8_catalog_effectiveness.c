@@ -41,7 +41,7 @@ static void put32(uint32_t address, uint32_t value) {
 
 static void put_text(uint16_t id, uint32_t address, const char *text) {
     put32(MESSAGE_TABLE + (uint32_t)id * 4, address | UINT32_C(0x80000000));
-    memcpy(rom + address - ROM_BASE, text, strlen(text) + 1);
+    memcpy(rom + (address - ROM_BASE), text, strlen(text) + 1);
 }
 
 static void put_item(uint8_t id, uint16_t name, uint16_t description) {

@@ -3,6 +3,40 @@
 #include <math.h>
 #include <string.h>
 
+typedef struct Fe8HostShaderPreset {
+    const char *name;
+    Fe8HostShaderConfig config;
+} Fe8HostShaderPreset;
+
+/* Keep each shader's display name and defaults together. Config fields are
+ * scanlines, mask, blur, bloom, curvature, and saturation, in that order. */
+static const Fe8HostShaderPreset shader_presets[FE8_HOST_SHADER_COUNT] = {
+    [FE8_HOST_SHADER_OFF] = {
+        "Off", {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f}},
+    [FE8_HOST_SHADER_CRT] = {
+        "CRT (TV Mode)", {0.25f, 0.0f, 0.55f, 0.08f, 0.0f, 1.0f}},
+    [FE8_HOST_SHADER_SCANLINES] = {
+        "Scanlines", {0.50f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f}},
+    [FE8_HOST_SHADER_APERTURE_GRILLE] = {
+        "CRT Aperture Grille", {0.18f, 0.35f, 0.08f, 0.05f, 0.0f, 1.0f}},
+    [FE8_HOST_SHADER_SHADOW_MASK] = {
+        "CRT Shadow Mask", {0.22f, 0.42f, 0.10f, 0.06f, 0.0f, 1.0f}},
+    [FE8_HOST_SHADER_SLOT_MASK] = {
+        "CRT Slot Mask", {0.24f, 0.48f, 0.12f, 0.06f, 0.0f, 1.0f}},
+    [FE8_HOST_SHADER_CONSUMER_CRT] = {
+        "CRT Consumer TV", {0.24f, 0.28f, 0.38f, 0.14f, 0.08f, 1.08f}},
+    [FE8_HOST_SHADER_CRT_GEOM] = {
+        "crt-geom", {0.30f, 0.0f, 0.18f, 0.06f, 0.115f, 1.03f}},
+    [FE8_HOST_SHADER_CRT_LOTTES] = {
+        "crt-lottes", {0.34f, 0.44f, 0.08f, 0.11f, 0.035f, 1.05f}},
+    [FE8_HOST_SHADER_ZFAST_CRT] = {
+        "zfast-crt", {0.24f, 0.10f, 0.06f, 0.02f, 0.0f, 1.0f}},
+    [FE8_HOST_SHADER_CRT_APERTURE] = {
+        "crt-aperture", {0.20f, 0.52f, 0.05f, 0.05f, 0.0f, 1.04f}},
+    [FE8_HOST_SHADER_CRT_EASYMODE] = {
+        "crt-easymode", {0.26f, 0.34f, 0.16f, 0.08f, 0.025f, 1.02f}},
+};
+
 static Fe8HostSettings *current_settings;
 static Fe8HostShaderConfig shader_configs[FE8_HOST_SHADER_COUNT];
 static int shader_configs_initialized;
@@ -21,93 +55,9 @@ void fe8_host_shader_default_config(
     enum Fe8HostShader shader, Fe8HostShaderConfig *config) {
     if (!config)
         return;
-    memset(config, 0, sizeof(*config));
-    config->saturation = 1.0f;
-    switch (shader) {
-    case FE8_HOST_SHADER_CRT:
-        config->scanline_strength = 0.25f;
-        config->blur = 0.55f;
-        config->bloom = 0.08f;
-        break;
-    case FE8_HOST_SHADER_SCANLINES:
-        config->scanline_strength = 0.50f;
-        break;
-    case FE8_HOST_SHADER_APERTURE_GRILLE:
-        config->scanline_strength = 0.18f;
-        config->mask_strength = 0.35f;
-        config->blur = 0.08f;
-        config->bloom = 0.05f;
-        break;
-    case FE8_HOST_SHADER_SHADOW_MASK:
-        config->scanline_strength = 0.22f;
-        config->mask_strength = 0.42f;
-        config->blur = 0.10f;
-        config->bloom = 0.06f;
-        break;
-    case FE8_HOST_SHADER_SLOT_MASK:
-        config->scanline_strength = 0.24f;
-        config->mask_strength = 0.48f;
-        config->blur = 0.12f;
-        config->bloom = 0.06f;
-        break;
-    case FE8_HOST_SHADER_CONSUMER_CRT:
-        config->scanline_strength = 0.24f;
-        config->mask_strength = 0.28f;
-        config->blur = 0.38f;
-        config->bloom = 0.14f;
-        config->curvature = 0.08f;
-        config->saturation = 1.08f;
-        break;
-    case FE8_HOST_SHADER_CRT_GEOM:
-        /* Geometry-focused preset: visible tube curvature, moderate beam
-         * softness and restrained scanlines. */
-        config->scanline_strength = 0.30f;
-        config->blur = 0.18f;
-        config->bloom = 0.06f;
-        config->curvature = 0.115f;
-        config->saturation = 1.03f;
-        break;
-    case FE8_HOST_SHADER_CRT_LOTTES:
-        /* Lottes-inspired defaults: crisp scanlines, RGB triads and a small
-         * amount of glow without exposing the original shader's large option
-         * surface. */
-        config->scanline_strength = 0.34f;
-        config->mask_strength = 0.44f;
-        config->blur = 0.08f;
-        config->bloom = 0.11f;
-        config->curvature = 0.035f;
-        config->saturation = 1.05f;
-        break;
-    case FE8_HOST_SHADER_ZFAST_CRT:
-        /* zfast-crt style: intentionally inexpensive and subtle. */
-        config->scanline_strength = 0.24f;
-        config->mask_strength = 0.10f;
-        config->blur = 0.06f;
-        config->bloom = 0.02f;
-        break;
-    case FE8_HOST_SHADER_CRT_APERTURE:
-        /* Aperture grille: sharp RGB phosphor columns with mild scanlines. */
-        config->scanline_strength = 0.20f;
-        config->mask_strength = 0.52f;
-        config->blur = 0.05f;
-        config->bloom = 0.05f;
-        config->saturation = 1.04f;
-        break;
-    case FE8_HOST_SHADER_CRT_EASYMODE:
-        /* Easymode-inspired balanced preset: softer beam, moderate mask and
-         * minimal geometry distortion. */
-        config->scanline_strength = 0.26f;
-        config->mask_strength = 0.34f;
-        config->blur = 0.16f;
-        config->bloom = 0.08f;
-        config->curvature = 0.025f;
-        config->saturation = 1.02f;
-        break;
-    case FE8_HOST_SHADER_OFF:
-    case FE8_HOST_SHADER_COUNT:
-    default:
-        break;
-    }
+    if (shader < 0 || shader >= FE8_HOST_SHADER_COUNT)
+        shader = FE8_HOST_SHADER_OFF;
+    *config = shader_presets[shader].config;
 }
 
 static void init_shader_configs(void) {
@@ -226,21 +176,9 @@ const char *fe8_host_hotkey_name(enum Fe8HostHotkey hotkey) {
 }
 
 const char *fe8_host_shader_name(enum Fe8HostShader shader) {
-    static const char *names[FE8_HOST_SHADER_COUNT] = {
-        "Off",
-        "CRT (TV Mode)",
-        "Scanlines",
-        "CRT Aperture Grille",
-        "CRT Shadow Mask",
-        "CRT Slot Mask",
-        "CRT Consumer TV",
-        "crt-geom",
-        "crt-lottes",
-        "zfast-crt",
-        "crt-aperture",
-        "crt-easymode"
-    };
-    return shader >= 0 && shader < FE8_HOST_SHADER_COUNT ? names[shader] : "Off";
+    if (shader < 0 || shader >= FE8_HOST_SHADER_COUNT)
+        shader = FE8_HOST_SHADER_OFF;
+    return shader_presets[shader].name;
 }
 
 const char *fe8_host_speedup_name(enum Fe8HostSpeedupRate rate) {

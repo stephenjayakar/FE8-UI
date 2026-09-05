@@ -7,6 +7,7 @@ on:
     paths:
       - 'app/src/*inventory*'
       - 'app/src/host_text*'
+      - 'app/src/fe8_catalog*'
       - 'app/src/host_video*'
       - 'app/src/display_scaling*'
       - 'app/src/main.c'
