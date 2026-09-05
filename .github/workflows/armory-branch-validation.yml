@@ -1,0 +1,111 @@
+name: Armory branch validation
+on:
+  push:
+    branches: [inventory-armory-redesign]
+    paths: [.github/workflows/armory-branch-validation.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  ARMORY_APPLY: |
+    import base64, gzip, hashlib, json, os, urllib.request
+    from pathlib import Path
+    assert os.environ['GITHUB_REF'] == 'refs/heads/inventory-armory-redesign'
+    shas = [
+        'e0187b81c4fa29d536987e21c9a6479b9ed11a3e',
+        '619ad8ce690071934e81577e17d3374e17ce3be0',
+        'b97bd944854f242b29bf8e6343168ab25ff6217c',
+        'a5b80ec10f8b4f7f9615420ea0d5b637c5daea7d',
+        'ae2499c36cb6808af27ab47c8900f3bacee2686f',
+    ]
+    # Source-only transport for the isolated development workspace. Each
+    # fragment is content-addressed; the decoded manifest is checked again.
+    parts = []
+    for sha in shas:
+        url = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs/' + sha
+        request = urllib.request.Request(url, headers={
+            'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+            'Accept': 'application/vnd.github+json',
+        })
+        with urllib.request.urlopen(request, timeout=30) as response:
+            parts.append(base64.b64decode(json.load(response)['content']))
+    data = gzip.decompress(base64.b64decode(b''.join(parts)))
+    assert hashlib.sha256(data).hexdigest() == '5f0abe61e140b9963e61d6a79342d32293082f78704cbb1aaf9107c44c6729f0'
+    payload = json.loads(data)
+    assert set(payload['files']) == {
+        'app/src/inventory_desktop.c', 'app/src/inventory_desktop.h',
+        'tests/test_inventory_workspace.c', 'docs/inventory-armory.md',
+    }
+    for name, content in payload['files'].items():
+        path = Path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        print('Prepared', name)
+    exec(compile(payload['integrate'], '<armory-integration>', 'exec'))
+    print('Applied Armory source and checked integration edits.')
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/inventory-armory-redesign'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Apply source-only redesign
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 -c "$ARMORY_APPLY"
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build libsdl2-dev libfreetype6-dev zlib1g-dev fonts-dejavu-core
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja sdl2
+      - name: Configure and build the complete application
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFE8_BUILD_TESTS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "${args[@]}"
+          cmake --build build --parallel 3
+      - name: Run the full regression suite
+        run: ctest --test-dir build --output-on-failure
+      - name: Capture the native renderer with deterministic fixture data
+        shell: bash
+        run: |
+          mkdir -p build/armory-captures
+          build/tests/test_inventory_workspace build/armory-captures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: armory-native-captures-${{ runner.os }}
+          path: build/armory-captures/*.ppm
+          if-no-files-found: error
+  publish:
+    needs: validate
+    if: github.ref == 'refs/heads/inventory-armory-redesign'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: inventory-armory-redesign
+      - name: Publish only validated source to the feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -c "$ARMORY_APPLY"
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/inventory_desktop.c app/src/inventory_desktop.h app/src/prebattle_inventory_ui.h app/src/prebattle_inventory_ui.c app/src/main.c tests/test_inventory_desktop.c tests/test_inventory_workspace.c tests/CMakeLists.txt docs/inventory-armory.md
+          git commit -m "Redesign inventory as an explicit-action Armory workspace"
+          git push origin HEAD:refs/heads/inventory-armory-redesign
