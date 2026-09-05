@@ -16,33 +16,33 @@ memory, PPU, saves, and input. The host reads validated FE8 structures, decodes
 the game's metatiles from emulated EWRAM/VRAM/palette memory, renders a 480×320
 terrain canvas, and places mGBA's exact frame over its center.
 
-Whenever a live FE8 roster exists, press **I** to open the host inventory
-manager. The game pauses while it is open. Pick a target from the full roster,
-then use the shared item pool to move or swap gear between any blue unit and
-the Supply convoy without stepping through the native character-by-character
-menus. Empty unit slots and the empty Supply row are valid destinations. The
-pool is sorted by weapon type by default; press **S** (or click the sort chip)
-to cycle through **Type**, **Name**, **Uses**, and **Owner**, and press **A** to
-toggle between **All** carried gear and **Supply** only. Press **U** to undo the
-most recent move, right-click to clear a selection, and **I** or **Escape** to
-close.
+Whenever a live FE8 roster exists, press **I** to open **Armory**. The game
+pauses while it is open. Choose a recipient in the left sidebar; browse the
+entire army and Supply in one searchable, filterable item list. A single click
+pins an item's stats, ownership, description and compatibility in the inspector.
 
-The inventory is a full-resolution desktop interface, independent of the game
-zoom. The left sidebar combines the selected character, five loadout slots, and
-recipient roster; the right side shows a single-line item table. At 960x640,
-Compact fits 15 table rows; at 1280x800 it fits 21. Larger windows reveal more
-rows rather than magnifying the menu. Press **D** or click **Compact / Comfortable**
-to change row spacing. Press **+** (or **=**) / **-** to enlarge / shrink the
-entire inventory UI in 10% steps; keypad **+** and **-** work too. Press **0** to
-reset to 100%. The current percentage appears beside the Supply count. Scale
-ranges from 80% to 200%, capped to keep the layout usable in the current window.
-Resizing temporarily fits a larger scale to the available space; enlarging the
-window restores it. The preference is retained when closing/reopening inventory
-for this session, without changing game zoom or the selected item. Text is
-re-rasterized at each size, not stretched from a low-resolution image.
-Click Item, Type, Uses, or Owner headers to sort directly.
-Combat columns collapse first in narrow windows; the complete item stats remain
-in hover help. The empty supply destination stays pinned below the table.
+Move equipment without going through the inspector: click **Give / Store**
+beside an item, **double-click** its row, or **drag** it onto a loadout slot,
+recipient, or the pinned Supply destination. Give uses an empty slot; full
+recipients require an explicit slot to swap. The five loadout slots are always
+available. **U** undoes the most recent transaction. Right-click or **Escape**
+cancels a move; **I**, Close, or Escape outside search/move mode closes Armory.
+
+Press **/** to search item names, owners, classes, and types. Weapon-type chips
+and **Ready only** narrow the list without changing inventory order. **S** cycles
+Type/Name/Uses/Owner sorting; clicking the active sortable header reverses it.
+**A** toggles the army-wide pool and Supply. Inspection stays pinned through
+searching, filtering, sorting, and recipient changes.
+
+Armory renders at full desktop resolution, independently of game zoom. Its
+inspector moves below the workspace in smaller windows. **D** or the density
+button switches Compact/Comfortable spacing. **+** (or **=**) / **-** adjusts UI
+size in 10% steps; keypad keys work too. **0** resets to 100%. The 80–200% range
+is capped to keep the current window usable; resizing fits the display without
+losing the session preference. Text is re-rasterized, not stretched. Identity,
+uses, ownership and inline actions take priority over optional combat columns;
+full stats and scrolling descriptions remain available in the inspector.
+See [the Armory workflow and validation notes](docs/inventory-armory.md).
 
 Text is rasterized at the display's drawable resolution (CoreText on macOS,
 FreeType on other platforms); portraits retain their original pixel art. Linux
@@ -56,16 +56,17 @@ The manager decodes the active ROM's own character, class, and item text and
 renders the selected character's full menu portrait. It shows level, HP,
 remaining uses, combat stats, source owner, and whether the selected target can
 use each weapon or staff. Compatibility badges distinguish ready gear, missing
-weapon ranks, personal locks, status restrictions, and ordinary non-weapon
-items. Hover a character's name or class in either the roster or portrait card
-for its in-game description in the bottom help panel. Hovering never changes
+weapon ranks, personal/class locks, status restrictions, unknown restrictions,
+and ordinary non-weapon items. Archanae's extra personal-weapon table is decoded
+in its SHA-verified profile: Borderland Sword is Athena-only, not usable by Marth. Hover a character's name or class in either the roster or portrait card
+for its in-game description in the inspector. Hovering never changes
 the selected target or a pending item transfer; moving away restores item help.
 Missing help text is explicitly marked rather than borrowed from another unit.
 Long labels ellipsize, and hovering exposes their full names. Item names,
 uses, ownership, and badges have separate space; visible scrollbars, hover
 accents, and a persistent shortcut strip make the controls discoverable. ROM-specific addresses and limits
 live in a selected `Fe8Profile`;
-retail FE8U and Sacred Echoes have separate inventory layouts, so another hack
+retail FE8U, Sacred Echoes, and Archanae have separate inventory layouts, so another hack
 can be supported without changing the UI or transaction engine. This is the
 sole write-enabled extension: destinations are restricted
 to validated blue-unit and convoy addresses, both source values are checked

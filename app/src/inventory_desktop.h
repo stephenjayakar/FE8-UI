@@ -13,6 +13,7 @@ typedef struct Fe8InventoryDesktopLayout {
     int search_y, filters_y, filter_height, filter_columns;
     int detail_x, detail_y, detail_width, detail_height, detail_wide;
     int action_x, action_y, action_width;
+    int quick_x, quick_width;
 } Fe8InventoryDesktopLayout;
 
 int fe8_inventory_ui_scale_percent(const Fe8InventoryUi *ui, int width, int height);
@@ -40,5 +41,15 @@ void fe8_inventory_desktop_backspace(Fe8InventoryUi *ui);
    endpoint transaction in main.c. Never writes inventory or emulated memory. */
 int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *snapshot,
     Fe8InventoryHitKind *kind, int *index);
+
+/* Pointer coordinates are drawable pixels, matching hit testing. Pointer-up
+   returns the same consumed/resolved convention as click(); main owns writes. */
+void fe8_inventory_desktop_pointer_down(Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, Fe8InventoryHitKind kind, int index, int x, int y);
+void fe8_inventory_desktop_pointer_motion(Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, int width, int height, int x, int y);
+int fe8_inventory_desktop_pointer_up(Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, Fe8InventoryHitKind *kind, int *index);
+void fe8_inventory_desktop_cancel_drag(Fe8InventoryUi *ui);
 
 #endif

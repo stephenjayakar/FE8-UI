@@ -12,13 +12,26 @@ the army-wide browser or one of the recipient's five slots **only inspects it**.
 The inspector stays pinned while searching, filtering, sorting, scrolling, or
 changing recipient. Hover remains independent from the pending transfer.
 
-* **Give to recipient** uses the first empty loadout slot. It does not silently
-  replace equipment. When full, choose **Move / swap** and pick an explicit slot.
-* **Move / swap** enters a clearly marked destination-selection mode. Select an
-  empty slot to transfer or an occupied slot to exchange. Clicking the source
-  again, right-clicking, `Esc`, or **Cancel move** cancels without a write.
-* **Store in supply** resolves the actual available convoy slot, including a
-  sparse convoy. It is disabled for supply-owned or fixed items and a full convoy.
+* **Give / Store beside each item** performs the common transfer in one click.
+  Give uses the selected recipient's first empty slot. Store moves their carried
+  item to the actual free convoy slot. Fixed items and a full convoy are disabled.
+* **Double-click an item** does the same without leaving its row: give to the
+  selected recipient, or store when it already belongs to that recipient.
+* **Drag an item** onto a loadout slot to move or swap, onto an ally in the roster
+  to give, or onto the pinned supply destination to store. A five-point movement
+  threshold separates inspection clicks from dragging at every DPI/UI scale.
+  The source is an address/slot pair, never a filtered or sorted row number.
+* **Full recipients** show Swap instead of Give and require an explicit loadout
+  slot. Dropping on a full ally selects that ally and keeps destination choice
+  open; it never silently replaces an item. The inspector's **Move / swap** is
+  still available, but is no longer required for normal transfers.
+
+Dropping outside a destination, onto the same slot, or onto fixed equipment does
+not write. Escape, right-click, focus loss, and window resize cancel dragging.
+Scrolling while dragging updates the highlighted destination. A changed source
+item invalidates the gesture; successful transactions retain expected-value
+checks and undo. Repeated clicks on an inline action do not apply it to the next
+row after sorting changes the list.
 
 `U` retains the existing single-step, expected-value-checked undo. Clicking a
 unit name or class opens its ROM-backed help when no move is pending. The game
@@ -67,19 +80,44 @@ Architecture:
 2. `fe8_inventory_desktop_visible` derives a filtered, optionally reversed index
    view. It never edits those inputs or treats a visible row as an endpoint.
 3. `fe8_inventory_desktop_click` consumes browsing controls and resolves only
-   explicit Give/Store requests into canonical endpoints. It cannot write game
-   memory. The existing `main.c` guarded transaction and undo remain the only
+   Give/Store requests into canonical endpoints. The pointer gesture helpers
+   resolve drops through that same action handler. Neither can write game memory. The existing `main.c` guarded transaction and undo remain the only
    write path; fixed items and changed expected values are still rejected.
 
 No new frontend framework, dependency, hardcoded character list, ROM assets, or
 save format is needed by the application.
+
+## Archanae personal weapons
+
+The exact supported Archanae ROM uses an additional weapon-lock table, separate
+from retail FE8's rank and low-bit attribute locks. Its native predicate at
+`0x08B3EA54` indexes the pointer table at `0x08B2BAE4` with the item's high
+attribute byte. Entries contain a mode plus a zero-terminated character-ID
+(mode 1) or class-ID (mode 3) whitelist. Modes 0 and 2 do not restrict usability
+in this predicate. The catalog decodes those lists once into a bounded bitset;
+all table badges, recipient previews, and Ready-only filtering use the same
+check. Malformed/unsupported lists show Unknown rather than Ready.
+
+Borderland Sword (`0xC2`) has lock index 10 and a character whitelist containing
+only `0x36` (Athena). Marth is therefore Locked regardless of sword rank. This
+is profile-scoped and ID-based, not a special case on a translated item name.
+The profile remains SHA-verified; unrelated ROMs do not reinterpret these bits.
 
 ## Validation and reproducible captures
 
 `inventory_workspace` exercises filtering, multi-token/owner queries, Ready
 states, source pinning, explicit actions, fixed items, UTF-8 editing, sorting,
 canonical endpoint mapping, scrolling, several density/DPI/zoom combinations,
-snapshot immutability, and framebuffer/stride guards. The previous desktop
+snapshot immutability, and framebuffer/stride guards. It also checks quick
+Give/Store, pointer jitter, drag destinations, source pinning through sorting,
+full recipients, cancellation, fixed equipment, and stale source protection.
+`fe8_catalog_locks` checks character/class lists, malformed data and profile
+isolation. The optional Archanae integration test executes the ROM's native
+predicate to confirm it rejects Marth and accepts Athena. Because Athena is not
+in the early test roster, the positive case uses her real character record in
+an isolated scratch unit, then restores the complete state. Both supplied-ROM
+integration tests exercise quick Give/Store and drag Give/swap followed by undo
+at 80–130% UI scale, checking exact RAM restoration. The previous desktop
 regression matrix is retained with design-independent geometry assertions.
 
 After building, make deterministic renderer captures without a ROM:

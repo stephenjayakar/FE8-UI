@@ -81,9 +81,100 @@ static void check_real_transfer(struct mCore *core, const Fe8MemoryReader *reade
     assert(memcmp(original, ewram, ram_size) == 0);
     ui->has_selection = 0;
     fe8_inventory_ui_toggle_density(ui);
-    puts("  Real-ROM transfer after hover/sort/density changes and undo preserved RAM exactly");
+    /* Resolve the new one-click and drag gestures before using the same guarded
+       transaction as the app. Every gesture must undo byte-for-byte. */
+    int source_index = -1, source_unit = -1;
+    for (int n = 0; n < ui->pool_count; ++n)
+        if (ui->pool[n].endpoint.kind == source.kind &&
+            ui->pool[n].endpoint.unit_address == source.unit_address &&
+            ui->pool[n].endpoint.slot == source.slot) source_index = n;
+    for (int n = 0; n < snapshot->unit_count; ++n)
+        if (snapshot->units[n].address == source.unit_address) source_unit = n;
+    assert(source_index >= 0 && source_unit >= 0);
+    for (int gesture = 0; gesture < 4; ++gesture) {
+        ui->has_selection = 0;
+        ui->current_unit = gesture == 1 ? source_unit : destination_unit;
+        hit = FE8_INVENTORY_HIT_QUICK_POOL; index = source_index;
+        if (gesture < 2) {
+            assert(!fe8_inventory_desktop_click(ui,snapshot,&hit,&index));
+        } else {
+            fe8_inventory_desktop_pointer_down(ui,snapshot,
+                FE8_INVENTORY_HIT_POOL_ITEM,source_index,400,220);
+            fe8_inventory_desktop_pointer_motion(ui,snapshot,WIDTH,HEIGHT,40,430);
+            assert(ui->dragging);
+            if (gesture == 2) { hit = FE8_INVENTORY_HIT_ROSTER; index = destination_unit; }
+            else { hit = FE8_INVENTORY_HIT_UNIT_ITEM; index = 0; } /* Occupied swap. */
+            assert(!fe8_inventory_desktop_pointer_up(ui,snapshot,&hit,&index));
+        }
+        assert(ui->selected.unit_address == source.unit_address && ui->selected.slot == source.slot);
+        resolved = fe8_inventory_ui_endpoint(ui,snapshot,hit,index);
+        uint16_t replaced = fe8_inventory_ui_endpoint_item(snapshot,resolved);
+        if (gesture == 1) assert(resolved.kind == FE8_INVENTORY_ENDPOINT_SUPPLY && !replaced);
+        if (gesture == 3) assert(replaced);
+        assert(memcmp(original,ewram,ram_size) == 0); /* Gestures are read-only. */
+        assert(fe8_swap_inventory_endpoints(reader,&writer,profile,source,encoded,resolved,replaced));
+        assert(fe8_swap_inventory_endpoints(reader,&writer,profile,source,replaced,resolved,encoded));
+        assert(memcmp(original,ewram,ram_size) == 0);
+    }
+    ui->has_selection = 0;
+    puts("  Real-ROM click Give/Store, drag Give/swap, and undo preserved RAM exactly");
 }
 #endif
+
+static int native_personal_lock(struct mCore *core, uint32_t unit_address, uint16_t item) {
+    void *saved=malloc(core->stateSize(core)); assert(saved);
+    assert(core->saveState(core,saved));
+    assert(core->writeRegister(core,"cpsr",0xBF)); /* Thumb, system mode, IRQ masked. */
+    assert(core->writeRegister(core,"sp",0x0203F800));
+    assert(core->writeRegister(core,"r0",(int32_t)unit_address));
+    assert(core->writeRegister(core,"r1",item));
+    assert(core->writeRegister(core,"r2",255));
+    assert(core->writeRegister(core,"lr",0x08000001));
+    assert(core->writeRegister(core,"pc",0x08B3EA54));
+    int32_t pc=0,result=0; int steps;
+    for(steps=0;steps<2000;++steps) {
+        core->step(core); assert(core->readRegister(core,"pc",&pc));
+        if(pc==0x08000002)break; /* Thumb pipeline is one instruction ahead. */
+    }
+    assert(steps<2000);assert(core->readRegister(core,"r0",&result));
+    assert(core->loadState(core,saved));free(saved);
+    return result!=0;
+}
+static void check_archanae_locks(struct mCore *core, const Fe8MemoryReader *reader,
+    const Fe8Catalog *catalog, const Fe8InventorySnapshot *snapshot) {
+    Fe8ItemInfo borderland;
+    int marth=-1;
+    assert(fe8_catalog_item(reader,catalog,0x01C2,&borderland));
+    assert(strcmp(borderland.name,"Borderland Swd")==0);
+    assert(borderland.lock_kind==FE8_ITEM_LOCK_CHARACTER);
+    for(int n=0;n<snapshot->unit_count;++n) {
+        const Fe8InventoryUnit *u=&snapshot->units[n];
+        if(strcmp(u->name,"Marth")==0)marth=n;
+        assert(!native_personal_lock(core,u->address,0x01C2));
+        assert(fe8_inventory_item_use_state(u,&borderland)==FE8_INVENTORY_USE_LOCKED);
+    }
+    assert(marth>=0);
+    /* Athena is not in this early save. Use an isolated unit copy with her
+       real ROM character record; restore every byte before returning. */
+    const Fe8InventoryUnit *m=&snapshot->units[marth];
+    uint32_t characters=core->busRead32(core,m->address)-(uint32_t)m->character_id*0x34;
+    uint32_t athena_record=characters+0x36*0x34;
+    char name[28];
+    assert(core->busRead8(core,athena_record+4)==0x36);
+    assert(fe8_catalog_text(reader,catalog,core->busRead16(core,athena_record),name,sizeof(name)));
+    assert(strcmp(name,"Athena")==0);
+    uint8_t saved_unit[0x48]; uint32_t scratch=0x0203FC00;
+    for(unsigned j=0;j<sizeof(saved_unit);++j) {
+        saved_unit[j]=core->busRead8(core,scratch+j);
+        core->busWrite8(core,scratch+j,core->busRead8(core,m->address+j));
+    }
+    core->busWrite32(core,scratch,athena_record);
+    assert(native_personal_lock(core,scratch,0x01C2));
+    Fe8InventoryUnit athena=*m;athena.character_id=0x36;
+    assert(fe8_inventory_item_use_state(&athena,&borderland)==FE8_INVENTORY_USE_READY);
+    for(unsigned j=0;j<sizeof(saved_unit);++j)core->busWrite8(core,scratch+j,saved_unit[j]);
+    puts("  Borderland Sword: native ROM predicate rejects Marth and accepts Athena; frontend agrees");
+}
 
 static void map_memory(Fe8AddressSpace *space, struct mCore *core) {
     const uint32_t bases[] = {
@@ -204,6 +295,10 @@ int main(int argc, char **argv) {
     original_ram = malloc(ewram_size);
     assert(original_ram);
     memcpy(original_ram, ewram, ewram_size);
+    if(archanae) {
+        check_archanae_locks(core,&reader,&catalog,snapshot);
+        assert(memcmp(original_ram,ewram,ewram_size)==0);
+    }
     fe8_inventory_ui_init(ui);
     fe8_inventory_ui_open(ui, snapshot);
     ui->render_scale = 2;

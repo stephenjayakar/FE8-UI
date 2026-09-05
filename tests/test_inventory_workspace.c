@@ -95,6 +95,89 @@ static void view_and_actions(void) {
     kind=FE8_INVENTORY_HIT_STORE;assert(fe8_inventory_desktop_click(&ui,&s,&kind,&slot));assert(!ui.has_selection);
     assert(memcmp(&s,&before,sizeof(s))==0);
 }
+static int equal(Fe8InventoryEndpoint a, Fe8InventoryEndpoint b) {
+    return a.kind==b.kind && a.unit_address==b.unit_address && a.slot==b.slot;
+}
+static void arm_drag(Fe8InventoryUi *ui, int pool_index, float dpi) {
+    ui->desktop_scale=dpi;
+    fe8_inventory_desktop_pointer_down(ui,&s,FE8_INVENTORY_HIT_POOL_ITEM,pool_index,400,240);
+    assert(ui->drag_armed && !ui->dragging);
+    /* A little click jitter must never become a transfer. */
+    fe8_inventory_desktop_pointer_motion(ui,&s,(int)(1280*dpi),(int)(800*dpi),400+(int)(4*dpi),240);
+    assert(!ui->dragging && !ui->has_selection);
+    fe8_inventory_desktop_pointer_motion(ui,&s,(int)(1280*dpi),(int)(800*dpi),400+(int)(6*dpi),240);
+    assert(ui->dragging && ui->has_selection);
+}
+static void quick_actions_and_drag(void) {
+    Fe8InventoryUi ui=open_ui();
+    int silver=index_named(&ui,"Silver Lance"), index;
+    Fe8InventoryEndpoint source=ui.pool[silver].endpoint;
+    Fe8InventoryHitKind kind=FE8_INVENTORY_HIT_QUICK_POOL;
+    index=silver;
+    assert(!fe8_inventory_desktop_click(&ui,&s,&kind,&index));
+    assert(equal(ui.selected,source) && kind==FE8_INVENTORY_HIT_UNIT_ITEM && index==3);
+    ui=open_ui();kind=FE8_INVENTORY_HIT_QUICK_UNIT;index=0;
+    assert(!fe8_inventory_desktop_click(&ui,&s,&kind,&index));
+    assert(kind==FE8_INVENTORY_HIT_POOL_ITEM && ui.pool[index].item==0);
+    assert(ui.pool[index].endpoint.slot==s.first_empty_supply);
+    ui=open_ui();kind=FE8_INVENTORY_HIT_QUICK_POOL;index=index_named(&ui,"Learned spell");
+    assert(fe8_inventory_desktop_click(&ui,&s,&kind,&index));assert(!ui.has_selection);
+    /* One local Swap action enters explicit slot choice when the ally is full. */
+    ui=open_ui();s.units[0].items[3]=s.units[0].items[4]=s.units[0].items[0];
+    s.units[0].item_info[3]=s.units[0].item_info[4]=s.units[0].item_info[0];
+    kind=FE8_INVENTORY_HIT_QUICK_POOL;index=silver;
+    assert(fe8_inventory_desktop_click(&ui,&s,&kind,&index));assert(ui.has_selection);
+    kind=FE8_INVENTORY_HIT_UNIT_ITEM;index=0;
+    assert(!fe8_inventory_desktop_click(&ui,&s,&kind,&index));
+    assert(equal(ui.selected,source));s=before;
+    /* Click release, self-drop, background drop and fixed destination are no-ops. */
+    ui=open_ui();fe8_inventory_desktop_pointer_down(&ui,&s,FE8_INVENTORY_HIT_POOL_ITEM,silver,400,240);
+    kind=FE8_INVENTORY_HIT_POOL_ITEM;index=silver;
+    assert(fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));
+    assert(!ui.dragging && !ui.has_selection && !ui.drag_armed);
+    arm_drag(&ui,silver,1);kind=FE8_INVENTORY_HIT_POOL_ITEM;index=silver;
+    assert(fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));assert(!ui.has_selection);
+    arm_drag(&ui,silver,1);kind=FE8_INVENTORY_HIT_NONE;index=-1;
+    assert(fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));assert(!ui.has_selection);
+    arm_drag(&ui,silver,1);kind=FE8_INVENTORY_HIT_POOL_ITEM;index=index_named(&ui,"Learned spell");
+    assert(fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));assert(!ui.has_selection);
+    /* Sorting after pointer-down cannot change the canonical source. */
+    arm_drag(&ui,silver,2);fe8_inventory_ui_cycle_sort(&ui,&s);
+    kind=FE8_INVENTORY_HIT_ROSTER;index=0;
+    assert(!fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));
+    assert(kind==FE8_INVENTORY_HIT_UNIT_ITEM && index==3 && equal(ui.selected,source));
+    ui=open_ui();arm_drag(&ui,silver,1.25f);kind=FE8_INVENTORY_HIT_UNIT_ITEM;index=0;
+    assert(!fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));
+    assert(equal(ui.selected,source)); /* Occupied slot = intentional swap. */
+    ui=open_ui();arm_drag(&ui,silver,1);fe8_inventory_desktop_cancel_drag(&ui);
+    assert(!ui.has_selection && !ui.drag_armed && !ui.dragging);
+    /* A snapshot changed during a gesture must never move the replacement. */
+    arm_drag(&ui,silver,1);
+    if(source.kind==FE8_INVENTORY_ENDPOINT_SUPPLY) s.supply[source.slot]^=0x100;
+    else {
+        for(int j=0;j<s.unit_count;++j)if(s.units[j].address==source.unit_address)s.units[j].items[source.slot]^=0x100;
+    }
+    kind=FE8_INVENTORY_HIT_UNIT_ITEM;index=3;
+    assert(fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));assert(!ui.has_selection);
+    s=before;
+    ui=open_ui();int fixed=index_named(&ui,"Learned spell");
+    fe8_inventory_desktop_pointer_down(&ui,&s,FE8_INVENTORY_HIT_POOL_ITEM,fixed,400,240);
+    assert(!ui.drag_armed);
+    /* Dropping on the source's owner is a no-op, not sticky move mode. */
+    ui=open_ui();
+    fe8_inventory_desktop_pointer_down(&ui,&s,FE8_INVENTORY_HIT_UNIT_ITEM,0,40,200);
+    fe8_inventory_desktop_pointer_motion(&ui,&s,1440,900,40,430);
+    kind=FE8_INVENTORY_HIT_ROSTER;index=0;
+    assert(fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));
+    assert(!ui.has_selection&&!ui.drag_armed);
+    /* Public gesture resolution also rejects a vanished destination. */
+    fe8_inventory_desktop_pointer_down(&ui,&s,FE8_INVENTORY_HIT_UNIT_ITEM,0,40,200);
+    fe8_inventory_desktop_pointer_motion(&ui,&s,1440,900,40,430);
+    kind=FE8_INVENTORY_HIT_POOL_ITEM;index=ui.pool_count;
+    assert(fe8_inventory_desktop_pointer_up(&ui,&s,&kind,&index));assert(!ui.has_selection);
+    assert(memcmp(&s,&before,sizeof(s))==0);
+}
+
 static void utf8_and_order(void) {
     Fe8InventoryUi ui=open_ui();int a[FE8_INVENTORY_POOL_CAPACITY],b[FE8_INVENTORY_POOL_CAPACITY];
     click(&ui,FE8_INVENTORY_HIT_SEARCH,0);fe8_inventory_desktop_text(&ui,"Aé");assert(strcmp(ui.query,"Aé")==0);
@@ -122,6 +205,9 @@ static void geometry(int w,int h,float dpi,int zoom,int comfy) {
     int index=-1;
     Fe8InventoryHitKind kind=fe8_inventory_desktop_hit(&ui,&s,w,h,(int)((l.pool_x+12)*scale+.5f),(int)((l.table_y+3)*scale+.5f),&index);
     assert(kind==FE8_INVENTORY_HIT_POOL_ITEM&&index==indices[0]);
+    kind=fe8_inventory_desktop_hit(&ui,&s,w,h,(int)((l.quick_x+12)*scale+.5f),(int)((l.table_y+3)*scale+.5f),&index);
+    assert(kind==FE8_INVENTORY_HIT_QUICK_POOL&&index==indices[0]);
+    assert(l.quick_x+l.quick_width<=l.pool_x+l.pool_width);
     fe8_inventory_desktop_scroll(&ui,&s,w,h,(int)((l.pool_x+10)*scale),9999);
     int max=n>l.table_rows?n-l.table_rows:0;assert(ui.pool_scroll==max);
     int stride=w+7;size_t cells=(size_t)stride*h+16;
@@ -168,7 +254,7 @@ static void screenshots(const char *dir,const char *portraits) {
     }
 }
 int main(int argc,char **argv) {
-    fixture();view_and_actions();utf8_and_order();
+    fixture();view_and_actions();utf8_and_order();quick_actions_and_drag();
     geometry(640,480,1,100,0);geometry(640,480,1,200,1);
     geometry(960,640,1,100,1);geometry(1280,800,1,100,0);
     geometry(1440,900,1,100,1);geometry(1920,1200,1.5f,100,1);

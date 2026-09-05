@@ -32,6 +32,8 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_STORE,
     FE8_INVENTORY_HIT_CANCEL,
     FE8_INVENTORY_HIT_CLOSE,
+    FE8_INVENTORY_HIT_QUICK_POOL,
+    FE8_INVENTORY_HIT_QUICK_UNIT,
     /* Source compatibility for callers that still use the old right-pane name. */
     FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_POOL_ITEM,
 } Fe8InventoryHitKind;
@@ -90,6 +92,14 @@ typedef struct Fe8InventoryUi {
     Fe8InventoryEndpoint detail;
     int has_detail;
     int detail_scroll;
+    /* Pointer gestures are armed by a real occupied row, never by a view index
+       retained across a sort. A click only inspects; motion starts the drag. */
+    int drag_armed, dragging;
+    int drag_start_x, drag_start_y, drag_x, drag_y;
+    Fe8InventoryEndpoint drag_source;
+    uint16_t drag_item;
+    Fe8InventoryHitKind drag_hover_kind;
+    int drag_hover_index;
 } Fe8InventoryUi;
 
 void fe8_inventory_ui_init(Fe8InventoryUi *ui);

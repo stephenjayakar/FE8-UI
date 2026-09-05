@@ -26,6 +26,7 @@ typedef struct Fe8MemoryWriter {
 typedef struct Fe8InventoryUnit {
     uint32_t address;
     uint8_t character_id;
+    uint8_t class_id;
     uint8_t level;
     uint8_t exp;
     uint8_t hp;
@@ -85,6 +86,7 @@ typedef enum Fe8InventoryUseState {
     FE8_INVENTORY_USE_RANK,
     FE8_INVENTORY_USE_LOCKED,
     FE8_INVENTORY_USE_STATUS,
+    FE8_INVENTORY_USE_UNKNOWN,
 } Fe8InventoryUseState;
 
 bool fe8_prebattle_inventory_active(

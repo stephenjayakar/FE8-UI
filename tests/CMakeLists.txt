@@ -155,3 +155,6 @@ endif()
 fe8_add_test(inventory_workspace
     test_inventory_workspace.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
 target_link_libraries(test_inventory_workspace PRIVATE ${DESKTOP_TEXT_LIBS})
+
+fe8_add_test(fe8_catalog_locks test_fe8_catalog_locks.c
+    ../app/src/fe8_catalog.c ../app/src/prebattle_inventory.c)

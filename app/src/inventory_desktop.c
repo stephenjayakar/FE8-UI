@@ -190,7 +190,7 @@ void fe8_inventory_desktop_layout(const Fe8InventoryUi *ui, int width, int heigh
     static const int widths[11] = {0, 60, 64, 106, 34, 34, 40, 38, 34, 46, 72};
     static const int optional[] = {8, 7, 4, 9, 6, 5, 1, 10};
     float scale = fe8_inventory_desktop_scale(ui, width, height);
-    int reserved = 0;
+    int reserved = 60; /* Pinned, local Give/Store action column. */
     memset(l, 0, sizeof(*l));
     l->width = (int)(width / scale + 0.0001f);
     l->height = (int)(height / scale + 0.0001f);
@@ -229,6 +229,8 @@ void fe8_inventory_desktop_layout(const Fe8InventoryUi *ui, int width, int heigh
     l->column_width[0] = l->pool_width - GUTTER - reserved;
     int x = l->pool_x;
     for (int i = 0; i < 11; ++i) { l->column_x[i] = x; x += l->column_width[i]; }
+    l->quick_x = x;
+    l->quick_width = 60;
     l->action_width = l->detail_wide ? l->detail_width - 32 : clamp(l->width / 4, 152, 220);
     l->action_x = l->detail_x + l->detail_width - l->action_width - 16;
     l->action_y = l->detail_wide ? l->detail_y + l->detail_height - 116 : l->detail_y + 8;
@@ -302,7 +304,10 @@ Fe8InventoryHitKind fe8_inventory_desktop_hit(const Fe8InventoryUi *ui,
     n = fe8_inventory_desktop_visible(ui, s, visible);
     if (y >= l.table_y && y < l.table_y + l.table_rows * l.row_height) {
         int row = offset(ui->pool_scroll, n, l.table_rows) + (y - l.table_y) / l.row_height;
-        if (row < n) { *index = visible[row]; return FE8_INVENTORY_HIT_POOL_ITEM; }
+        if (row < n) {
+            *index = visible[row];
+            return x >= l.quick_x ? FE8_INVENTORY_HIT_QUICK_POOL : FE8_INVENTORY_HIT_POOL_ITEM;
+        }
     }
     return FE8_INVENTORY_HIT_NONE;
 }
@@ -346,6 +351,21 @@ int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *
     ui->search_active = *kind == FE8_INVENTORY_HIT_SEARCH;
     u = target(ui,s);
     switch (*kind) {
+    case FE8_INVENTORY_HIT_QUICK_POOL:
+    case FE8_INVENTORY_HIT_QUICK_UNIT: {
+        Fe8InventoryHitKind source_kind = *kind == FE8_INVENTORY_HIT_QUICK_POOL ?
+            FE8_INVENTORY_HIT_POOL_ITEM : FE8_INVENTORY_HIT_UNIT_ITEM;
+        if ((source_kind == FE8_INVENTORY_HIT_POOL_ITEM && (*index < 0 || *index >= ui->pool_count)) ||
+            (source_kind == FE8_INVENTORY_HIT_UNIT_ITEM && (!u || *index < 0 || *index >= 5))) return 1;
+        e = fe8_inventory_ui_endpoint(ui,s,source_kind,*index);
+        if (!fe8_inventory_ui_endpoint_item(s,e)) return 1;
+        fe8_inventory_desktop_cancel_drag(ui);
+        ui->has_selection = 0;
+        ui->detail = e; ui->has_detail = 1; ui->detail_scroll = 0;
+        *kind = u && e.kind == FE8_INVENTORY_ENDPOINT_UNIT && e.unit_address == u->address ?
+            FE8_INVENTORY_HIT_STORE : FE8_INVENTORY_HIT_GIVE;
+        return fe8_inventory_desktop_click(ui,s,kind,index);
+    }
     case FE8_INVENTORY_HIT_SEARCH: return 1;
     case FE8_INVENTORY_HIT_UNIT_NAME:
     case FE8_INVENTORY_HIT_UNIT_CLASS:
@@ -363,6 +383,7 @@ int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *
     case FE8_INVENTORY_HIT_RESET:
         ui->query[0] = 0; ui->type_filter = 0; ui->usable_only = 0; changed_view(ui); return 1;
     case FE8_INVENTORY_HIT_CANCEL:
+        fe8_inventory_desktop_cancel_drag(ui);
         ui->has_selection = 0;
         snprintf(ui->status,sizeof(ui->status),"Move cancelled. No items changed."); return 1;
     case FE8_INVENTORY_HIT_SORT_COLUMN:
@@ -379,6 +400,7 @@ int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *
     case FE8_INVENTORY_HIT_STORE:
         valid = pinned(ui,s,&e);
         if (!valid || !fe8_inventory_ui_endpoint_movable(s,e)) {
+            ui->has_selection = 0;
             snprintf(ui->status,sizeof(ui->status),"%s",valid ? "This is fixed equipment and cannot be moved." : "Select an item to see its actions.");
             return 1;
         }
@@ -389,14 +411,21 @@ int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *
         }
         if (*kind == FE8_INVENTORY_HIT_GIVE) {
             int slot = free_slot(u);
-            if (!u || slot < 0 || (e.kind == FE8_INVENTORY_ENDPOINT_UNIT && e.unit_address == u->address)) {
-                snprintf(ui->status,sizeof(ui->status),"%s",!u ? "Choose a recipient first." : slot < 0 ? "Loadout full. Use Move / swap to choose what to exchange." : "This item is already in this loadout.");
+            if (!u || (e.kind == FE8_INVENTORY_ENDPOINT_UNIT && e.unit_address == u->address)) {
+                ui->has_selection = 0;
+                snprintf(ui->status,sizeof(ui->status),"%s",!u ? "Choose a recipient first." : "This item is already in this loadout.");
+                return 1;
+            }
+            if (slot < 0) {
+                ui->selected = e; ui->has_selection = 1;
+                snprintf(ui->status,sizeof(ui->status),"%s is full. Click a loadout slot to swap, or Esc to cancel.",u->name);
                 return 1;
             }
             *kind = FE8_INVENTORY_HIT_UNIT_ITEM; *index = slot;
         } else {
             int dest = deposit_index(ui);
             if (dest < 0 || e.kind == FE8_INVENTORY_ENDPOINT_SUPPLY) {
+                ui->has_selection = 0;
                 snprintf(ui->status,sizeof(ui->status),"%s",dest < 0 ? "Supply is full. Use Move / swap to exchange items." : "This item is already in supply."); return 1;
             }
             *kind = FE8_INVENTORY_HIT_POOL_ITEM; *index = dest;
@@ -418,15 +447,108 @@ int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *
         }
         if (fe8_inventory_ui_endpoint_item(s,e)) {
             ui->detail = e; ui->has_detail = 1; ui->detail_scroll = 0;
-            snprintf(ui->status,sizeof(ui->status),"Inspecting %s. Choose Give, Move / swap, or Store.",info_at(s,e)->name);
-        } else snprintf(ui->status,sizeof(ui->status),"Select an item, then choose Give or Move / swap.");
+            snprintf(ui->status,sizeof(ui->status),"%s · Double-click to transfer, or drag to a slot, ally, or supply.",info_at(s,e)->name);
+        } else snprintf(ui->status,sizeof(ui->status),"Drag an item here, or use Give beside an item.");
         return 1;
     case FE8_INVENTORY_HIT_ROSTER:
     case FE8_INVENTORY_HIT_ROSTER_CLASS:
-        if (*index >= 0 && *index < s->unit_count) { changed_view(ui); ui->detail_scroll = 0; }
+        if (*index >= 0 && *index < s->unit_count) {
+            changed_view(ui); ui->detail_scroll = 0;
+            if (ui->has_selection) {
+                ui->current_unit = *index;
+                *kind = FE8_INVENTORY_HIT_GIVE;
+                return fe8_inventory_desktop_click(ui,s,kind,index);
+            }
+        }
         return 0;
     default: return 0;
     }
+}
+
+void fe8_inventory_desktop_cancel_drag(Fe8InventoryUi *ui) {
+    if (!ui) return;
+    if (ui->dragging) ui->has_selection = 0;
+    ui->drag_armed = ui->dragging = 0;
+    ui->drag_hover_kind = FE8_INVENTORY_HIT_NONE;
+    ui->drag_hover_index = -1;
+}
+
+void fe8_inventory_desktop_pointer_down(Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *s, Fe8InventoryHitKind kind, int index, int x, int y) {
+    Fe8InventoryEndpoint e;
+    if (!ui || !s || !ui->active || !ui->desktop) return;
+    fe8_inventory_desktop_cancel_drag(ui);
+    if (ui->has_selection) return; /* Click-move mode handles the destination. */
+    if (kind == FE8_INVENTORY_HIT_POOL_ITEM) {
+        if (index < 0 || index >= ui->pool_count) return;
+    } else if (kind == FE8_INVENTORY_HIT_UNIT_ITEM) {
+        if (!target(ui,s) || index < 0 || index >= FE8_INVENTORY_ITEM_SLOTS) return;
+    } else return;
+    e = fe8_inventory_ui_endpoint(ui,s,kind,index);
+    if (!fe8_inventory_ui_endpoint_item(s,e) || !fe8_inventory_ui_endpoint_movable(s,e)) return;
+    ui->drag_source = e;
+    ui->drag_item = fe8_inventory_ui_endpoint_item(s,e);
+    ui->drag_armed = 1;
+    ui->drag_start_x = ui->drag_x = x;
+    ui->drag_start_y = ui->drag_y = y;
+}
+
+void fe8_inventory_desktop_pointer_motion(Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *s, int width, int height, int x, int y) {
+    float scale;
+    if (!ui || !s || !ui->drag_armed) return;
+    scale = fe8_inventory_desktop_scale(ui,width,height);
+    ui->drag_x = x; ui->drag_y = y;
+    if (!ui->dragging && (x - ui->drag_start_x >= 5 * scale ||
+            ui->drag_start_x - x >= 5 * scale || y - ui->drag_start_y >= 5 * scale ||
+            ui->drag_start_y - y >= 5 * scale)) {
+        ui->dragging = 1;
+        ui->selected = ui->drag_source; ui->has_selection = 1;
+        snprintf(ui->status,sizeof(ui->status),"Drop on a slot to move/swap, an ally to give, or supply to store. Esc cancels.");
+    }
+    if (ui->dragging) ui->drag_hover_kind = fe8_inventory_desktop_hit(ui,s,width,height,x,y,&ui->drag_hover_index);
+}
+
+int fe8_inventory_desktop_pointer_up(Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *s, Fe8InventoryHitKind *kind, int *index) {
+    int dragging;
+    if (!ui || !s || !kind || !index) return 1;
+    dragging = ui->dragging;
+    ui->drag_armed = ui->dragging = 0;
+    ui->drag_hover_kind = FE8_INVENTORY_HIT_NONE;
+    ui->drag_hover_index = -1;
+    if (!dragging) return 1; /* Ordinary click was already handled on down. */
+    if (fe8_inventory_ui_endpoint_item(s,ui->drag_source) != ui->drag_item) {
+        ui->has_selection = 0;
+        snprintf(ui->status,sizeof(ui->status),"Move cancelled: the source item changed.");
+        return 1;
+    }
+    if ((*kind == FE8_INVENTORY_HIT_POOL_ITEM && (*index < 0 || *index >= ui->pool_count)) ||
+        (*kind == FE8_INVENTORY_HIT_UNIT_ITEM && (!target(ui,s) || *index < 0 || *index >= FE8_INVENTORY_ITEM_SLOTS)) ||
+        ((*kind == FE8_INVENTORY_HIT_ROSTER || *kind == FE8_INVENTORY_HIT_ROSTER_CLASS) &&
+            (*index < 0 || *index >= s->unit_count))) {
+        ui->has_selection = 0;
+        snprintf(ui->status,sizeof(ui->status),"Move cancelled: the destination is unavailable.");
+        return 1;
+    }
+    if (*kind == FE8_INVENTORY_HIT_UNIT_NAME || *kind == FE8_INVENTORY_HIT_UNIT_CLASS) {
+        *kind = FE8_INVENTORY_HIT_ROSTER; *index = ui->current_unit;
+    }
+    if (*kind == FE8_INVENTORY_HIT_UNIT_ITEM || *kind == FE8_INVENTORY_HIT_POOL_ITEM ||
+        *kind == FE8_INVENTORY_HIT_ROSTER || *kind == FE8_INVENTORY_HIT_ROSTER_CLASS) {
+        if (*kind == FE8_INVENTORY_HIT_UNIT_ITEM || *kind == FE8_INVENTORY_HIT_POOL_ITEM) {
+            Fe8InventoryEndpoint e = fe8_inventory_ui_endpoint(ui,s,*kind,*index);
+            if (!fe8_inventory_ui_endpoint_movable(s,e)) {
+                ui->has_selection = 0;
+                snprintf(ui->status,sizeof(ui->status),"Fixed equipment cannot be replaced. No items changed.");
+                return 1;
+            }
+        }
+        return fe8_inventory_desktop_click(ui,s,kind,index);
+    }
+    ui->has_selection = 0;
+    snprintf(ui->status,sizeof(ui->status),"Move cancelled. Drop on a slot, ally, or supply.");
+    return 1;
 }
 
 /* Painting helpers. All primitives clip to the supplied framebuffer, including
@@ -480,6 +602,7 @@ static const char *use_label(const Fe8InventoryUnit *u,const Fe8ItemInfo *i,uint
     case FE8_INVENTORY_USE_RANK:*c=WARN;return "Rank";
     case FE8_INVENTORY_USE_LOCKED:*c=DANGER;return "Locked";
     case FE8_INVENTORY_USE_STATUS:*c=WARN;return "Status";
+    case FE8_INVENTORY_USE_UNKNOWN:*c=WARN;return "Unknown";
     default:return "Item";
     }
 }
@@ -529,6 +652,9 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
             int inspected=ui->has_detail&&same(ui->detail,e);
             card(p,PAD+6,y+1,l->sidebar-18,l->side_row_height-2,selected?SELECTED:inspected?RAISED:PANEL);
             if(selected||inspected)fill(p,PAD+6,y+3,2,l->side_row_height-6,ACCENT);
+            if(ui->dragging && ui->drag_hover_kind==FE8_INVENTORY_HIT_UNIT_ITEM && ui->drag_hover_index==j)
+                border(p,PAD+6,y+1,l->sidebar-18,l->side_row_height-2,
+                    !u->items[j]||u->item_info[j].movable?ACCENT:DANGER);
             snprintf(b,sizeof(b),"%d",j+1);
             label(p,PAD+12,y+5,18,16,b,MUTED,10,0,0);
             if(u->items[j]) {
@@ -551,6 +677,8 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
         int idx=start+row,y=l->roster_y+row*l->side_row_height;
         const Fe8InventoryUnit *r=&s->units[idx];
         if(idx==ui->current_unit){card(p,PAD+6,y,l->sidebar-18,l->side_row_height-2,SELECTED);fill(p,PAD+6,y+3,2,l->side_row_height-8,ACCENT);}
+        if(ui->dragging && (ui->drag_hover_kind==FE8_INVENTORY_HIT_ROSTER || ui->drag_hover_kind==FE8_INVENTORY_HIT_ROSTER_CLASS) && ui->drag_hover_index==idx)
+            border(p,PAD+6,y,l->sidebar-18,l->side_row_height-2,ACCENT);
         int split=PAD+l->sidebar*42/100;
         label(p,PAD+12,y+4,split-PAD-16,20,r->name,idx==ui->current_unit?ACCENT:TEXT,12,idx==ui->current_unit,0);
         if(selected_info) {
@@ -591,6 +719,7 @@ static void draw_pool(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySnap
         snprintf(b,sizeof(b),"%s%s",heads[col],col<4&&ui->pool_sort==(Fe8InventorySort)sorts[col]?((ui->sort_descending ^ (ui->pool_sort == FE8_INVENTORY_SORT_USES))?" ↓":" ↑"):"");
         label(p,l->column_x[col]+7,l->table_y-20,l->column_width[col]-10,18,b,MUTED,10,1,0);
     }
+    label(p,l->quick_x+5,l->table_y-20,l->quick_width-8,18,"Move",MUTED,10,1,0);
     for(int row=0;row<l->table_rows&&start+row<n;++row) {
         const Fe8InventoryListEntry *e=&ui->pool[visible[start+row]];
         const Fe8ItemInfo *i=e->info;
@@ -622,6 +751,13 @@ static void draw_pool(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySnap
             }
             label(p,l->column_x[col]+7,text_y,l->column_width[col]-10,20,b,c,11,0,0);
         }
+        int own=u && e->endpoint.kind==FE8_INVENTORY_ENDPOINT_UNIT && e->endpoint.unit_address==u->address;
+        int enabled=i && i->movable && (own?deposit_index(ui)>=0:u!=NULL);
+        const char *action=!i||!i->movable?"Fixed":own?(deposit_index(ui)<0?"Full":"Store"):u&&free_slot(u)<0?"Swap":"Give";
+        card(p,l->quick_x+2,y+2,l->quick_width-6,l->row_height-4,enabled?SELECTED:RAISED);
+        label(p,l->quick_x+8,text_y,l->quick_width-14,20,action,enabled?ACCENT:MUTED,11,1,0);
+        if(ui->dragging && ui->drag_hover_kind==FE8_INVENTORY_HIT_POOL_ITEM && ui->drag_hover_index==visible[start+row])
+            border(p,l->pool_x,y,l->pool_width-GUTTER,l->row_height,i&&i->movable?ACCENT:DANGER);
         durability(p,l->column_x[2]+7,y+l->row_height-4,l->column_width[2]-14,e->item,i);
     }
     if(!n) {
@@ -631,6 +767,8 @@ static void draw_pool(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySnap
     scroll_mark(p,l->pool_x+l->pool_width-5,l->table_y,l->table_rows*l->row_height,n,l->table_rows,start);
     fill(p,l->pool_x,l->deposit_y,l->pool_width,1,LINE);
     int empty=deposit_index(ui);
+    if(ui->dragging && empty>=0 && ui->drag_hover_kind==FE8_INVENTORY_HIT_POOL_ITEM && ui->drag_hover_index==empty)
+        border(p,l->pool_x,l->deposit_y,l->pool_width,30,ACCENT);
     snprintf(b,sizeof(b),"%d shown   ·   %s",n,empty>=0?(ui->has_selection?"+ Place in supply":"Supply has space"):"Supply full");
     label(p,l->pool_x+10,l->deposit_y+8,l->pool_width-114,20,b,ui->has_selection&&empty>=0?ACCENT:MUTED,11,0,0);
     if(ui->query[0]||ui->type_filter||ui->usable_only)
@@ -663,7 +801,7 @@ static void draw_detail(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySn
     int text_width=l->detail_wide?l->detail_width-32:l->action_x-x-16;
     card(p,l->detail_x,l->detail_y,l->detail_width,l->detail_height,PANEL);
     if(!i||!encoded) {
-        label(p,x,y,text_width,20,unit_help?unit_title:"Make room for a better plan.",TEXT,l->detail_wide?18:15,1,0);
+        label(p,x,y,text_width,20,unit_help?unit_title:"Item details",TEXT,l->detail_wide?18:15,1,0);
         description(p,x,y+32,text_width,l->detail_wide?180:l->detail_height-66,
             unit_help?unit_help:"Select an item to inspect its stats, compare it with the recipient's loadout, and choose where it goes. Browsing never moves equipment.",ui->detail_scroll);
     } else {
@@ -698,7 +836,14 @@ static void draw_detail(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySn
             snprintf(b,sizeof(b),"%s%s%s",state,u?" for ":"",u?u->name:"");
             label(p,x,info_y,text_width,24,b,state_color,14,1,0);
             if(u&&(i->attributes&5)&&i->weapon_type<8) {
-                snprintf(b,sizeof(b),"Needs %c %s  ·  %s has %c",rank_letter(i->weapon_rank),TYPES[type_key(i)],u->name,rank_letter(u->ranks[i->weapon_type]));
+                if (i->lock_kind == FE8_ITEM_LOCK_CHARACTER)
+                    snprintf(b,sizeof(b),"Personal weapon · character restriction");
+                else if (i->lock_kind == FE8_ITEM_LOCK_CLASS)
+                    snprintf(b,sizeof(b),"Class-restricted weapon");
+                else if (i->lock_kind == FE8_ITEM_LOCK_UNKNOWN)
+                    snprintf(b,sizeof(b),"Restriction data unavailable · not marked Ready");
+                else
+                    snprintf(b,sizeof(b),"Needs %c %s  ·  %s has %c",rank_letter(i->weapon_rank),TYPES[type_key(i)],u->name,rank_letter(u->ranks[i->weapon_type]));
                 label(p,x,info_y+28,text_width,36,b,MUTED,11,0,1);
             }
             int own=owner_index(s,e);
@@ -760,18 +905,25 @@ void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui,const Fe8InventorySnaps
         fe8_host_text_end(&p.text);return;
     }
     label(&p,PAD+4,14,150,36,"Armory",TEXT,l.height>=600?28:24,1,0);
-    if(l.width>=1040)label(&p,170,24,310,20,"YOUR ARMY. WELL EQUIPPED.",MUTED,10,1,0);
     snprintf(b,sizeof(b),"%u allies   ·   Supply %u / %u",s->unit_count,s->supply_count,s->supply_capacity);
     label(&p,l.width-420,15,316,22,b,GOLD,12,1,0);
     label(&p,l.width-420,38,316,20,"/ Search   ·   +/- Size   ·   I / Esc Close",MUTED,11,0,0);
     button(&p,l.width-88,14,76,28,"Close",0,1);
     if(l.height>=600) {
         label(&p,PAD+4,54,l.sidebar,18,"EQUIP FOR",MUTED,10,1,0);
-        label(&p,l.pool_x,54,l.pool_width,18,ui->has_selection?"MOVING ITEM · Choose a destination or cancel":"BROWSE EQUIPMENT · Click to inspect",ui->has_selection?ACCENT:MUTED,10,1,0);
+        label(&p,l.pool_x,54,l.pool_width,18,ui->has_selection?"MOVING ITEM · Choose a destination or cancel":"Click to inspect · Double-click to transfer · Drag to move",ui->has_selection?ACCENT:MUTED,10,1,0);
     }
     draw_sidebar(&p,ui,s,&l);
     draw_pool(&p,ui,s,&l);
     draw_detail(&p,ui,s,&l);
     if(l.detail_wide)label(&p,PAD+4,l.height-30,l.width-32,22,ui->status[0]?ui->status:"Click an item to inspect it. Your game is paused while the Armory is open.",ui->has_selection?ACCENT:MUTED,12,0,0);
+    if(ui->dragging) {
+        const Fe8ItemInfo *drag=info_at(s,ui->drag_source);
+        int x=clamp((int)(ui->drag_x/p.scale)+14,8,l.width-224);
+        int y=clamp((int)(ui->drag_y/p.scale)+16,8,l.height-54);
+        card(&p,x,y,216,46,SELECTED);border(&p,x,y,216,46,ACCENT);
+        label(&p,x+10,y+6,196,20,drag?drag->name:"Moving item",TEXT,13,1,0);
+        label(&p,x+10,y+27,196,16,"Drop to transfer · Esc cancels",ACCENT,10,0,0);
+    }
     fe8_host_text_end(&p.text);
 }

@@ -494,6 +494,10 @@ static int set_inventory_presentation(Fe8HostVideo *video,
     Fe8ExtendedViewport *viewport, int *gba_x, int *gba_y,
     Fe8InventoryUi *ui, int enabled, enum Fe8HostShader game_shader) {
     int density = enabled ? 0 : 1;
+    if (!enabled) {
+        fe8_inventory_desktop_cancel_drag(ui);
+        SDL_CaptureMouse(SDL_FALSE);
+    }
     if (enabled && !ui->desktop) {
         SDL_GetWindowMinimumSize(video->window, &ui->previous_min_width, &ui->previous_min_height);
         SDL_SetWindowMinimumSize(video->window, 640, 480);
@@ -954,6 +958,21 @@ int main(int argc, char **argv) {
                 }
             }
             if (inventory_ui.active && inventory_ui.desktop) {
+                if (event.type == SDL_WINDOWEVENT &&
+                        (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+                         event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
+                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                    SDL_CaptureMouse(SDL_FALSE);
+                }
+                if (event.type == SDL_KEYDOWN && inventory_ui.drag_armed) {
+                    int cancelled = inventory_ui.dragging;
+                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                    SDL_CaptureMouse(SDL_FALSE);
+                    if (cancelled && event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                        snprintf(inventory_ui.status,sizeof(inventory_ui.status),"Move cancelled. No items changed.");
+                        continue;
+                    }
+                }
                 if (event.type == SDL_TEXTINPUT && inventory_ui.search_active) {
                     fe8_inventory_desktop_text(&inventory_ui, event.text.text);
                     continue;
@@ -1036,6 +1055,9 @@ int main(int argc, char **argv) {
                         host_pointer_canvas_x, host_pointer_canvas_y, &index);
                     fe8_inventory_ui_inspect(&inventory_ui, &inventory_snapshot,
                         hit, index);
+                    fe8_inventory_desktop_pointer_motion(&inventory_ui,
+                        &inventory_snapshot, canvas_width, canvas_height,
+                        host_pointer_canvas_x, host_pointer_canvas_y);
                 } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                         event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
                     inventory_ui.active = 0;
@@ -1061,6 +1083,8 @@ int main(int argc, char **argv) {
                 } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                         event.key.keysym.scancode == SDL_SCANCODE_U &&
                         inventory_undo.valid) {
+                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                    inventory_ui.has_selection = 0;
                     if (fe8_swap_inventory_endpoints(&profile_memory, &profile_writer,
                             profile, inventory_undo.first, inventory_undo.second_item,
                             inventory_undo.second, inventory_undo.first_item)) {
@@ -1081,23 +1105,54 @@ int main(int argc, char **argv) {
                     fe8_inventory_desktop_scroll_at(&inventory_ui,
                         &inventory_snapshot, canvas_width, canvas_height,
                         host_pointer_canvas_x, host_pointer_canvas_y, direction);
+                    fe8_inventory_desktop_pointer_motion(&inventory_ui,
+                        &inventory_snapshot, canvas_width, canvas_height,
+                        host_pointer_canvas_x, host_pointer_canvas_y);
                 } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                         event.button.button == SDL_BUTTON_RIGHT) {
+                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                    SDL_CaptureMouse(SDL_FALSE);
                     inventory_ui.has_selection = 0;
                     snprintf(inventory_ui.status, sizeof(inventory_ui.status),
                         "Selection cleared");
-                } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                } else if ((event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) &&
                         event.button.button == SDL_BUTTON_LEFT) {
                     int canvas_x;
                     int canvas_y;
                     int index;
-                    if (fe8_host_video_event_to_canvas(&video,
-                            event.button.x, event.button.y, &canvas_x, &canvas_y)) {
+                    int release = event.type == SDL_MOUSEBUTTONUP;
+                    int mapped = fe8_host_video_event_to_canvas(&video,
+                        event.button.x, event.button.y, &canvas_x, &canvas_y);
+                    if (release) SDL_CaptureMouse(SDL_FALSE);
+                    if (!mapped) {
+                        if (release) fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                        continue;
+                    }
+                    {
                         Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
                             &inventory_snapshot, canvas_width, canvas_height,
                             canvas_x, canvas_y, &index);
-                        int consumed = fe8_inventory_desktop_click(&inventory_ui,
-                            &inventory_snapshot, &hit, &index);
+                        int consumed;
+                        if (release) {
+                            consumed = fe8_inventory_desktop_pointer_up(&inventory_ui,
+                                &inventory_snapshot, &hit, &index);
+                        } else {
+                            /* A second press on a one-click action must not
+                               transfer the next row after the first one moved. */
+                            if (event.button.clicks > 1 && hit == FE8_INVENTORY_HIT_QUICK_POOL)
+                                continue;
+                            if (event.button.clicks == 2 && !inventory_ui.has_selection) {
+                                if (hit == FE8_INVENTORY_HIT_POOL_ITEM)
+                                    hit = FE8_INVENTORY_HIT_QUICK_POOL;
+                                else if (hit == FE8_INVENTORY_HIT_UNIT_ITEM)
+                                    hit = FE8_INVENTORY_HIT_QUICK_UNIT;
+                            }
+                            fe8_inventory_desktop_pointer_down(&inventory_ui,&inventory_snapshot,
+                                hit,index,canvas_x,canvas_y);
+                            if (inventory_ui.drag_armed) SDL_CaptureMouse(SDL_TRUE);
+                            consumed = fe8_inventory_desktop_click(&inventory_ui,
+                                &inventory_snapshot, &hit, &index);
+                        }
                         if (inventory_ui.search_active) SDL_StartTextInput();
                         else SDL_StopTextInput();
                         if (consumed) continue;

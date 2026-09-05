@@ -30,6 +30,7 @@ bool fe8_catalog_init(const Fe8MemoryReader *memory, const Fe8Profile *profile,
     catalog->huffman_table = r32(memory, profile->inventory.huffman_table_literal);
     catalog->item_table = profile->inventory.item_table;
     catalog->immovable_item_attributes = profile->inventory.immovable_item_attributes;
+    catalog->weapon_lock_table = profile->inventory.weapon_lock_table;
     catalog->portrait_table_bias = r32(memory, profile->inventory.portrait_table_literal);
     catalog->valid = rom(catalog->message_table, 4) &&
         rom(catalog->huffman_root, 4) && rom(catalog->huffman_table, 4) &&
@@ -174,6 +175,37 @@ static void normalize_archanae_item_description(char *description, size_t capaci
     }
 }
 
+/* In the SHA-verified Archanae profile, CanUnitUseWeapon's predicate at
+   0x08B3EA54 indexes 0x08B2BAE4 with the high attribute byte. A list begins
+   with mode 1 (character IDs) or 3 (class IDs), followed by IDs and a zero
+   terminator. Modes 0/2 impose no usability restriction in that predicate.
+   Keep the format profile-scoped: those bits mean other things in other ROMs.
+   Malformed lists fail closed, without making the rest of an item unreadable. */
+static void decode_weapon_lock(const Fe8MemoryReader *memory,
+    const Fe8Catalog *catalog, Fe8ItemInfo *item) {
+    unsigned index = item->attributes >> 24;
+    uint32_t entry, list;
+    uint8_t mode;
+    if (!index || !catalog->weapon_lock_table) return;
+    item->lock_kind = FE8_ITEM_LOCK_UNKNOWN;
+    if (!rom(catalog->weapon_lock_table, 256 * 4)) return;
+    entry = catalog->weapon_lock_table + index * 4;
+    list = r32(memory, entry);
+    if (!list) { item->lock_kind = FE8_ITEM_LOCK_NONE; return; }
+    if (!rom(list, 1)) return;
+    mode = r8(memory, list);
+    if (mode == 0 || mode == 2) { item->lock_kind = FE8_ITEM_LOCK_NONE; return; }
+    if (mode != 1 && mode != 3) return;
+    for (unsigned n = 1; n <= 256 && rom(list, n + 1); ++n) {
+        uint8_t id = r8(memory, list + n);
+        if (!id) {
+            item->lock_kind = mode == 1 ? FE8_ITEM_LOCK_CHARACTER : FE8_ITEM_LOCK_CLASS;
+            return;
+        }
+        item->lock_ids[id / 8] |= (uint8_t)(1u << (id % 8));
+    }
+}
+
 bool fe8_catalog_item(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     uint16_t encoded_item, Fe8ItemInfo *item) {
     uint32_t record;
@@ -194,6 +226,7 @@ bool fe8_catalog_item(const Fe8MemoryReader *memory, const Fe8Catalog *catalog,
     description_id = r16(memory, record + 2);
     item->weapon_type = r8(memory, record + 7);
     item->attributes = r32(memory, record + 8);
+    decode_weapon_lock(memory, catalog, item);
     item->movable = (item->attributes & catalog->immovable_item_attributes) == 0;
     item->max_uses = r8(memory, record + 0x14);
     item->might = r8(memory, record + 0x15);

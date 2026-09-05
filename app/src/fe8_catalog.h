@@ -21,8 +21,16 @@ typedef struct Fe8Catalog {
     uint32_t item_table;
     uint32_t portrait_table_bias;
     uint32_t immovable_item_attributes;
+    uint32_t weapon_lock_table;
     bool valid;
 } Fe8Catalog;
+
+typedef enum Fe8ItemLockKind {
+    FE8_ITEM_LOCK_NONE,
+    FE8_ITEM_LOCK_CHARACTER,
+    FE8_ITEM_LOCK_CLASS,
+    FE8_ITEM_LOCK_UNKNOWN,
+} Fe8ItemLockKind;
 
 typedef struct Fe8ItemInfo {
     uint8_t id;
@@ -38,6 +46,8 @@ typedef struct Fe8ItemInfo {
     uint8_t weapon_rank;
     uint32_t attributes;
     bool movable;
+    Fe8ItemLockKind lock_kind;
+    uint8_t lock_ids[32]; /* 256-bit ROM-backed whitelist, not display names. */
     char name[28];
     char description[192];
 } Fe8ItemInfo;
