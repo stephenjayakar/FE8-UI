@@ -39,3 +39,11 @@ Fe8ExtendedPresentationState fe8_presentation_update(
     }
     return presentation->state;
 }
+
+Fe8FramePlacement fe8_presentation_place_frame(
+    const Fe8ExtendedPresentation *presentation, int canvas_width, int canvas_height,
+    Fe8FramePlacement map_placement) {
+    if (presentation && presentation->state == FE8_PRESENTATION_LIVE)
+        return map_placement;
+    return (Fe8FramePlacement){(canvas_width - 240) / 2, (canvas_height - 160) / 2, 0};
+}

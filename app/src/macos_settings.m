@@ -90,11 +90,12 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     return SDL_SCANCODE_UNKNOWN;
 }
 
-@interface Fe8SettingsController : NSObject <NSWindowDelegate>
+@interface Fe8SettingsController : NSObject <NSWindowDelegate, NSMenuItemValidation>
 @property(nonatomic, assign) Fe8HostSettings *settings;
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) NSMutableArray<NSButton *> *bindingButtons;
 @property(nonatomic, strong) NSButton *listeningButton;
+@property(nonatomic, strong) NSButton *extensionsCheckbox;
 @property(nonatomic, strong) NSTextField *zoomSensitivityValue;
 @property(nonatomic, strong) id keyMonitor;
 @property(nonatomic, assign) void *stateContext;
@@ -177,7 +178,9 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     switch (sender.tag) {
     case 0: self.settings->audio_enabled = enabled; break;
     case 1: self.settings->vsync_enabled = enabled; break;
-    case 2: self.settings->extensions_enabled = enabled; break;
+    case 2:
+        fe8_macos_set_extensions_enabled(self.settings, enabled);
+        return;
     case 3: self.settings->mouse_enabled = enabled; break;
     default: return;
     }
@@ -186,6 +189,18 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         (sender.tag == 1 ? kVSyncKey :
         (sender.tag == 2 ? kExtensionsKey : kMouseKey));
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:key];
+}
+
+- (void)toggleExtensions:(id)sender {
+    (void)sender;
+    fe8_macos_set_extensions_enabled(self.settings, !self.settings->extensions_enabled);
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(toggleExtensions:))
+        item.state = self.settings->extensions_enabled ?
+            NSControlStateValueOn : NSControlStateValueOff;
+    return YES;
 }
 
 - (void)shaderChanged:(NSPopUpButton *)sender {
@@ -264,6 +279,8 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         check.tag = i;
         check.target = self;
         check.action = @selector(settingChanged:);
+        if (i == 2)
+            self.extensionsCheckbox = check;
         [content addSubview:check];
     }
 
@@ -349,11 +366,11 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         NSInteger tag = FE8_HOTKEY_TAG_BASE + i;
         NSTextField *label = [NSTextField labelWithString:[NSString stringWithUTF8String:
             fe8_host_hotkey_name((enum Fe8HostHotkey)i)]];
-        label.frame = NSMakeRect(30, y + 4, 90, 20);
+        label.frame = NSMakeRect(30, y + 4, 145, 20);
         [content addSubview:label];
         NSButton *binding = [NSButton buttonWithTitle:[self titleForBindingTag:tag]
             target:self action:@selector(captureBinding:)];
-        binding.frame = NSMakeRect(130, y, 265, 26);
+        binding.frame = NSMakeRect(185, y, 210, 26);
         binding.tag = tag;
         binding.bezelStyle = NSBezelStyleRounded;
         [self.bindingButtons addObject:binding];
@@ -433,6 +450,19 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 @end
 
 static Fe8SettingsController *settingsController;
+
+void fe8_macos_set_extensions_enabled(Fe8HostSettings *settings, int enabled) {
+    if (!settings)
+        return;
+    fe8_host_set_extensions_enabled(settings, enabled);
+    @autoreleasepool {
+        [NSUserDefaults.standardUserDefaults setBool:settings->extensions_enabled
+            forKey:kExtensionsKey];
+        if (settingsController.settings == settings)
+            settingsController.extensionsCheckbox.state = settings->extensions_enabled ?
+                NSControlStateValueOn : NSControlStateValueOff;
+    }
+}
 
 void fe8_macos_load_settings(Fe8HostSettings *settings) {
     @autoreleasepool {
@@ -530,6 +560,9 @@ void fe8_macos_install_settings_menu(
         open.keyEquivalentModifierMask = NSEventModifierFlagCommand;
         open.target = settingsController;
         [settingsMenu addItem:open];
+        [settingsMenu addItem:NSMenuItem.separatorItem];
+        [settingsMenu addItem:stateMenuItem(@"Extended Renderer",
+            @selector(toggleExtensions:), @"", 0)];
         settingsRoot.submenu = settingsMenu;
         [mainMenu addItem:settingsRoot];
     }

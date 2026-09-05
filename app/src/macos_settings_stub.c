@@ -1,5 +1,9 @@
 #include "macos_settings.h"
 
+void fe8_macos_set_extensions_enabled(Fe8HostSettings *settings, int enabled) {
+    fe8_host_set_extensions_enabled(settings, enabled);
+}
+
 void fe8_macos_load_settings(Fe8HostSettings *settings) {
     (void)settings;
 }

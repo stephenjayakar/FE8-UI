@@ -14,7 +14,8 @@ the application. ROMs and game assets are not distributed.
 The extended renderer is deliberately read-only. libmGBA remains authoritative for CPU,
 memory, PPU, saves, and input. The host reads validated FE8 structures, decodes
 the game's metatiles from emulated EWRAM/VRAM/palette memory, renders a 480×320
-terrain canvas, and places mGBA's exact frame over its center.
+terrain canvas, and aligns mGBA's exact frame with the map. Outside a validated
+tactical view, the native frame stays centered.
 
 Whenever a live FE8 roster exists, press **I** to open the host inventory
 manager. The game pauses while it is open. Pick a target from the full roster,
@@ -196,7 +197,11 @@ at the configured **2×**, **3×**, **4×** (default), or **Unlimited** speed;
 audio and VSync resume automatically when it is released. Unlimited removes
 frontend frame pacing and runs as quickly as emulation and rendering allow. **F5**
 quick-saves and **F8** quick-loads the current game's isolated state by default.
-All three hotkeys can be rebound by clicking their binding and pressing a key.
+Press **E** to toggle extended rendering without changing game zoom. On macOS,
+**Settings → Extended Renderer** is also a checked menu button, synchronized
+with the settings checkbox; the preference persists across launches. All four
+hotkeys can be rebound under **Settings → Settings… → Hotkeys**. The toggle also
+works while the host inventory is open and does not disable the inventory.
 
 The command-line interface remains available for diagnostics and direct launch:
 
@@ -214,8 +219,8 @@ after the ROM is reset. It also understands the older PNG-bundled state supplied
 with this test set by safely extracting its `gbAs` core payload in memory.
 `--save` opens or creates a cartridge save through mGBA before reset. Use a copy
 when testing: mGBA may write normal game progress back to this file.
-`--no-extensions` leaves the 480×320 canvas letterboxed and runs as an ordinary
-frontend.
+`--no-extensions` starts with extended rendering disabled and the GBA frame
+centered. The renderer can still be toggled on during play with **E**.
 `--mute` suppresses frontend audio for that command-line run regardless of the
 saved global audio preference.
 
@@ -320,9 +325,14 @@ renderers without a ROM-specific address table. See
 
 The frontend draws terrain, fog, FE8's complete standing SMS list (units,
 traps, and world-space map effects), and a host cursor across the extended
-canvas. The canonical mGBA frame is always composited last
-over the center, so FE8 menus, selected units, map animations, range/movement
-overlays, and transient moving-unit animations remain visible and authoritative.
+canvas. The canonical mGBA frame is composited last at the live map's aligned
+position, so selected units, map animations and range/movement overlays remain
+authoritative. When extended rendering is disabled or the current frame cannot
+be validated as a tactical map (including native pre-battle inventory screens,
+menus and transitions), the full 240×160 GBA frame is centered with a plain
+border. Native screens never inherit the map's pan or a frozen off-screen frame.
+The renderer checks fresh terrain as the game returns to the map and resumes
+after two consecutive valid frames; no zoom adjustment is required.
 
 ## Diagnostic capture options
 

@@ -6,6 +6,8 @@
 typedef int (*Fe8HostStateCallback)(void *context, const char *path);
 
 void fe8_macos_load_settings(Fe8HostSettings *settings);
+/* Shared by the hotkey and native controls; persists/synchronizes on macOS. */
+void fe8_macos_set_extensions_enabled(Fe8HostSettings *settings, int enabled);
 void fe8_macos_install_settings_menu(
     Fe8HostSettings *settings,
     void *state_context,
