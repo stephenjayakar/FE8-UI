@@ -91,17 +91,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Package relocatable SDL2 development files
+      - name: Package relocatable SDL2 and FreeType development files
         run: |
           sdk="$RUNNER_TEMP/fe8-linux-sdk"
           multiarch=$(gcc -print-multiarch)
           sdl_libdir=$(pkg-config --variable=libdir sdl2)
-          mkdir -p "$sdk/include/SDL2" "$sdk/lib/pkgconfig"
+          ft_libdir=$(pkg-config --variable=libdir freetype2)
+          mkdir -p "$sdk/include/SDL2" "$sdk/include/freetype2" "$sdk/lib/pkgconfig"
           cp -a /usr/include/SDL2/. "$sdk/include/SDL2/"
+          cp -a /usr/include/freetype2/. "$sdk/include/freetype2/"
           cp --dereference \
             "/usr/include/$multiarch/SDL2/_real_SDL_config.h" \
             "$sdk/include/SDL2/_real_SDL_config.h"
           cp --dereference "$sdl_libdir/libSDL2.so" "$sdk/lib/libSDL2.so"
+          cp --dereference "$ft_libdir/libfreetype.so" "$sdk/lib/libfreetype.so"
           cat > "$sdk/lib/pkgconfig/sdl2.pc" <<'EOF'
           prefix=${pcfiledir}/../..
           exec_prefix=${prefix}
@@ -114,13 +117,27 @@ jobs:
           Libs: -L${libdir} -lSDL2
           Cflags: -I${includedir}/SDL2 -I${includedir} -D_REENTRANT
           EOF
+          cat > "$sdk/lib/pkgconfig/freetype2.pc" <<'EOF'
+          prefix=${pcfiledir}/../..
+          libdir=${prefix}/lib
+          includedir=${prefix}/include
+
+          Name: FreeType 2
+          Description: FreeType font engine
+          Version: 26.1.20
+          Libs: -L${libdir} -lfreetype
+          Cflags: -I${includedir}/freetype2
+          EOF
           cat > "$sdk/README.txt" <<'EOF'
-          Set PKG_CONFIG_PATH to <this-directory>/lib/pkgconfig before configuring.
-          Example:
-            PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig" bash scripts/build-linux-workspace.sh
-          The bundled library is for linking only; normal SDL2 runtime packages remain required.
+          Set PKG_CONFIG_PATH and CMAKE_PREFIX_PATH to use this SDK:
+            export PKG_CONFIG_PATH="$PWD/fe8-linux-sdk/lib/pkgconfig"
+            export CMAKE_PREFIX_PATH="$PWD/fe8-linux-sdk"
+            bash scripts/build-linux-workspace.sh
+          The bundled libraries are for linking only; normal SDL2 and FreeType runtime packages remain required.
+          No fonts, ROMs, or saves are included.
           EOF
           test -f "$sdk/include/SDL2/_real_SDL_config.h"
+          test -f "$sdk/include/freetype2/ft2build.h"
           test ! -L "$sdk/include/SDL2/SDL_platform.h"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/fe8-linux-sdk.tar.gz" fe8-linux-sdk
 
