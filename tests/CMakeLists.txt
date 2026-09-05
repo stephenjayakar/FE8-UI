@@ -10,161 +10,72 @@ else()
     add_compile_options(-UNDEBUG)
 endif()
 
-add_executable(test_address_space
-    test_address_space.c
-    ../app/src/address_space.c)
-target_include_directories(test_address_space PRIVATE ../app/src)
+function(fe8_add_test name)
+    add_executable(test_${name} ${ARGN})
+    target_include_directories(test_${name} PRIVATE ../app/src)
+    add_test(NAME ${name} COMMAND test_${name})
+endfunction()
+
+fe8_add_test(address_space
+    test_address_space.c ../app/src/address_space.c)
 target_link_libraries(test_address_space PRIVATE mgba)
 
-add_executable(test_fe8_profile
-    test_fe8_profile.c
-    ../app/src/address_space.c
-    ../app/src/fe8_profile.c)
-target_include_directories(test_fe8_profile PRIVATE ../app/src)
-target_link_libraries(test_fe8_profile PRIVATE mgba)
+foreach(name IN ITEMS fe8_profile archanae_profile)
+    fe8_add_test(${name}
+        test_${name}.c
+        ../app/src/address_space.c
+        ../app/src/fe8_profile.c)
+    target_link_libraries(test_${name} PRIVATE mgba)
+endforeach()
 
-add_executable(test_archanae_profile
-    test_archanae_profile.c
-    ../app/src/address_space.c
-    ../app/src/fe8_profile.c)
-target_include_directories(test_archanae_profile PRIVATE ../app/src)
-target_link_libraries(test_archanae_profile PRIVATE mgba)
+foreach(name IN ITEMS
+        frame_scheduler extended_map_renderer extended_presentation
+        extended_unit_renderer frame_alignment mouse_controller
+        pointer_mapping display_scaling host_cursor)
+    fe8_add_test(${name} test_${name}.c ../app/src/${name}.c)
+endforeach()
 
-add_executable(test_frame_scheduler
-    test_frame_scheduler.c
-    ../app/src/frame_scheduler.c)
-target_include_directories(test_frame_scheduler PRIVATE ../app/src)
-
-add_executable(test_extended_map_renderer
-    test_extended_map_renderer.c
-    ../app/src/extended_map_renderer.c)
-target_include_directories(test_extended_map_renderer PRIVATE ../app/src)
-
-add_executable(test_extended_presentation
-    test_extended_presentation.c
-    ../app/src/extended_presentation.c)
-target_include_directories(test_extended_presentation PRIVATE ../app/src)
-
-add_executable(test_extended_unit_renderer
-    test_extended_unit_renderer.c
-    ../app/src/extended_unit_renderer.c)
-target_include_directories(test_extended_unit_renderer PRIVATE ../app/src)
-
-add_executable(test_frame_alignment
-    test_frame_alignment.c
-    ../app/src/frame_alignment.c)
-target_include_directories(test_frame_alignment PRIVATE ../app/src)
-
-add_executable(test_mouse_controller
-    test_mouse_controller.c
-    ../app/src/mouse_controller.c)
-target_include_directories(test_mouse_controller PRIVATE ../app/src)
-
-add_executable(test_pointer_mapping
-    test_pointer_mapping.c
-    ../app/src/pointer_mapping.c)
-target_include_directories(test_pointer_mapping PRIVATE ../app/src)
-
-add_executable(test_viewport_controller
+fe8_add_test(viewport_controller
     test_viewport_controller.c
     ../app/src/viewport_controller.c
     ../app/src/extended_map_renderer.c)
-target_include_directories(test_viewport_controller PRIVATE ../app/src)
 
-add_executable(test_display_scaling
-    test_display_scaling.c
-    ../app/src/display_scaling.c)
-target_include_directories(test_display_scaling PRIVATE ../app/src)
+fe8_add_test(host_settings
+    test_host_settings.c ../app/src/host_settings.c)
+# Reuse the SDL target already resolved by the top-level build.
+target_link_libraries(test_host_settings PRIVATE ${FE8_SDL_TARGET})
 
-find_package(SDL2 CONFIG QUIET)
-if(TARGET SDL2::SDL2)
-    set(FE8_TEST_SDL_TARGET SDL2::SDL2)
-else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
-    set(FE8_TEST_SDL_TARGET PkgConfig::SDL2)
-endif()
+fe8_add_test(host_text
+    test_host_text.c ../app/src/host_text_bitmap.c)
 
-add_executable(test_host_settings
-    test_host_settings.c
-    ../app/src/host_settings.c)
-target_include_directories(test_host_settings PRIVATE ../app/src)
-target_link_libraries(test_host_settings PRIVATE ${FE8_TEST_SDL_TARGET})
-
-add_executable(test_host_cursor
-    test_host_cursor.c
-    ../app/src/host_cursor.c)
-target_include_directories(test_host_cursor PRIVATE ../app/src)
-
-add_executable(test_host_text
-    test_host_text.c
-    ../app/src/host_text_bitmap.c)
-target_include_directories(test_host_text PRIVATE ../app/src)
-
-add_test(NAME fe8_profile COMMAND test_fe8_profile)
-add_test(NAME archanae_profile COMMAND test_archanae_profile)
-add_test(NAME frame_scheduler COMMAND test_frame_scheduler)
-add_test(NAME address_space COMMAND test_address_space)
-add_test(NAME extended_map_renderer COMMAND test_extended_map_renderer)
-add_test(NAME extended_presentation COMMAND test_extended_presentation)
-add_test(NAME extended_unit_renderer COMMAND test_extended_unit_renderer)
-add_test(NAME frame_alignment COMMAND test_frame_alignment)
-add_test(NAME mouse_controller COMMAND test_mouse_controller)
-
-add_executable(test_prebattle_inventory
+fe8_add_test(prebattle_inventory
     test_prebattle_inventory.c
     ../app/src/address_space.c
     ../app/src/fe8_catalog.c
     ../app/src/prebattle_inventory.c
     ../app/src/fe8_profile.c)
-target_include_directories(test_prebattle_inventory PRIVATE ../app/src)
 target_link_libraries(test_prebattle_inventory PRIVATE mgba)
-add_test(NAME prebattle_inventory COMMAND test_prebattle_inventory)
 
-add_executable(test_fe8_catalog_portrait
-    test_fe8_catalog_portrait.c
-    ../app/src/fe8_catalog.c)
-target_include_directories(test_fe8_catalog_portrait PRIVATE ../app/src)
-add_test(NAME fe8_catalog_portrait COMMAND test_fe8_catalog_portrait)
+foreach(name IN ITEMS fe8_catalog_portrait fe8_catalog_effectiveness)
+    fe8_add_test(${name} test_${name}.c ../app/src/fe8_catalog.c)
+endforeach()
 
-add_executable(test_fe8_catalog_effectiveness
-    test_fe8_catalog_effectiveness.c
-    ../app/src/fe8_catalog.c)
-target_include_directories(test_fe8_catalog_effectiveness PRIVATE ../app/src)
-add_test(NAME fe8_catalog_effectiveness COMMAND test_fe8_catalog_effectiveness)
-
-add_executable(test_prebattle_inventory_ui
-    test_prebattle_inventory_ui.c
+set(inventory_ui_sources
     ../app/src/prebattle_inventory_ui.c
     ../app/src/prebattle_inventory.c
-    ../app/src/fe8_catalog.c
-    ../app/src/host_text_bitmap.c)
-target_include_directories(test_prebattle_inventory_ui PRIVATE ../app/src)
-add_test(NAME prebattle_inventory_ui COMMAND test_prebattle_inventory_ui)
-add_test(NAME pointer_mapping COMMAND test_pointer_mapping)
-add_test(NAME viewport_controller COMMAND test_viewport_controller)
-add_test(NAME display_scaling COMMAND test_display_scaling)
-add_test(NAME host_settings COMMAND test_host_settings)
-add_test(NAME host_cursor COMMAND test_host_cursor)
-add_test(NAME host_text COMMAND test_host_text)
+    ../app/src/fe8_catalog.c)
 
-add_executable(test_inventory_hover
-    test_inventory_hover.c
-    ../app/src/prebattle_inventory_ui.c
-    ../app/src/prebattle_inventory.c
-    ../app/src/fe8_catalog.c
-    ../app/src/host_text_bitmap.c)
-target_include_directories(test_inventory_hover PRIVATE ../app/src)
-add_test(NAME inventory_hover COMMAND test_inventory_hover)
+foreach(name IN ITEMS prebattle_inventory_ui inventory_hover)
+    fe8_add_test(${name}
+        test_${name}.c ${inventory_ui_sources} ../app/src/host_text_bitmap.c)
+endforeach()
 
 # ROMs are user-supplied local test inputs, never repository or CI artifacts.
 add_executable(test_inventory_rom
     test_inventory_rom.c
     ../app/src/address_space.c
     ../app/src/fe8_profile.c
-    ../app/src/prebattle_inventory.c
-    ../app/src/prebattle_inventory_ui.c
-    ../app/src/fe8_catalog.c
+    ${inventory_ui_sources}
     ../app/src/host_text_bitmap.c)
 target_include_directories(test_inventory_rom PRIVATE ../app/src)
 # mCore's public struct layout depends on the exact feature macros used by
@@ -186,22 +97,14 @@ if(FE8_SACRED_ECHOES_ROM)
 endif()
 
 if(APPLE)
-    add_executable(test_inventory_hover_native
-        test_inventory_hover.c
-        ../app/src/prebattle_inventory_ui.c
-        ../app/src/prebattle_inventory.c
-        ../app/src/fe8_catalog.c
-        ../app/src/host_text_macos.m)
-    target_include_directories(test_inventory_hover_native PRIVATE ../app/src)
+    fe8_add_test(inventory_hover_native
+        test_inventory_hover.c ${inventory_ui_sources} ../app/src/host_text_macos.m)
     target_link_libraries(test_inventory_hover_native PRIVATE
         "-framework CoreGraphics" "-framework CoreText" "-framework CoreFoundation")
-    add_test(NAME inventory_hover_native COMMAND test_inventory_hover_native)
 
-    add_executable(test_host_text_native
+    fe8_add_test(host_text_native
         test_host_text.c ../app/src/host_text_macos.m)
-    target_include_directories(test_host_text_native PRIVATE ../app/src)
     target_compile_definitions(test_host_text_native PRIVATE FE8_TEST_NATIVE_TEXT)
     target_link_libraries(test_host_text_native PRIVATE
         "-framework CoreGraphics" "-framework CoreText" "-framework CoreFoundation")
-    add_test(NAME host_text_native COMMAND test_host_text_native)
 endif()

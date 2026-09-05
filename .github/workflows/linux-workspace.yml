@@ -2,8 +2,6 @@ name: Linux workspace build
 
 on:
   push:
-    branches:
-      - linux-workspace-build
   pull_request:
   workflow_dispatch:
 
