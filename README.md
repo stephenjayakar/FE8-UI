@@ -196,7 +196,9 @@ at the configured **2×**, **3×**, **4×** (default), or **Unlimited** speed;
 audio and VSync resume automatically when it is released. Unlimited removes
 frontend frame pacing and runs as quickly as emulation and rendering allow. **F5**
 quick-saves and **F8** quick-loads the current game's isolated state by default.
-All three hotkeys can be rebound by clicking their binding and pressing a key.
+**F6** toggles the extended renderer without restarting or closing the inventory
+manager. On macOS, **Settings → Extended Renderer** provides the same toggle.
+All four hotkeys can be rebound by clicking their binding and pressing a key.
 
 The command-line interface remains available for diagnostics and direct launch:
 
@@ -320,9 +322,14 @@ renderers without a ROM-specific address table. See
 
 The frontend draws terrain, fog, FE8's complete standing SMS list (units,
 traps, and world-space map effects), and a host cursor across the extended
-canvas. The canonical mGBA frame is always composited last
-over the center, so FE8 menus, selected units, map animations, range/movement
-overlays, and transient moving-unit animations remain visible and authoritative.
+canvas. The canonical mGBA frame is always composited last and follows the map
+while extended rendering is validated, so selected units, map animations,
+range/movement overlays, and transient moving-unit animations remain visible
+and authoritative. Native menus (including pre-battle inventory), unsupported
+scenes, and manually disabled extended rendering instead keep the GBA screen
+centered, discarding stale map panning. Only a recognized tactical combat panel
+may retain a frozen extended backdrop; returning to the map revalidates against
+the current camera.
 
 ## Diagnostic capture options
 

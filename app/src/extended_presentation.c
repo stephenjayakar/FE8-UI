@@ -12,12 +12,14 @@ Fe8ExtendedPresentationState fe8_presentation_update(
     bool freeze_requested) {
     if (!presentation)
         return FE8_PRESENTATION_INACTIVE;
-    if (!enabled) {
+    /* Missing/obscured map evidence is not permission to retain a panned
+     * framebuffer. Only a recognized map overlay may freeze a live scene. */
+    if (!enabled || (!tactical_valid && !freeze_requested)) {
         fe8_presentation_reset(presentation);
         return presentation->state;
     }
     if (presentation->state == FE8_PRESENTATION_LIVE) {
-        if (!tactical_valid || freeze_requested) {
+        if (freeze_requested) {
             presentation->state = FE8_PRESENTATION_FROZEN;
             presentation->consecutive_valid_frames = 0;
         }
@@ -38,4 +40,13 @@ Fe8ExtendedPresentationState fe8_presentation_update(
         presentation->state = FE8_PRESENTATION_INACTIVE;
     }
     return presentation->state;
+}
+
+Fe8FramePlacement fe8_presentation_frame_placement(
+    bool extended_visible, int canvas_width, int canvas_height,
+    Fe8FramePlacement map_placement) {
+    if (extended_visible)
+        return map_placement;
+    return (Fe8FramePlacement){(canvas_width - 240) / 2,
+        (canvas_height - 160) / 2, 0};
 }
