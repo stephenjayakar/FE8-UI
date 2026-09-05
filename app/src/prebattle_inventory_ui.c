@@ -454,9 +454,13 @@ void fe8_inventory_ui_open(Fe8InventoryUi *ui,
     ui->pool_sort = FE8_INVENTORY_SORT_TYPE;
     ui->has_selection = 0;
     ui->has_inspected = 0;
+    ui->has_detail = 0;
+    ui->search_active = 0;
+    ui->detail_scroll = 0;
+    ui->sort_descending = 0;
     fe8_inventory_ui_rebuild(ui, snapshot);
     snprintf(ui->status, sizeof(ui->status),
-        "Choose a target, then pick or place any item");
+        "Select an item to inspect. Give, move, or store only when you choose.");
 }
 
 const char *fe8_inventory_ui_scope_name(Fe8InventoryPoolScope scope) {

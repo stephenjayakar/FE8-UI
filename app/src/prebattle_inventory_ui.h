@@ -23,6 +23,15 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_ROSTER_CLASS,
     FE8_INVENTORY_HIT_DENSITY,
     FE8_INVENTORY_HIT_SORT_COLUMN,
+    FE8_INVENTORY_HIT_SEARCH,
+    FE8_INVENTORY_HIT_FILTER,
+    FE8_INVENTORY_HIT_USABLE,
+    FE8_INVENTORY_HIT_RESET,
+    FE8_INVENTORY_HIT_MOVE,
+    FE8_INVENTORY_HIT_GIVE,
+    FE8_INVENTORY_HIT_STORE,
+    FE8_INVENTORY_HIT_CANCEL,
+    FE8_INVENTORY_HIT_CLOSE,
     /* Source compatibility for callers that still use the old right-pane name. */
     FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_POOL_ITEM,
 } Fe8InventoryHitKind;
@@ -71,6 +80,16 @@ typedef struct Fe8InventoryUi {
     Fe8InventoryHitKind hover_kind;
     uint32_t hover_unit_address;
     char status[96];
+    /* Desktop view state is separate from both the snapshot and a pending move.
+       detail/selected store canonical endpoints, never filtered row indices. */
+    char query[64];
+    int search_active;
+    int type_filter; /* 0 = all, 1..8 = weapon/staff types, 9 = items. */
+    int usable_only;
+    int sort_descending;
+    Fe8InventoryEndpoint detail;
+    int has_detail;
+    int detail_scroll;
 } Fe8InventoryUi;
 
 void fe8_inventory_ui_init(Fe8InventoryUi *ui);

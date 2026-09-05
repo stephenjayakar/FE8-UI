@@ -953,11 +953,48 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+            if (inventory_ui.active && inventory_ui.desktop) {
+                if (event.type == SDL_TEXTINPUT && inventory_ui.search_active) {
+                    fe8_inventory_desktop_text(&inventory_ui, event.text.text);
+                    continue;
+                }
+                if (event.type == SDL_KEYDOWN && inventory_ui.search_active) {
+                    SDL_Scancode key = event.key.keysym.scancode;
+                    if (key == SDL_SCANCODE_BACKSPACE)
+                        fe8_inventory_desktop_backspace(&inventory_ui);
+                    else if (key == SDL_SCANCODE_ESCAPE || key == SDL_SCANCODE_RETURN ||
+                            key == SDL_SCANCODE_KP_ENTER) {
+                        inventory_ui.search_active = 0;
+                        SDL_StopTextInput();
+                    } else if (key == SDL_SCANCODE_A &&
+                            (event.key.keysym.mod & (KMOD_CTRL | KMOD_GUI))) {
+                        inventory_ui.query[0] = 0;
+                        inventory_ui.pool_scroll = 0;
+                    }
+                    continue;
+                }
+                if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                        event.key.keysym.scancode == SDL_SCANCODE_SLASH) {
+                    inventory_ui.search_active = 1;
+                    SDL_StartTextInput();
+                    continue;
+                }
+                if (event.type == SDL_KEYDOWN && !event.key.repeat &&
+                        event.key.keysym.scancode == SDL_SCANCODE_ESCAPE &&
+                        inventory_ui.has_selection) {
+                    inventory_ui.has_selection = 0;
+                    snprintf(inventory_ui.status, sizeof(inventory_ui.status),
+                        "Move cancelled. No items changed.");
+                    continue;
+                }
+            }
             if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                     event.key.keysym.scancode == SDL_SCANCODE_I) {
                 if (inventory_ui.active) {
                     inventory_ui.active = 0;
                     inventory_ui.has_selection = 0;
+                    inventory_ui.search_active = 0;
+                    SDL_StopTextInput();
                     set_inventory_presentation(&video, &canvas, &canvas_width,
                         &canvas_height, &viewport, &gba_x, &gba_y,
                         &inventory_ui, 0, settings.shader);
@@ -1002,6 +1039,9 @@ int main(int argc, char **argv) {
                 } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                         event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
                     inventory_ui.active = 0;
+                    inventory_ui.has_selection = 0;
+                    inventory_ui.search_active = 0;
+                    SDL_StopTextInput();
                     set_inventory_presentation(&video, &canvas, &canvas_width,
                         &canvas_height, &viewport, &gba_x, &gba_y,
                         &inventory_ui, 0, settings.shader);
@@ -1038,9 +1078,9 @@ int main(int argc, char **argv) {
                         event.wheel.y < 0 ? 3 : 0;
                     if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
                         direction = -direction;
-                    fe8_inventory_ui_scroll(&inventory_ui, direction,
+                    fe8_inventory_desktop_scroll_at(&inventory_ui,
                         &inventory_snapshot, canvas_width, canvas_height,
-                        host_pointer_canvas_x);
+                        host_pointer_canvas_x, host_pointer_canvas_y, direction);
                 } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                         event.button.button == SDL_BUTTON_RIGHT) {
                     inventory_ui.has_selection = 0;
@@ -1056,7 +1096,19 @@ int main(int argc, char **argv) {
                         Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
                             &inventory_snapshot, canvas_width, canvas_height,
                             canvas_x, canvas_y, &index);
-                        if (hit == FE8_INVENTORY_HIT_DENSITY) {
+                        int consumed = fe8_inventory_desktop_click(&inventory_ui,
+                            &inventory_snapshot, &hit, &index);
+                        if (inventory_ui.search_active) SDL_StartTextInput();
+                        else SDL_StopTextInput();
+                        if (consumed) continue;
+                        if (hit == FE8_INVENTORY_HIT_CLOSE) {
+                            inventory_ui.active = 0;
+                            inventory_ui.has_selection = 0;
+                            set_inventory_presentation(&video, &canvas, &canvas_width,
+                                &canvas_height, &viewport, &gba_x, &gba_y,
+                                &inventory_ui, 0, settings.shader);
+                            frame_deadline = SDL_GetPerformanceCounter();
+                        } else if (hit == FE8_INVENTORY_HIT_DENSITY) {
                             fe8_inventory_ui_toggle_density(&inventory_ui);
                         } else if (hit == FE8_INVENTORY_HIT_SORT_COLUMN &&
                                 index >= 0 && index < FE8_INVENTORY_SORT_COUNT) {
@@ -1109,6 +1161,9 @@ int main(int argc, char **argv) {
                                     inventory_undo.first_item = first_item;
                                     inventory_undo.second = endpoint;
                                     inventory_undo.second_item = endpoint_item;
+                                    inventory_ui.detail = endpoint;
+                                    inventory_ui.has_detail = 1;
+                                    inventory_ui.detail_scroll = 0;
                                     if (fe8_extract_prebattle_inventory(
                                             &profile_memory, profile, &inventory_catalog,
                                             &inventory_snapshot))
