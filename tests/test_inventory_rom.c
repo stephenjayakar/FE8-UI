@@ -9,6 +9,7 @@
 #include "prebattle_inventory_ui.h"
 #ifdef FE8_TEST_DESKTOP
 #include "inventory_desktop.h"
+#include "inventory_history.h"
 #endif
 
 #include <assert.h>
@@ -81,9 +82,100 @@ static void check_real_transfer(struct mCore *core, const Fe8MemoryReader *reade
     assert(memcmp(original, ewram, ram_size) == 0);
     ui->has_selection = 0;
     fe8_inventory_ui_toggle_density(ui);
-    puts("  Real-ROM transfer after hover/sort/density changes and undo preserved RAM exactly");
+    /* Resolve the new one-click and drag gestures before using the same guarded
+       transaction as the app. Every gesture must undo byte-for-byte. */
+    int source_index = -1, source_unit = -1;
+    for (int n = 0; n < ui->pool_count; ++n)
+        if (ui->pool[n].endpoint.kind == source.kind &&
+            ui->pool[n].endpoint.unit_address == source.unit_address &&
+            ui->pool[n].endpoint.slot == source.slot) source_index = n;
+    for (int n = 0; n < snapshot->unit_count; ++n)
+        if (snapshot->units[n].address == source.unit_address) source_unit = n;
+    assert(source_index >= 0 && source_unit >= 0);
+    for (int gesture = 0; gesture < 4; ++gesture) {
+        ui->has_selection = 0;
+        ui->current_unit = gesture == 1 ? source_unit : destination_unit;
+        hit = FE8_INVENTORY_HIT_QUICK_POOL; index = source_index;
+        if (gesture < 2) {
+            assert(!fe8_inventory_desktop_click(ui,snapshot,&hit,&index));
+        } else {
+            fe8_inventory_desktop_pointer_down(ui,snapshot,
+                FE8_INVENTORY_HIT_POOL_ITEM,source_index,400,220);
+            fe8_inventory_desktop_pointer_motion(ui,snapshot,WIDTH,HEIGHT,40,430);
+            assert(ui->dragging);
+            if (gesture == 2) { hit = FE8_INVENTORY_HIT_ROSTER; index = destination_unit; }
+            else { hit = FE8_INVENTORY_HIT_UNIT_ITEM; index = 0; } /* Occupied swap. */
+            assert(!fe8_inventory_desktop_pointer_up(ui,snapshot,&hit,&index));
+        }
+        assert(ui->selected.unit_address == source.unit_address && ui->selected.slot == source.slot);
+        resolved = fe8_inventory_ui_endpoint(ui,snapshot,hit,index);
+        uint16_t replaced = fe8_inventory_ui_endpoint_item(snapshot,resolved);
+        if (gesture == 1) assert(resolved.kind == FE8_INVENTORY_ENDPOINT_SUPPLY && !replaced);
+        if (gesture == 3) assert(replaced);
+        assert(memcmp(original,ewram,ram_size) == 0); /* Gestures are read-only. */
+        assert(fe8_swap_inventory_endpoints(reader,&writer,profile,source,encoded,resolved,replaced));
+        assert(fe8_swap_inventory_endpoints(reader,&writer,profile,source,replaced,resolved,encoded));
+        assert(memcmp(original,ewram,ram_size) == 0);
+    }
+    ui->has_selection = 0;
+    puts("  Real-ROM click Give/Store, drag Give/swap, and undo preserved RAM exactly");
 }
 #endif
+
+static int native_personal_lock(struct mCore *core, uint32_t unit_address, uint16_t item) {
+    void *saved=malloc(core->stateSize(core)); assert(saved);
+    assert(core->saveState(core,saved));
+    assert(core->writeRegister(core,"cpsr",0xBF)); /* Thumb, system mode, IRQ masked. */
+    assert(core->writeRegister(core,"sp",0x0203F800));
+    assert(core->writeRegister(core,"r0",(int32_t)unit_address));
+    assert(core->writeRegister(core,"r1",item));
+    assert(core->writeRegister(core,"r2",255));
+    assert(core->writeRegister(core,"lr",0x08000001));
+    assert(core->writeRegister(core,"pc",0x08B3EA54));
+    int32_t pc=0,result=0; int steps;
+    for(steps=0;steps<2000;++steps) {
+        core->step(core); assert(core->readRegister(core,"pc",&pc));
+        if(pc==0x08000002)break; /* Thumb pipeline is one instruction ahead. */
+    }
+    assert(steps<2000);assert(core->readRegister(core,"r0",&result));
+    assert(core->loadState(core,saved));free(saved);
+    return result!=0;
+}
+static void check_archanae_locks(struct mCore *core, const Fe8MemoryReader *reader,
+    const Fe8Catalog *catalog, const Fe8InventorySnapshot *snapshot) {
+    Fe8ItemInfo borderland;
+    int marth=-1;
+    assert(fe8_catalog_item(reader,catalog,0x01C2,&borderland));
+    assert(strcmp(borderland.name,"Borderland Swd")==0);
+    assert(borderland.lock_kind==FE8_ITEM_LOCK_CHARACTER);
+    for(int n=0;n<snapshot->unit_count;++n) {
+        const Fe8InventoryUnit *u=&snapshot->units[n];
+        if(strcmp(u->name,"Marth")==0)marth=n;
+        assert(!native_personal_lock(core,u->address,0x01C2));
+        assert(fe8_inventory_item_use_state(u,&borderland)==FE8_INVENTORY_USE_LOCKED);
+    }
+    assert(marth>=0);
+    /* Athena is not in this early save. Use an isolated unit copy with her
+       real ROM character record; restore every byte before returning. */
+    const Fe8InventoryUnit *m=&snapshot->units[marth];
+    uint32_t characters=core->busRead32(core,m->address)-(uint32_t)m->character_id*0x34;
+    uint32_t athena_record=characters+0x36*0x34;
+    char name[28];
+    assert(core->busRead8(core,athena_record+4)==0x36);
+    assert(fe8_catalog_text(reader,catalog,core->busRead16(core,athena_record),name,sizeof(name)));
+    assert(strcmp(name,"Athena")==0);
+    uint8_t saved_unit[0x48]; uint32_t scratch=0x0203FC00;
+    for(unsigned j=0;j<sizeof(saved_unit);++j) {
+        saved_unit[j]=core->busRead8(core,scratch+j);
+        core->busWrite8(core,scratch+j,core->busRead8(core,m->address+j));
+    }
+    core->busWrite32(core,scratch,athena_record);
+    assert(native_personal_lock(core,scratch,0x01C2));
+    Fe8InventoryUnit athena=*m;athena.character_id=0x36;
+    assert(fe8_inventory_item_use_state(&athena,&borderland)==FE8_INVENTORY_USE_READY);
+    for(unsigned j=0;j<sizeof(saved_unit);++j)core->busWrite8(core,scratch+j,saved_unit[j]);
+    puts("  Borderland Sword: native ROM predicate rejects Marth and accepts Athena; frontend agrees");
+}
 
 static void map_memory(Fe8AddressSpace *space, struct mCore *core) {
     const uint32_t bases[] = {
@@ -131,6 +223,132 @@ static void capture(const char *prefix, const char *suffix, const uint32_t *pixe
     }
     assert(fclose(file) == 0);
 }
+
+#ifdef FE8_TEST_DESKTOP
+static void capture_workspace(const char *prefix,const char *suffix,Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *s,int width,int height) {
+    if(!prefix)return;
+    char path[1024];snprintf(path,sizeof(path),"%s-%s.ppm",prefix,suffix);
+    uint32_t *pixels=calloc((size_t)width*height,4);assert(pixels);
+    fe8_inventory_desktop_draw(ui,s,pixels,width,width,height);
+    FILE *f=fopen(path,"wb");assert(f);fprintf(f,"P6\n%d %d\n255\n",width,height);
+    for(int n=0;n<width*height;++n) {
+        unsigned char rgb[]={(unsigned char)pixels[n],(unsigned char)(pixels[n]>>8),(unsigned char)(pixels[n]>>16)};
+        assert(fwrite(rgb,1,3,f)==3);
+    }
+    fclose(f);free(pixels);
+}
+static int available_source(const Fe8InventorySnapshot *s,int exclude,Fe8InventoryEndpoint *e) {
+    for(int n=0;n<s->unit_count;++n) if(n!=exclude)
+        for(int j=0;j<5;++j) if(s->units[n].items[j] && s->units[n].item_info[j].movable) {
+            *e=(Fe8InventoryEndpoint){FE8_INVENTORY_ENDPOINT_UNIT,s->units[n].address,(unsigned)j};return n*5+j;
+        }
+    return -1;
+}
+static void workspace_transfer(Fe8InventoryHistory *history,const Fe8MemoryReader *reader,
+    const Fe8MemoryWriter *writer,const Fe8Profile *profile,const Fe8Catalog *catalog,
+    Fe8InventorySnapshot *s,Fe8InventoryUi *ui,Fe8InventoryEndpoint from,Fe8InventoryEndpoint to) {
+    assert(fe8_inventory_history_transfer(history,reader,writer,profile,from,
+        fe8_inventory_ui_endpoint_item(s,from),to,fe8_inventory_ui_endpoint_item(s,to)));
+    fe8_inventory_desktop_feedback(ui,s,from,to,0);
+    assert(fe8_extract_prebattle_inventory(reader,profile,catalog,s));
+    fe8_inventory_ui_rebuild(ui,s);ui->has_selection=0;ui->undo_count=history->count;
+}
+static void check_workspace(struct mCore *core,const Fe8MemoryReader *reader,
+    const Fe8Profile *profile,const Fe8Catalog *catalog,Fe8InventorySnapshot *s,
+    Fe8InventoryUi *ui,const uint8_t *ram,const void *ewram,size_t ram_size,const char *prefix) {
+    Fe8InventoryHistory history={0};Fe8MemoryWriter writer={core,write8};
+    fe8_inventory_ui_open(ui,s);ui->desktop=1;ui->desktop_scale=1;ui->zoom_percent=100;ui->comfortable=0;
+    int recipient=0;for(int n=0;n<s->unit_count;++n)if(!strcmp(s->units[n].name,"Marth"))recipient=n;
+    ui->current_unit=recipient;ui->by_unit=1;
+    Fe8InventoryEndpoint source;
+    int source_index=available_source(s,recipient,&source);assert(source_index>=0);
+    ui->detail=source;ui->has_detail=1;
+    capture_workspace(prefix,"loadouts",ui,s,1440,900);
+    assert(!memcmp(ram,ewram,ram_size));
+    Fe8InventoryDesktopLayout l;fe8_inventory_desktop_layout(ui,1440,900,&l);
+    int slot=0;while(slot<5 && s->units[recipient].items[slot])++slot;assert(slot<5);
+    int sx=l.board_x+l.identity_width+(source_index%5)*l.slot_width+20;
+    int sy=l.board_y+(source_index/5)*l.board_row_height+32;
+    int dx=l.board_x+l.identity_width+slot*l.slot_width+20;
+    int dy=l.board_y+recipient*l.board_row_height+32;
+    fe8_inventory_desktop_pointer_down(ui,s,FE8_INVENTORY_HIT_LOADOUT_ITEM,source_index,sx,sy);
+    assert(ui->drag_armed);
+    fe8_inventory_desktop_pointer_motion(ui,s,1440,900,dx,dy);
+    Fe8InventoryHitKind kind;int index;
+    kind=fe8_inventory_desktop_hit(ui,s,1440,900,dx,dy,&index);
+    assert(kind==FE8_INVENTORY_HIT_LOADOUT_ITEM && index==recipient*5+slot);
+    assert(!fe8_inventory_desktop_pointer_up(ui,s,&kind,&index));
+    Fe8InventoryEndpoint dest=fe8_inventory_ui_endpoint(ui,s,kind,index);
+    assert(dest.unit_address==s->units[recipient].address && dest.slot==(unsigned)slot);
+    workspace_transfer(&history,reader,&writer,profile,catalog,s,ui,source,dest);
+    assert(history.count==1);
+    capture_workspace(prefix,"given",ui,s,1440,900);
+    /* Store via the board's pinned drop destination, then inspect actual convoy
+       contents. No test item or save is fabricated for these screenshots. */
+    fe8_inventory_desktop_pointer_down(ui,s,FE8_INVENTORY_HIT_LOADOUT_ITEM,recipient*5+slot,dx,dy);
+    fe8_inventory_desktop_pointer_motion(ui,s,1440,900,l.supply_x+30,l.deposit_y+12);
+    kind=fe8_inventory_desktop_hit(ui,s,1440,900,l.supply_x+30,l.deposit_y+12,&index);
+    assert(!fe8_inventory_desktop_pointer_up(ui,s,&kind,&index));
+    Fe8InventoryEndpoint supply=fe8_inventory_ui_endpoint(ui,s,kind,index);
+    assert(supply.kind==FE8_INVENTORY_ENDPOINT_SUPPLY);
+    workspace_transfer(&history,reader,&writer,profile,catalog,s,ui,dest,supply);
+    capture_workspace(prefix,"supply",ui,s,1440,900);
+    /* Fill only with existing movable equipment. Some early Sacred Echoes
+       rosters have too few physical items; their fixed spells remain fixed. */
+    for(int j=0;j<5;++j)if(!s->units[recipient].items[j]) {
+        if(available_source(s,recipient,&source)<0)break;
+        dest=(Fe8InventoryEndpoint){FE8_INVENTORY_ENDPOINT_UNIT,s->units[recipient].address,(unsigned)j};
+        workspace_transfer(&history,reader,&writer,profile,catalog,s,ui,source,dest);
+    }
+    int full=1;for(int j=0;j<5;++j)if(!s->units[recipient].items[j])full=0;
+    source_index=available_source(s,recipient,&source);
+    if(full && source_index>=0) {
+        ui->detail=source;ui->has_detail=1;ui->pointer_x=720;ui->pointer_y=330;
+        kind=FE8_INVENTORY_HIT_GIVE;index=0;
+        assert(fe8_inventory_desktop_click(ui,s,&kind,&index));assert(ui->popup_open);
+        fe8_inventory_desktop_layout(ui,1440,900,&l);
+        fe8_inventory_desktop_pointer_motion(ui,s,1440,900,l.popup_x+40,l.popup_rows_y+12);
+        capture_workspace(prefix,"swap-picker",ui,s,1440,900);
+        kind=FE8_INVENTORY_HIT_SWAP_SLOT;index=0;
+        if(s->units[recipient].item_info[0].movable) {
+            assert(!fe8_inventory_desktop_click(ui,s,&kind,&index));
+            dest=fe8_inventory_ui_endpoint(ui,s,kind,index);
+            workspace_transfer(&history,reader,&writer,profile,catalog,s,ui,source,dest);
+        } else fe8_inventory_desktop_cancel_move(ui);
+    }
+    int count=history.count;
+    while(history.count) {
+        Fe8InventoryChange last=history.changes[history.count-1];
+        assert(fe8_inventory_history_undo(&history,reader,&writer,profile));
+        fe8_inventory_desktop_feedback(ui,s,last.second,last.first,1);
+        assert(fe8_extract_prebattle_inventory(reader,profile,catalog,s));
+        fe8_inventory_ui_rebuild(ui,s);ui->undo_count=history.count;
+    }
+    assert(!memcmp(ram,ewram,ram_size));
+    printf("  Loadout drag, Supply drop, nearby picker and %d-step undo restored all RAM exactly\n",count);
+    fe8_inventory_desktop_cancel_move(ui);ui->by_unit=0;ui->flash_ticks=0;
+    ui->has_detail=0;ui->has_comparison=0;ui->current_unit=recipient;
+    /* Select an explicit carried comparison and a different same-type weapon. */
+    for(int j=0;j<5 && !ui->has_comparison;++j) if(s->units[recipient].items[j] && (s->units[recipient].item_info[j].attributes&1)) {
+        kind=FE8_INVENTORY_HIT_COMPARE;index=recipient*5+j;
+        assert(fe8_inventory_desktop_click(ui,s,&kind,&index));
+        for(int n=0;n<ui->pool_count;++n)if(ui->pool[n].item &&
+            ui->pool[n].info->weapon_type==s->units[recipient].item_info[j].weapon_type &&
+            ui->pool[n].info->id!=s->units[recipient].item_info[j].id) {
+            kind=FE8_INVENTORY_HIT_POOL_ITEM;index=n;
+            assert(fe8_inventory_desktop_click(ui,s,&kind,&index));break;
+        }
+    }
+    capture_workspace(prefix,"comparison",ui,s,1440,900);
+    ui->by_unit=1;
+    capture_workspace(prefix,"minimum",ui,s,640,480);
+    ui->details_expanded=1;
+    capture_workspace(prefix,"drawer",ui,s,640,480);
+    ui->details_expanded=0;ui->by_unit=0;
+    assert(!memcmp(ram,ewram,ram_size));
+}
+#endif
 
 int main(int argc, char **argv) {
     struct mCore *core;
@@ -204,6 +422,10 @@ int main(int argc, char **argv) {
     original_ram = malloc(ewram_size);
     assert(original_ram);
     memcpy(original_ram, ewram, ewram_size);
+    if(archanae) {
+        check_archanae_locks(core,&reader,&catalog,snapshot);
+        assert(memcmp(original_ram,ewram,ewram_size)==0);
+    }
     fe8_inventory_ui_init(ui);
     fe8_inventory_ui_open(ui, snapshot);
     ui->render_scale = 2;
@@ -257,6 +479,7 @@ int main(int argc, char **argv) {
         }
     }
     fe8_inventory_ui_adjust_scale(ui, 0, WIDTH, HEIGHT);
+    check_workspace(core,&reader,profile,&catalog,snapshot,ui,original_ram,ewram,ewram_size,argc==4?argv[3]:NULL);
 #endif
     if (argc == 4) {
         char path[1024];

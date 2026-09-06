@@ -453,10 +453,20 @@ void fe8_inventory_ui_open(Fe8InventoryUi *ui,
     ui->pool_scope = FE8_INVENTORY_POOL_ALL;
     ui->pool_sort = FE8_INVENTORY_SORT_TYPE;
     ui->has_selection = 0;
+    fe8_inventory_desktop_cancel_drag(ui);
     ui->has_inspected = 0;
+    ui->has_detail = 0;
+    ui->has_comparison = 0;
+    ui->popup_open = 0;
+    ui->undo_count = 0;
+    ui->flash_ticks = 0;
+    ui->loadout_scroll = ui->supply_scroll = 0;
+    ui->search_active = 0;
+    ui->detail_scroll = 0;
+    ui->sort_descending = 0;
     fe8_inventory_ui_rebuild(ui, snapshot);
     snprintf(ui->status, sizeof(ui->status),
-        "Choose a target, then pick or place any item");
+        "Select an item to inspect. Give, move, or store only when you choose.");
 }
 
 const char *fe8_inventory_ui_scope_name(Fe8InventoryPoolScope scope) {
@@ -627,6 +637,13 @@ Fe8InventoryEndpoint fe8_inventory_ui_endpoint(const Fe8InventoryUi *ui,
     };
     if (!ui || !snapshot)
         return endpoint;
+    if ((kind == FE8_INVENTORY_HIT_LOADOUT_ITEM || kind == FE8_INVENTORY_HIT_COMPARE) &&
+            index >= 0 && index < snapshot->unit_count * FE8_INVENTORY_ITEM_SLOTS) {
+        endpoint.kind = FE8_INVENTORY_ENDPOINT_UNIT;
+        endpoint.unit_address = snapshot->units[index / FE8_INVENTORY_ITEM_SLOTS].address;
+        endpoint.slot = (unsigned)(index % FE8_INVENTORY_ITEM_SLOTS);
+        return endpoint;
+    }
     if (kind == FE8_INVENTORY_HIT_UNIT_ITEM && ui->current_unit >= 0 &&
             ui->current_unit < snapshot->unit_count && index >= 0 &&
             index < FE8_INVENTORY_ITEM_SLOTS) {
@@ -667,7 +684,9 @@ void fe8_inventory_ui_inspect(Fe8InventoryUi *ui,
         ui->hover_kind = kind;
         return;
     }
-    if ((kind == FE8_INVENTORY_HIT_UNIT_ITEM &&
+    if ((kind == FE8_INVENTORY_HIT_LOADOUT_ITEM && index >= 0 &&
+            index < snapshot->unit_count * FE8_INVENTORY_ITEM_SLOTS) ||
+            (kind == FE8_INVENTORY_HIT_UNIT_ITEM &&
             target_unit(ui, snapshot) && index >= 0 &&
             index < FE8_INVENTORY_ITEM_SLOTS) ||
             (kind == FE8_INVENTORY_HIT_POOL_ITEM && index >= 0 &&
@@ -788,6 +807,8 @@ static const char *use_state_label(Fe8InventoryUseState state) {
         return "LOCK";
     case FE8_INVENTORY_USE_STATUS:
         return "STATUS";
+    case FE8_INVENTORY_USE_UNKNOWN:
+        return "UNKNOWN";
     case FE8_INVENTORY_USE_ITEM:
     default:
         return "ITEM";
@@ -993,6 +1014,9 @@ static void compatibility_detail(char *output, size_t output_size,
     case FE8_INVENTORY_USE_STATUS:
         snprintf(output, output_size, "Blocked by %s's status%s",
             unit->name, info->movable ? "" : " / fixed");
+        break;
+    case FE8_INVENTORY_USE_UNKNOWN:
+        snprintf(output, output_size, "Restriction data unavailable");
         break;
     case FE8_INVENTORY_USE_ITEM:
     default:

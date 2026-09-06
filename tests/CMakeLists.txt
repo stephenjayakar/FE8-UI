@@ -63,6 +63,7 @@ endforeach()
 set(inventory_ui_sources
     ../app/src/prebattle_inventory_ui.c
     ../app/src/inventory_desktop.c
+    ../app/src/inventory_history.c
     ../app/src/prebattle_inventory.c
     ../app/src/fe8_catalog.c)
 
@@ -149,3 +150,19 @@ if(FE8_SACRED_ECHOES_ROM)
         COMMAND test_inventory_rom_dense "${FE8_SACRED_ECHOES_ROM}" sacred-echoes)
     set_tests_properties(inventory_dense_sacred_echoes PROPERTIES TIMEOUT 90)
 endif()
+
+# Workspace interactions are tested against the same model and native text
+# backend as the app, without needing copyrighted ROMs or save files in CI.
+fe8_add_test(inventory_workspace
+    test_inventory_workspace.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
+target_link_libraries(test_inventory_workspace PRIVATE ${DESKTOP_TEXT_LIBS})
+
+fe8_add_test(fe8_catalog_locks test_fe8_catalog_locks.c
+    ../app/src/fe8_catalog.c ../app/src/prebattle_inventory.c)
+
+fe8_add_test(inventory_loadouts
+    test_inventory_loadouts.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
+target_link_libraries(test_inventory_loadouts PRIVATE ${DESKTOP_TEXT_LIBS})
+fe8_add_test(inventory_history
+    test_inventory_history.c ../app/src/inventory_history.c
+    ../app/src/prebattle_inventory.c ../app/src/fe8_catalog.c)

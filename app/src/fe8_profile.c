@@ -58,6 +58,7 @@
 #define ARCHANAE_ITEM_TABLE UINT32_C(0x09AA54F8)
 #define ARCHANAE_GET_CONVOY_ITEMS UINT32_C(0x08031500)
 #define ARCHANAE_CONVOY_ITEMS UINT32_C(0x0203B200)
+#define ARCHANAE_WEAPON_LOCK_TABLE UINT32_C(0x08B2BAE4)
 
 static const uint8_t s_archanae_sha1[FE8_ROM_SHA1_SIZE] = {
     0x22, 0x0D, 0x1D, 0x6B, 0x5F, 0x56, 0xC9, 0xE2, 0x5E, 0xB6,
@@ -72,16 +73,16 @@ static const uint8_t s_archanae_sha1[FE8_ROM_SHA1_SIZE] = {
     FE8_BLUE_UNITS, FE8_RED_UNITS, FE8_GREEN_UNITS, FE8_ACTIVE_UNIT, \
     FE8_SMS_HANDLE_ARRAY, FE8_MAP_ANIMATION_STATE, FE8_BG1_TILEMAP, FE8_BG2_TILEMAP
 
-#define FE8_INVENTORY_LAYOUT(item_table, get_convoy_items, capacity, immovable_attributes) { \
+#define FE8_INVENTORY_LAYOUT(item_table, get_convoy_items, capacity, immovable_attributes, lock_table) { \
     UINT32_C(0x0800A2A0), UINT32_C(0x080006DC), UINT32_C(0x080006E0), \
     item_table, UINT32_C(0x08005524), get_convoy_items, capacity, \
-    immovable_attributes \
+    immovable_attributes, lock_table \
 }
 
 static const Fe8Profile s_fe8u_profile = {
     FE8_PROFILE_COMMON, FE8_CONVOY_ITEMS,
     "Fire Emblem 8 (FE8U)", "FIREEMBLEM2E",
-    FE8_INVENTORY_LAYOUT(FE8_ITEM_TABLE, FE8_GET_CONVOY_ITEMS, 100, 0),
+    FE8_INVENTORY_LAYOUT(FE8_ITEM_TABLE, FE8_GET_CONVOY_ITEMS, 100, 0, 0),
 };
 
 static const Fe8Profile s_sacred_echoes_profile = {
@@ -90,13 +91,14 @@ static const Fe8Profile s_sacred_echoes_profile = {
     /* Sacred Echoes spells are learned abilities represented as magic/staff
        items. Native inventory management never permits transferring them. */
     FE8_INVENTORY_LAYOUT(FE8_ITEM_TABLE, FE8_GET_CONVOY_ITEMS, 200,
-        UINT32_C(0x00000006)),
+        UINT32_C(0x00000006), 0),
 };
 
 static const Fe8Profile s_archanae_profile = {
     FE8_PROFILE_COMMON, ARCHANAE_CONVOY_ITEMS,
     "Fire Emblem: Archanae", "FIREEMBLEM2E",
-    FE8_INVENTORY_LAYOUT(ARCHANAE_ITEM_TABLE, ARCHANAE_GET_CONVOY_ITEMS, 200, 0),
+    FE8_INVENTORY_LAYOUT(ARCHANAE_ITEM_TABLE, ARCHANAE_GET_CONVOY_ITEMS, 200, 0,
+        ARCHANAE_WEAPON_LOCK_TABLE),
 };
 
 static bool valid_reader(const Fe8MemoryReader *memory) {
