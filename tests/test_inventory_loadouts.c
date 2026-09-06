@@ -16,6 +16,9 @@ static void fixture(void) {
         u->address=0x0202BE4C+n*0x48; u->character_id=n==2?0x36:n+1;
         snprintf(u->name,sizeof(u->name),"%s",names[n]);strcpy(u->class_name,"Knight");
         u->ranks[0]=n?31:1;u->level=5;u->hp=u->max_hp=20;
+        u->exp=25+n*10;u->power=5+n;u->skill=7+n;u->speed=11-n;
+        u->luck=4+n;u->defense=8+n;u->resistance=2+n;
+        u->constitution=6+n;u->movement=5+n;
         for(int j=0;j<(n==3?5:2);++j) {
             Fe8ItemInfo *i=&u->item_info[j];i->id=(uint8_t)(1+n*5+j);i->attributes=1;
             i->movable=true;i->max_uses=40;i->weapon_rank=1;i->might=5+j;i->hit=90;i->weight=5;

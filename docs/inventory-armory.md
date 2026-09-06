@@ -23,6 +23,21 @@ remembered scope is Supply. The board shows per-owner compatibility; the Supply
 list and item-browser badges use the selected recipient. Inspection, comparison
 baseline, query and filters are shared across views.
 
+## Unit stats
+
+The recipient card in **By item** shows level, EXP, current/max HP and a
+read-only grid of **Pow, Skl, Spd, Lck, Def, Res, Con and Mov**. **By unit**
+shows the same stats under every ally's five slots, with level and EXP beside
+the portrait. Stat strips select the ally and accept ally drops; they never
+alias the item slot above. Both views retain all five slots at the minimum
+640x480 size; the board fits two compact rows. No stats require opening details.
+
+Pow is the snapshot's stored power field, not an inferred separate Strength or
+Magic stat. These are unit values, not weapon-adjusted attack, growth rates,
+caps, or a forecast of ROM-specific skill effects. Con/Mov use the existing
+class/base/bonus extraction. The EXP-disabled sentinel is shown as `--`, not
+255 points. Browsing stats cannot edit unit values or pending transfers.
+
 ## Transfers without an inspector detour
 
 * **Inline Give / Store** performs the common transfer in one click. Give uses
@@ -134,6 +149,12 @@ is profile-scoped and ID-based, not a special case on a translated item name.
 The profile remains SHA-verified; unrelated ROMs do not reinterpret these bits.
 
 ## Validation and reproducible captures
+
+`inventory_stats` records the actual stat label/value draws across both views,
+unit changes, zero/255 values, the EXP sentinel, density, zoom and DPI. It checks
+that stats cannot alias item hit targets and that selection, the snapshot and
+framebuffer canaries remain unchanged. The ROM tests compare every unit field
+and class ID against direct emulator-bus reads.
 
 `inventory_loadouts` checks every board slot's canonical endpoint across window,
 zoom, density and DPI combinations, filter/scope invariants, nearby picker

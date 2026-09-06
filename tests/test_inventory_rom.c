@@ -341,6 +341,7 @@ static void check_workspace(struct mCore *core,const Fe8MemoryReader *reader,
         }
     }
     capture_workspace(prefix,"comparison",ui,s,1440,900);
+    capture_workspace(prefix,"stats-items-minimum",ui,s,640,480);
     ui->by_unit=1;
     capture_workspace(prefix,"minimum",ui,s,640,480);
     ui->details_expanded=1;
@@ -349,6 +350,33 @@ static void check_workspace(struct mCore *core,const Fe8MemoryReader *reader,
     assert(!memcmp(ram,ewram,ram_size));
 }
 #endif
+
+/* Validate the snapshot fields independently through the emulator bus. This
+   also catches a stale/uninitialized class pointer between different allies. */
+static void check_unit_stats(struct mCore *core, const Fe8InventorySnapshot *s) {
+    for (int n = 0; n < s->unit_count; ++n) {
+        const Fe8InventoryUnit *u = &s->units[n];
+        uint32_t a = u->address;
+        uint32_t ch = core->busRead32(core, a), cl = core->busRead32(core, a + 4);
+        assert(u->class_id == core->busRead8(core, cl + 4));
+        assert(u->level == core->busRead8(core, a + 8));
+        assert(u->exp == core->busRead8(core, a + 9));
+        assert(u->max_hp == core->busRead8(core, a + 0x12));
+        assert(u->hp == core->busRead8(core, a + 0x13));
+        assert(u->power == core->busRead8(core, a + 0x14));
+        assert(u->skill == core->busRead8(core, a + 0x15));
+        assert(u->speed == core->busRead8(core, a + 0x16));
+        assert(u->defense == core->busRead8(core, a + 0x17));
+        assert(u->resistance == core->busRead8(core, a + 0x18));
+        assert(u->luck == core->busRead8(core, a + 0x19));
+        int con = (int8_t)core->busRead8(core, ch + 0x13) +
+            (int8_t)core->busRead8(core, cl + 0x11) + (int8_t)core->busRead8(core, a + 0x1A);
+        int mov = (int8_t)core->busRead8(core, cl + 0x12) + (int8_t)core->busRead8(core, a + 0x1D);
+        assert(u->constitution == (con < 0 ? 0 : con > 255 ? 255 : con));
+        assert(u->movement == (mov < 0 ? 0 : mov > 255 ? 255 : mov));
+    }
+    puts("  All unit stat fields and class IDs match the live ROM-backed roster");
+}
 
 int main(int argc, char **argv) {
     struct mCore *core;
@@ -422,6 +450,7 @@ int main(int argc, char **argv) {
     original_ram = malloc(ewram_size);
     assert(original_ram);
     memcpy(original_ram, ewram, ewram_size);
+    check_unit_stats(core,snapshot);
     if(archanae) {
         check_archanae_locks(core,&reader,&catalog,snapshot);
         assert(memcmp(original_ram,ewram,ewram_size)==0);

@@ -166,3 +166,6 @@ target_link_libraries(test_inventory_loadouts PRIVATE ${DESKTOP_TEXT_LIBS})
 fe8_add_test(inventory_history
     test_inventory_history.c ../app/src/inventory_history.c
     ../app/src/prebattle_inventory.c ../app/src/fe8_catalog.c)
+
+# Text recorder asserts actual label/value submissions in both inventory views.
+fe8_add_test(inventory_stats test_inventory_stats.c ${inventory_ui_sources})

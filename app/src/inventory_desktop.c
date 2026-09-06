@@ -327,7 +327,11 @@ void fe8_inventory_desktop_layout(const Fe8InventoryUi *ui, int width, int heigh
     l->pool_width = (l->detail_wide ? l->detail_x - GAP : l->width - PAD) - l->pool_x;
     l->row_height = l->height < 600 ? 24 : ui->comfortable ? 40 : 28;
     l->side_row_height = l->height < 720 ? 24 : ui->comfortable ? 36 : 32;
-    l->items_y = l->top + (l->height < 600 ? 100 : 116);
+    /* At minimum size the compact stats grid still leaves all five item
+       slots and one roster row. Taller windows use larger stat cells. */
+    l->stats_y = l->top + (l->height < 600 ? 108 : l->height < 720 ? 116 : 128);
+    l->stat_row_height = l->height < 600 ? 18 : l->height < 720 ? 22 : 28;
+    l->items_y = l->stats_y + 2 * l->stat_row_height + (l->height < 600 ? 4 : 20);
     l->roster_y = l->items_y + 5 * l->side_row_height + 22;
     l->roster_rows = (l->bottom - l->roster_y) / l->side_row_height;
     if (l->roster_rows < 0) l->roster_rows = 0;
@@ -359,7 +363,10 @@ void fe8_inventory_desktop_layout(const Fe8InventoryUi *ui, int width, int heigh
     l->board_width = l->width - 2 * PAD - (l->supply_width ? l->supply_width + GAP : 0);
     l->identity_width = l->width >= 1000 ? 148 : 112;
     l->slot_width = (l->board_width - l->identity_width - 8) / 5;
-    l->board_row_height = ui->comfortable ? 96 : 80;
+    /* Keep the equipment hit area separate from the read-only stat strip.
+       Short windows fit two compact loadouts, with every stat still visible. */
+    l->board_card_height = l->height < 600 ? 58 : ui->comfortable ? 96 : 80;
+    l->board_row_height = l->board_card_height + (l->height < 600 ? 24 : 28);
     l->board_y = l->top + (l->board_width >= 820 ? 94 : 120);
     l->board_rows = (l->deposit_y - l->board_y) / l->board_row_height;
     if (l->board_rows < 0) l->board_rows = 0;
@@ -397,11 +404,14 @@ static Fe8InventoryHitKind board_hit(const Fe8InventoryUi *ui,const Fe8Inventory
         int row=(y-l->board_y)/l->board_row_height;
         int unit=offset(ui->loadout_scroll,s->unit_count,l->board_rows)+row;
         if (unit>=s->unit_count) return FE8_INVENTORY_HIT_NONE;
-        if (x<l->board_x+l->identity_width) { *index=unit; return FE8_INVENTORY_HIT_ROSTER; }
+        if (x<l->board_x+l->identity_width ||
+            (y-l->board_y)%l->board_row_height >= l->board_card_height) {
+            *index=unit; return FE8_INVENTORY_HIT_ROSTER;
+        }
         int slot=(x-l->board_x-l->identity_width)/l->slot_width;
         int sx=l->board_x+l->identity_width+slot*l->slot_width;
         int sy=l->board_y+row*l->board_row_height;
-        if (slot<5 && in(x,y,sx,sy+4,l->slot_width-6,l->board_row_height-8)) {
+        if (slot<5 && in(x,y,sx,sy+4,l->slot_width-6,l->board_card_height-8)) {
             *index=unit*5+slot;
             return !ui->dragging && !ui->has_selection && s->units[unit].items[slot] &&
                 (s->units[unit].item_info[slot].attributes&1) && in(x,y,sx+l->slot_width-32,sy+8,22,18) ?
@@ -906,6 +916,36 @@ static void scroll_mark(Painter *p,int x,int y,int h,int count,int rows,int star
     fill(p,x,y,3,h,LINE);
     fill(p,x,y+(h-thumb)*start/(count-rows),3,thumb,MUTED);
 }
+/* Unit values from the coherent snapshot, not item stats or forecasts.
+   Pow is intentionally neutral: a profile may use a shared strength/magic
+   field. Never infer a separate magic value or stat cap from weapon ranks. */
+static void draw_unit_stats(Painter *p, const Fe8InventoryUnit *u,
+    int x, int y, int width, int columns, int row_height) {
+    static const char *const names[] = {"Pow", "Skl", "Spd", "Lck", "Def", "Res", "Con", "Mov"};
+    const unsigned values[] = {u->power, u->skill, u->speed, u->luck,
+        u->defense, u->resistance, u->constitution, u->movement};
+    for (int n = 0; n < 8; ++n) {
+        int left = x + (n % columns) * width / columns;
+        int right = x + ((n % columns) + 1) * width / columns;
+        int top = y + (n / columns) * row_height;
+        int inset = right - left < 60 ? 2 : 4;
+        int value_width = 25; /* Up to 255, without truncating valid values. */
+        int value_x = right - value_width - inset;
+        char value[8];
+        snprintf(value, sizeof(value), "%u", values[n]);
+        label(p, left + inset, top + (row_height - 14) / 2,
+            value_x - left - inset - 2, 14, names[n], MUTED, 9, 0, 0);
+        label(p, value_x, top + (row_height - 16) / 2,
+            value_width, 16, value, TEXT, row_height < 22 ? 11 : 12, 1, 0);
+        if (n % columns < columns - 1)
+            fill(p, right - 1, top + 4, 1, row_height - 8, LINE);
+    }
+}
+static void experience(char *out, size_t capacity, const Fe8InventoryUnit *u) {
+    /* FE8 uses 0xFF when experience is disabled, not 255 experience points. */
+    if (u->exp == UINT8_MAX) snprintf(out, capacity, "Lv %u · EXP --", u->level);
+    else snprintf(out, capacity, "Lv %u · EXP %u", u->level, u->exp);
+}
 static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySnapshot *s,
     const Fe8InventoryDesktopLayout *l) {
     const Fe8InventoryUnit *u=target(ui,s);
@@ -915,14 +955,19 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
         portrait(p,u,PAD+8,l->top+6,l->height<600?72:80,l->height<600?64:72);
         label(p,PAD+94,l->top+6,l->sidebar-104,24,u->name,TEXT,19,1,0);
         label(p,PAD+94,l->top+30,l->sidebar-104,18,u->class_name,MUTED,12,0,0);
-        snprintf(b,sizeof(b),"Lv %u    HP %u/%u",u->level,u->hp,u->max_hp);
-        label(p,PAD+94,l->top+53,l->sidebar-104,18,b,ACCENT,11,0,0);
+        experience(b,sizeof(b),u);
+        label(p,PAD+94,l->top+51,l->sidebar-104,16,b,MUTED,10,0,0);
+        snprintf(b,sizeof(b),"HP %u / %u",u->hp,u->max_hp);
+        label(p,PAD+94,l->top+68,l->sidebar-104,16,b,ACCENT,11,1,0);
         int x=PAD+10;
         for(int t=0;t<8;++t)if(u->ranks[t]&&x<PAD+l->sidebar-34) {
             snprintf(b,sizeof(b),"%.2s %c",TYPES[t+1],rank_letter(u->ranks[t]));
-            badge(p,x,l->top+(l->height<600?74:80),44,b,TYPE_COLORS[t+1]);x+=48;
+            badge(p,x,l->top+86,44,b,TYPE_COLORS[t+1]);x+=48;
         }
-        if(x==PAD+10)label(p,x,l->top+82,l->sidebar-20,16,"No weapon ranks",MUTED,11,0,0);
+        if(x==PAD+10)label(p,x,l->top+88,l->sidebar-20,16,"No weapon ranks",MUTED,11,0,0);
+        if(l->height>=720)label(p,PAD+10,l->stats_y-18,l->sidebar-20,16,"UNIT STATS",MUTED,10,1,0);
+        card(p,PAD+6,l->stats_y,l->sidebar-18,2*l->stat_row_height,RAISED);
+        draw_unit_stats(p,u,PAD+10,l->stats_y,l->sidebar-24,4,l->stat_row_height);
         snprintf(b,sizeof(b),"LOADOUT   %d / 5",occupied(u));
         if(l->height>=600)label(p,PAD+10,l->items_y-16,l->sidebar-20,16,b,MUTED,10,1,0);
         for(int j=0;j<5;++j) {
@@ -1244,14 +1289,27 @@ static void draw_board(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySna
     for(int row=0;row<l->board_rows && start+row<s->unit_count;++row) {
         int n=start+row,y=l->board_y+row*l->board_row_height;
         const Fe8InventoryUnit *u=&s->units[n];
-        if(n==ui->current_unit)card(p,l->board_x+4,y+4,l->identity_width-10,l->board_row_height-8,SELECTED);
+        if(n==ui->current_unit)card(p,l->board_x+4,y+4,l->identity_width-10,l->board_card_height-8,SELECTED);
         int compact=l->identity_width<140;
         if(!compact)portrait(p,u,l->board_x+9,y+10,40,36);
         int name_x=l->board_x+(compact?10:56);
-        label(p,name_x,y+10,l->identity_width-(compact?18:62),20,u->name,n==ui->current_unit?ACCENT:TEXT,13,1,0);
-        snprintf(b,sizeof(b),"Lv %u · %d/5",u->level,occupied(u));
-        label(p,name_x,y+32,l->identity_width-(compact?18:62),18,b,MUTED,10,0,0);
-        label(p,l->board_x+10,y+55,l->identity_width-20,18,u->class_name,MUTED,10,0,0);
+        label(p,name_x,y+(l->board_card_height<80?6:10),l->identity_width-(compact?18:62),20,u->name,n==ui->current_unit?ACCENT:TEXT,13,1,0);
+        label(p,name_x,y+(l->board_card_height<80?24:30),l->identity_width-(compact?18:62),16,u->class_name,MUTED,10,0,0);
+        experience(b,sizeof(b),u);
+        label(p,l->board_x+10,y+(l->board_card_height<80?40:48),l->identity_width-20,16,b,MUTED,10,0,0);
+        if(l->board_card_height>=80) {
+            snprintf(b,sizeof(b),"%d / 5 items",occupied(u));
+            label(p,l->board_x+10,y+65,l->identity_width-20,14,b,MUTED,9,0,0);
+        }
+        int stats_y=y+l->board_card_height,stats_h=l->board_row_height-l->board_card_height;
+        /* A stat strip spans the whole ally row; clicking or dropping here
+           targets the ally, never the item slot above it. */
+        card(p,l->board_x+6,stats_y,l->board_width-16,stats_h-2,
+            n==ui->current_unit?SELECTED:PANEL);
+        label(p,l->board_x+12,stats_y+(stats_h-16)/2,20,16,"HP",MUTED,9,0,0);
+        snprintf(b,sizeof(b),"%u/%u",u->hp,u->max_hp);
+        label(p,l->board_x+33,stats_y+(stats_h-16)/2,56,16,b,ACCENT,11,1,0);
+        draw_unit_stats(p,u,l->board_x+96,stats_y,l->board_width-112,8,stats_h);
         for(int j=0;j<5;++j) {
             int x=l->board_x+l->identity_width+j*l->slot_width,w=l->slot_width-6;
             Fe8InventoryEndpoint e={FE8_INVENTORY_ENDPOINT_UNIT,u->address,(unsigned)j};
@@ -1262,23 +1320,23 @@ static void draw_board(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySna
             int source=ui->has_selection&&same(ui->selected,e);
             int compared=ui->has_comparison&&same(ui->comparison,e);
             int drop=ui->dragging&&ui->drag_hover_kind==FE8_INVENTORY_HIT_LOADOUT_ITEM&&ui->drag_hover_index==n*5+j;
-            card(p,x,y+4,w,l->board_row_height-8,chosen||source?SELECTED:RAISED);
-            if(chosen||source)fill(p,x,y+8,2,l->board_row_height-16,ACCENT);
-            if(compared)border(p,x,y+4,w,l->board_row_height-8,GOLD);
-            if(ui->flash_ticks && same(ui->flash,e))border(p,x,y+4,w,l->board_row_height-8,GOLD);
-            if(drop)border(p,x,y+4,w,l->board_row_height-8,!u->items[j]||i->movable?ACCENT:DANGER);
+            card(p,x,y+4,w,l->board_card_height-8,chosen||source?SELECTED:RAISED);
+            if(chosen||source)fill(p,x,y+8,2,l->board_card_height-16,ACCENT);
+            if(compared)border(p,x,y+4,w,l->board_card_height-8,GOLD);
+            if(ui->flash_ticks && same(ui->flash,e))border(p,x,y+4,w,l->board_card_height-8,GOLD);
+            if(drop)border(p,x,y+4,w,l->board_card_height-8,!u->items[j]||i->movable?ACCENT:DANGER);
             if(u->items[j]) {
-                label(p,x+8,y+12,w-((i->attributes&1)?38:16),28,i->name,match?TEXT:MUTED,w<130?11:12,chosen,1);
+                label(p,x+8,y+(l->board_card_height<80?6:12),w-((i->attributes&1)?38:16),28,i->name,match?TEXT:MUTED,w<130?11:12,chosen,1);
                 if(i->attributes&1)label(p,x+w-22,y+10,20,18,"vs",compared?GOLD:MUTED,10,1,0);
                 uses(b,sizeof(b),u->items[j],i);
-                label(p,x+8,y+42,w-16,18,b,match?TYPE_COLORS[type_key(i)]:MUTED,11,1,0);
+                label(p,x+8,y+(l->board_card_height<80?32:42),w-16,18,b,match?TYPE_COLORS[type_key(i)]:MUTED,11,1,0);
                 if(w>=130) {
                     uint32_t color;use_label(u,i,&color);
                     fe8_inventory_desktop_use_reason(s,u,i,reason,sizeof(reason));
-                    label(p,x+62,y+42,w-68,18,i->movable?reason:"Fixed",color,10,0,0);
+                    label(p,x+62,y+(l->board_card_height<80?32:42),w-68,18,i->movable?reason:"Fixed",color,10,0,0);
                 }
-                durability(p,x+8,y+l->board_row_height-14,w-16,u->items[j],i);
-                if(l->board_row_height>=96)label(p,x+8,y+63,w-16,18,TYPES[type_key(i)],MUTED,10,0,0);
+                durability(p,x+8,y+l->board_card_height-(l->board_card_height<80?6:14),w-16,u->items[j],i);
+                if(l->board_card_height>=96)label(p,x+8,y+63,w-16,18,TYPES[type_key(i)],MUTED,10,0,0);
             } else {
                 label(p,x+8,y+24,w-16,20,ui->has_selection?"+ Drop here":"+ Empty",ui->has_selection?ACCENT:MUTED,12,0,0);
             }

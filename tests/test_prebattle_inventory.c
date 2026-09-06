@@ -163,6 +163,7 @@ int main(void) {
     put_rom16(character_b, 1);
     put_rom32(character_a + 0x28, UA_LOCK_1);
     put_rom16(0x08010100, 2);
+    rom[0x10100 + 4] = 0x31;
     put_rom16(0x08010100 + 2, 8);
     put_rom32(0x08010100 + 0x28, UINT32_C(1u << 17));
     rom[character_a - 0x08000000 + 4] = 0x11;
@@ -192,6 +193,7 @@ int main(void) {
     assert(fe8_extract_prebattle_inventory(&memory, &profile, &catalog, &snapshot));
     assert(snapshot.chapter == 9 && snapshot.unit_count == 2);
     assert(snapshot.units[0].character_id == 0x11);
+    assert(snapshot.units[0].class_id == 0x31);
     assert(strcmp(snapshot.units[0].name, "Alice") == 0);
     assert(strcmp(snapshot.units[0].class_name, "Fighter") == 0);
     assert(strcmp(snapshot.units[0].description,

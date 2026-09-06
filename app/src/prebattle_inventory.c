@@ -212,6 +212,7 @@ bool fe8_extract_prebattle_inventory(
         unit = &snapshot->units[snapshot->unit_count++];
         unit->address = address;
         unit->character_id = read8(memory, character + 4);
+        class_data = read32(memory, address + 4);
         unit->class_id = valid_range(class_data, 5, FE8_ROM_START, FE8_ROM_END) ?
             read8(memory, class_data + 4) : 0;
         unit->level = read8(memory, address + 8);
@@ -229,7 +230,6 @@ bool fe8_extract_prebattle_inventory(
         unit->attributes = read32(memory, character + 0x28);
         for (slot = 0; slot < FE8_INVENTORY_WEAPON_TYPES; ++slot)
             unit->ranks[slot] = read8(memory, address + FE8_UNIT_RANK_OFFSET + slot);
-        class_data = read32(memory, address + 4);
         if (valid_range(class_data, 0x2C, FE8_ROM_START, FE8_ROM_END)) {
             unit->constitution = clamp_stat((int8_t)read8(memory, character + 0x13) +
                 (int8_t)read8(memory, class_data + 0x11) +

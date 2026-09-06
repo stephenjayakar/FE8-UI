@@ -19,6 +19,7 @@ typedef struct Fe8InventoryDesktopLayout {
     int popup_x, popup_y, popup_width, popup_height, popup_rows_y;
 
     int quick_x, quick_width;
+    int stats_y, stat_row_height, board_card_height;
 } Fe8InventoryDesktopLayout;
 
 int fe8_inventory_ui_scale_percent(const Fe8InventoryUi *ui, int width, int height);
