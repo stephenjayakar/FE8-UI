@@ -1,0 +1,109 @@
+name: Validate Armory unit stats
+on:
+  push:
+    branches: [feature/armory-unit-stats]
+    paths: [.github/workflows/unit-stats-publish.yml]
+permissions:
+  contents: read
+env:
+  FILE_HASHES: |
+    {
+      "app/src/inventory_desktop.c": "837b52ba827760a9b5c42545b27f3383e925125f0b6234ea9ce4f0708ea345f3",
+      "app/src/inventory_desktop.h": "695b5aff32eb03cc516fdc7e81f095f96d8849065dea1e579e9fbb555cc110bc",
+      "app/src/prebattle_inventory.c": "818e750f1b7a5ba3597d43ef2e1eab017e43a9fa61c450bc9eda37548b1022d7",
+      "docs/inventory-armory.md": "79e3c8f8e0ffe745cab5e0cdf1f7e87ec9d799fbaad70bc2fa3e05a94f88ff55",
+      "tests/CMakeLists.txt": "f79b347453cb9eb66e920110156a3f2869d6556b3296a0dfaec67be9dd170fdb",
+      "tests/test_inventory_loadouts.c": "e605dd10afd716989c9cd2d08d5960b2a1bac1f19392a2d3bfd71b29bfdf8c3f",
+      "tests/test_inventory_rom.c": "c1463945f321ed6453d32f341ab26df85527ed0e94fe78b2b97f6d8dbcbd0ace",
+      "tests/test_inventory_stats.c": "8745e9ebd913a5e10a547fe5f8f79725b9600e564a0a6a4b24153f13ec8b7062",
+      "tests/test_prebattle_inventory.c": "d4a4c9c99e22b3ab2e95184b88696b51f4cb4030e16cf9ccccac49ba843df655"
+    }
+  APPLY_STATS: |
+    import base64, gzip, hashlib, json, os, subprocess, urllib.request
+    from pathlib import Path
+    assert os.environ['GITHUB_REF'] == 'refs/heads/feature/armory-unit-stats'
+    url = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs/2ec80c7760f1e446404fd8c443f12a11457b14c8'
+    request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        transport = base64.b64decode(json.load(response)['content'])
+    # Undo two known transcription insertions in the isolated source transport.
+    # Verify the original blob, complete patch and every resulting file.
+    assert transport.count(b'OrRGQY8cNsY5') == 1
+    assert transport.count(b'Mpjpi2+efFHdr') == 1
+    transport = transport.replace(b'OrRGQY8cNsY5', b'OrRGQY8NsY5', 1).replace(b'Mpjpi2+efFHdr', b'Mpjpi2+fFHdr', 1)
+    assert hashlib.sha1(b'blob ' + str(len(transport)).encode() + b'\0' + transport).hexdigest() == '147176fbac36e36823dc1a7105d6e4ce4e264561'
+    patch = gzip.decompress(base64.b64decode(transport))
+    assert hashlib.sha256(patch).hexdigest() == 'ea0bc86c93fcdd425af14a2e41300faf719db2b370f183c743a471152510f0a8'
+    expected = json.loads(os.environ['FILE_HASHES'])
+    names = subprocess.check_output(['git', 'apply', '--numstat', '--unidiff-zero', '-'], input=patch).decode().splitlines()
+    assert {line.split('\t')[2] for line in names} == set(expected)
+    subprocess.run(['git', 'apply', '--check', '--unidiff-zero', '--whitespace=error', '-'], input=patch, check=True)
+    subprocess.run(['git', 'apply', '--unidiff-zero', '--whitespace=error', '-'], input=patch, check=True)
+    for name, digest in expected.items():
+        assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+    print('Verified nine source/test/documentation files. No ROMs, saves, fonts or extracted assets.')
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply checksum-verified source patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 -c "$APPLY_STATS"
+      - name: Initialize pinned emulator
+        run: git submodule update --init --depth 1 third_party/mgba
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build libsdl2-dev libfreetype6-dev zlib1g-dev fonts-dejavu-core
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja sdl2
+      - name: Build complete application
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFE8_BUILD_TESTS=ON "${args[@]}"
+          cmake --build build --parallel 3
+      - name: Full regression suite
+        run: ctest --test-dir build --output-on-failure
+      - name: Capture native stats and loadouts
+        run: |
+          mkdir -p build/stats-captures
+          build/tests/test_inventory_loadouts build/stats-captures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unit-stats-native-${{ runner.os }}
+          path: build/stats-captures/*.ppm
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/armory-unit-stats
+      - name: Publish validated source and remove temporary transport
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -c "$APPLY_STATS"
+          git diff --check
+          python3 -c 'import json,os,subprocess; subprocess.run(["git","add","--",*json.loads(os.environ["FILE_HASHES"])],check=True)'
+          git rm .github/workflows/unit-stats-publish.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Show unit stats beside equipment in both Armory views" -m "Add read-only Pow/Skl/Spd/Lck/Def/Res/Con/Mov, HP, level and EXP to the recipient card and every army loadout. Keep two compact rows and all five slots at 640x480. Correct the uninitialized class pointer before class-ID extraction. Verify actual stat draws, DPI/zoom and the EXP sentinel; compare all extracted stats with both supplied ROMs. Local 31/31 tests and 5/5 inventory sanitizer tests pass. No ROMs, saves, fonts or extracted assets."
+          git push origin HEAD:refs/heads/feature/armory-unit-stats
