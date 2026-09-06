@@ -379,3 +379,15 @@ The three alternative project plans are preserved in
 [`docs/plans/`](docs/plans/README.md).
 The complete build and validation recipe is in
 [`docs/testing.md`](docs/testing.md).
+
+### Armory effective unit stats
+
+The verified Archanea and Sacred Echoes ROM profiles now show **Total stats**
+from their own stat-screen getter code, including active equipment, skills and
+penalties. Click **Total stats / Base stats** to switch; hover a stat for its base
+and net modifier. Transfers and undo recalculate totals. These are current unit
+stats, not enemy-specific combat forecasts. Unsupported states/ROMs are marked
+**Base only** rather than silently pretending bonuses were included. Calculation
+uses a private in-memory emulator and never steps or restores the live game.
+See [the Armory documentation](docs/inventory-armory.md#unit-stats) for scope,
+safety boundaries and regression scenarios.

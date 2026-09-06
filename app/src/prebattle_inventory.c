@@ -38,6 +38,30 @@
 #define FE8_UNIT_STATUS_SILENCED UINT8_C(3)
 #define FE8_UNIT_STATUS_BERSERK UINT8_C(4)
 
+int fe8_inventory_stat_base(const Fe8InventoryUnit *unit, Fe8UnitStat stat) {
+    if (!unit) return 0;
+    switch (stat) {
+    case FE8_STAT_POWER: return unit->power;
+    case FE8_STAT_SKILL: return unit->skill;
+    case FE8_STAT_SPEED: return unit->speed;
+    case FE8_STAT_LUCK: return unit->luck;
+    case FE8_STAT_DEFENSE: return unit->defense;
+    case FE8_STAT_RESISTANCE: return unit->resistance;
+    case FE8_STAT_CONSTITUTION: return unit->constitution;
+    case FE8_STAT_MOVEMENT: return unit->movement;
+    case FE8_STAT_MAX_HP: return unit->max_hp;
+    default: return 0;
+    }
+}
+
+int fe8_inventory_stat_value(const Fe8InventoryUnit *unit, Fe8UnitStat stat,
+    bool base_only) {
+    if (unit && !base_only && unit->effective_stats_valid &&
+            stat >= 0 && stat < FE8_STAT_COUNT)
+        return unit->effective_stats[stat];
+    return fe8_inventory_stat_base(unit, stat);
+}
+
 static bool valid_reader(const Fe8MemoryReader *memory) {
     return memory && memory->read8;
 }

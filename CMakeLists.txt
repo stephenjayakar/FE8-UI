@@ -31,6 +31,7 @@ endif()
 # mGBA is an implementation dependency, not part of this project's install
 # payload. EXCLUDE_FROM_ALL keeps its install rules out of this project.
 add_subdirectory("${FE8_MGBA_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/mgba" EXCLUDE_FROM_ALL)
+include(cmake/MgbaStateCompatibility.cmake)
 
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
@@ -58,6 +59,7 @@ add_executable(fe8-mgba-sdl
     app/src/prebattle_inventory.c
     app/src/prebattle_inventory_ui.c
     app/src/inventory_desktop.c
+    app/src/inventory_effective_stats.c
     app/src/inventory_history.c
     app/src/pointer_mapping.c
     app/src/viewport_controller.c

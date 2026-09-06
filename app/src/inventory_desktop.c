@@ -455,6 +455,7 @@ Fe8InventoryHitKind fe8_inventory_desktop_hit(const Fe8InventoryUi *ui,
     }
     if (in(x,y,160,14,86,30)) return FE8_INVENTORY_HIT_VIEW_ITEMS;
     if (in(x,y,250,14,86,30)) return FE8_INVENTORY_HIT_VIEW_UNITS;
+    if (in(x,y,344,14,98,30)) return FE8_INVENTORY_HIT_STAT_MODE;
     if (in(x,y,l.width-130,l.height-34,118,28)) return ui->undo_count>0 ? FE8_INVENTORY_HIT_UNDO : FE8_INVENTORY_HIT_NONE;
     if ((l.detail_collapsed || l.detail_overlay) && in(x,y,l.width-194,14,98,28)) return FE8_INVENTORY_HIT_DETAILS;
     if (in(x,y,l.width-88,14,76,28)) return FE8_INVENTORY_HIT_CLOSE;
@@ -574,6 +575,12 @@ int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *
     ui->search_active = *kind == FE8_INVENTORY_HIT_SEARCH;
     u = target(ui,s);
     switch (*kind) {
+    case FE8_INVENTORY_HIT_STAT_MODE:
+        ui->stats_base=!ui->stats_base;
+        snprintf(ui->status,sizeof(ui->status),"%s",ui->stats_base?
+            "Base stats: stored unit values, without active equipment or skill modifiers.":
+            "Total stats: native equipment, skills and penalties. Hover a stat for its base and net modifier.");
+        clear_hover(ui); return 1;
     case FE8_INVENTORY_HIT_VIEW_ITEMS:
     case FE8_INVENTORY_HIT_VIEW_UNITS:
         fe8_inventory_desktop_cancel_move(ui);
@@ -919,11 +926,10 @@ static void scroll_mark(Painter *p,int x,int y,int h,int count,int rows,int star
 /* Unit values from the coherent snapshot, not item stats or forecasts.
    Pow is intentionally neutral: a profile may use a shared strength/magic
    field. Never infer a separate magic value or stat cap from weapon ranks. */
-static void draw_unit_stats(Painter *p, const Fe8InventoryUnit *u,
+static void draw_unit_stats(Painter *p, const Fe8InventoryUi *ui, const Fe8InventoryUnit *u,
     int x, int y, int width, int columns, int row_height) {
     static const char *const names[] = {"Pow", "Skl", "Spd", "Lck", "Def", "Res", "Con", "Mov"};
-    const unsigned values[] = {u->power, u->skill, u->speed, u->luck,
-        u->defense, u->resistance, u->constitution, u->movement};
+
     for (int n = 0; n < 8; ++n) {
         int left = x + (n % columns) * width / columns;
         int right = x + ((n % columns) + 1) * width / columns;
@@ -932,11 +938,14 @@ static void draw_unit_stats(Painter *p, const Fe8InventoryUnit *u,
         int value_width = 25; /* Up to 255, without truncating valid values. */
         int value_x = right - value_width - inset;
         char value[8];
-        snprintf(value, sizeof(value), "%u", values[n]);
+        int base=fe8_inventory_stat_base(u,(Fe8UnitStat)n);
+        int total=fe8_inventory_stat_value(u,(Fe8UnitStat)n,ui->stats_base);
+        uint32_t color=total>base?ACCENT:total<base?DANGER:TEXT;
+        snprintf(value, sizeof(value), "%d", total);
         label(p, left + inset, top + (row_height - 14) / 2,
             value_x - left - inset - 2, 14, names[n], MUTED, 9, 0, 0);
         label(p, value_x, top + (row_height - 16) / 2,
-            value_width, 16, value, TEXT, row_height < 22 ? 11 : 12, 1, 0);
+            value_width, 16, value, color, row_height < 22 ? 11 : 12, 1, 0);
         if (n % columns < columns - 1)
             fill(p, right - 1, top + 4, 1, row_height - 8, LINE);
     }
@@ -957,7 +966,7 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
         label(p,PAD+94,l->top+30,l->sidebar-104,18,u->class_name,MUTED,12,0,0);
         experience(b,sizeof(b),u);
         label(p,PAD+94,l->top+51,l->sidebar-104,16,b,MUTED,10,0,0);
-        snprintf(b,sizeof(b),"HP %u / %u",u->hp,u->max_hp);
+        snprintf(b,sizeof(b),"HP %u / %d",u->hp,fe8_inventory_stat_value(u,FE8_STAT_MAX_HP,ui->stats_base));
         label(p,PAD+94,l->top+68,l->sidebar-104,16,b,ACCENT,11,1,0);
         int x=PAD+10;
         for(int t=0;t<8;++t)if(u->ranks[t]&&x<PAD+l->sidebar-34) {
@@ -965,9 +974,9 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
             badge(p,x,l->top+86,44,b,TYPE_COLORS[t+1]);x+=48;
         }
         if(x==PAD+10)label(p,x,l->top+88,l->sidebar-20,16,"No weapon ranks",MUTED,11,0,0);
-        if(l->height>=720)label(p,PAD+10,l->stats_y-18,l->sidebar-20,16,"UNIT STATS",MUTED,10,1,0);
+        if(l->height>=720)label(p,PAD+10,l->stats_y-18,l->sidebar-20,16,ui->stats_base || !u->effective_stats_valid?"BASE STATS":"TOTAL STATS · Hover for modifiers",MUTED,10,1,0);
         card(p,PAD+6,l->stats_y,l->sidebar-18,2*l->stat_row_height,RAISED);
-        draw_unit_stats(p,u,PAD+10,l->stats_y,l->sidebar-24,4,l->stat_row_height);
+        draw_unit_stats(p,ui,u,PAD+10,l->stats_y,l->sidebar-24,4,l->stat_row_height);
         snprintf(b,sizeof(b),"LOADOUT   %d / 5",occupied(u));
         if(l->height>=600)label(p,PAD+10,l->items_y-16,l->sidebar-20,16,b,MUTED,10,1,0);
         for(int j=0;j<5;++j) {
@@ -1307,9 +1316,9 @@ static void draw_board(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySna
         card(p,l->board_x+6,stats_y,l->board_width-16,stats_h-2,
             n==ui->current_unit?SELECTED:PANEL);
         label(p,l->board_x+12,stats_y+(stats_h-16)/2,20,16,"HP",MUTED,9,0,0);
-        snprintf(b,sizeof(b),"%u/%u",u->hp,u->max_hp);
+        snprintf(b,sizeof(b),"%u/%d",u->hp,fe8_inventory_stat_value(u,FE8_STAT_MAX_HP,ui->stats_base));
         label(p,l->board_x+33,stats_y+(stats_h-16)/2,56,16,b,ACCENT,11,1,0);
-        draw_unit_stats(p,u,l->board_x+96,stats_y,l->board_width-112,8,stats_h);
+        draw_unit_stats(p,ui,u,l->board_x+96,stats_y,l->board_width-112,8,stats_h);
         for(int j=0;j<5;++j) {
             int x=l->board_x+l->identity_width+j*l->slot_width,w=l->slot_width-6;
             Fe8InventoryEndpoint e={FE8_INVENTORY_ENDPOINT_UNIT,u->address,(unsigned)j};
@@ -1421,6 +1430,57 @@ static void draw_swap(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySnap
     label(p,x+16,y+h-27,w-32,18,"Choose an exchange · Esc or outside click cancels",MUTED,10,0,0);
 }
 
+/* Geometry-only hover leaves selection, transfers and stat values unchanged. */
+static void draw_stat_help(Painter *p, const Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *s, const Fe8InventoryDesktopLayout *l) {
+    static const char *const names[]={"Power","Skill","Speed","Luck","Defense",
+        "Resistance","Constitution","Movement","Maximum HP"};
+    if(ui->popup_open || ui->dragging || l->detail_overlay) return;
+    int x=(int)(ui->pointer_x/p->scale),y=(int)(ui->pointer_y/p->scale),stat=-1;
+    const Fe8InventoryUnit *u=NULL;
+    if(!ui->by_unit) {
+        u=target(ui,s);
+        if(u && in(x,y,PAD+10,l->stats_y,l->sidebar-24,2*l->stat_row_height))
+            stat=(y-l->stats_y)/l->stat_row_height*4+(x-PAD-10)*4/(l->sidebar-24);
+        else if(u && in(x,y,PAD+94,l->top+68,l->sidebar-104,16)) stat=FE8_STAT_MAX_HP;
+    } else if(in(x,y,l->board_x,l->board_y,l->board_width,l->board_rows*l->board_row_height)) {
+        int row=(y-l->board_y)/l->board_row_height;
+        int n=offset(ui->loadout_scroll,s->unit_count,l->board_rows)+row;
+        int top=l->board_y+row*l->board_row_height+l->board_card_height;
+        if(n<s->unit_count && y>=top) {
+            u=&s->units[n];
+            if(in(x,y,l->board_x+96,top,l->board_width-112,l->board_row_height-l->board_card_height))
+                stat=(x-l->board_x-96)*8/(l->board_width-112);
+            else if(in(x,y,l->board_x+12,top,77,l->board_row_height-l->board_card_height)) stat=FE8_STAT_MAX_HP;
+        }
+    }
+    int header=in(x,y,344,14,98,30);
+    if(!header && (!u || stat<0 || stat>=FE8_STAT_COUNT)) return;
+    int left=clamp(x+12,12,l->width-352),top=clamp(y+18,48,l->height-116);
+    char title[96],detail[160];
+    const char *note;
+    if(header) {
+        snprintf(title,sizeof(title),"Base / total unit stats");
+        snprintf(detail,sizeof(detail),"Click to switch. Hover a stat for its net modifier.");
+        note="Totals use the ROM's current stat-screen rules. Base only means no verified calculation is available.";
+    } else {
+        int base=fe8_inventory_stat_base(u,(Fe8UnitStat)stat);
+        int total=fe8_inventory_stat_value(u,(Fe8UnitStat)stat,false);
+        snprintf(title,sizeof(title),"%s · %s",u->name,names[stat]);
+        if(u->effective_stats_valid) {
+            snprintf(detail,sizeof(detail),"Total %d = Base %d %+d",total,base,total-base);
+            note="Net gear, skills and active effects. Not a combat forecast; battle-only effects are excluded.";
+        } else {
+            snprintf(detail,sizeof(detail),"Base %d · Total unavailable",base);
+            note="This ROM or game state has no verified calculation. Equipment and skill bonuses are not included.";
+        }
+    }
+    card(p,left,top,340,104,RAISED);border(p,left,top,340,104,LINE);
+    label(p,left+12,top+9,316,20,title,TEXT,13,1,0);
+    label(p,left+12,top+33,316,20,detail,ACCENT,12,1,0);
+    label(p,left+12,top+59,316,40,note,MUTED,11,0,1);
+}
+
 void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui,const Fe8InventorySnapshot *s,
     uint32_t *pixels,int stride,int width,int height) {
     Fe8InventoryDesktopLayout l;
@@ -1439,6 +1499,10 @@ void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui,const Fe8InventorySnaps
     label(&p,PAD+4,14,150,36,"Armory",TEXT,l.height>=600?28:24,1,0);
     button(&p,160,14,86,30,"By item",!ui->by_unit,1);
     button(&p,250,14,86,30,"By unit",ui->by_unit,1);
+    unsigned verified=0;
+    for(unsigned n=0;n<s->unit_count;++n) verified+=s->units[n].effective_stats_valid;
+    button(&p,344,14,98,30,ui->stats_base?"Base stats":!verified?"Base only":
+        verified==s->unit_count?"Total stats":"Mixed stats",!ui->stats_base&&verified,1);
     if(l.width>=900) {
         snprintf(b,sizeof(b),"%u allies · Supply %u / %u",s->unit_count,s->supply_count,s->supply_capacity);
         label(&p,l.width-444,19,236,22,b,GOLD,12,1,0);
@@ -1463,6 +1527,7 @@ void fe8_inventory_desktop_draw(const Fe8InventoryUi *ui,const Fe8InventorySnaps
         label(&p,x+10,y+6,196,20,drag?drag->name:"Moving item",TEXT,13,1,0);
         label(&p,x+10,y+27,196,16,"Drop to transfer · Esc cancels",ACCENT,10,0,0);
     }
+    draw_stat_help(&p,ui,s,&l);
     draw_swap(&p,ui,s,&l);
     fe8_host_text_end(&p.text);
 }

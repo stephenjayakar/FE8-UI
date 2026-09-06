@@ -126,6 +126,58 @@ static void check(int w, int h, float dpi, int zoom, int comfortable, int board)
     for (size_t k = stride * h; k < count; ++k) assert(pixels[k] == 0x12345678);
     free(pixels);
 }
+static int has_text(const char *text) {
+    for(int n=0;n<call_count;++n) if(!strcmp(calls[n].text,text))return 1;
+    return 0;
+}
+static void effective_modes(void) {
+    const int sizes[][3]={{640,480,1},{1280,800,1},{2560,1600,2}};
+    for(int board=0;board<2;++board) for(unsigned size=0;size<sizeof(sizes)/sizeof(sizes[0]);++size) {
+        fixture();
+        for(int n=0;n<snapshot.unit_count;++n) {
+            Fe8InventoryUnit *u=&snapshot.units[n];u->effective_stats_valid=true;
+            for(int stat=0;stat<FE8_STAT_COUNT;++stat)u->effective_stats[stat]=fe8_inventory_stat_base(u,(Fe8UnitStat)stat);
+            u->effective_stats[FE8_STAT_SPEED]+=3;u->effective_stats[FE8_STAT_DEFENSE]-=2;
+            u->effective_stats[FE8_STAT_MAX_HP]+=7;
+        }
+        original=snapshot;
+        int w=sizes[size][0],h=sizes[size][1];
+        Fe8InventoryUi ui;fe8_inventory_ui_init(&ui);fe8_inventory_ui_open(&ui,&snapshot);
+        ui.desktop=1;ui.desktop_scale=sizes[size][2];ui.by_unit=board;
+        ui.has_selection=1;ui.selected=(Fe8InventoryEndpoint){FE8_INVENTORY_ENDPOINT_UNIT,snapshot.units[0].address,0};
+        uint32_t *pixels=calloc((size_t)w*h,sizeof(*pixels));assert(pixels);
+        for(int base=0;base<2;++base) {
+            assert(ui.stats_base==base);
+            Fe8InventoryDesktopLayout l;fe8_inventory_desktop_layout(&ui,w,h,&l);
+            float scale=fe8_inventory_desktop_scale(&ui,w,h);
+            call_count=0;fe8_inventory_desktop_draw(&ui,&snapshot,pixels,w,w,h);
+            assert(has_text(base?"Base stats":"Total stats"));
+            Fe8InventoryUnit expected=snapshot.units[0];
+            if(!base){expected.speed+=3;expected.defense-=2;expected.max_hp+=7;}
+            int top=board?l.board_y+l.board_card_height:l.stats_y;
+            int bottom=board?l.board_y+l.board_row_height:l.stats_y+2*l.stat_row_height;
+            stats_present(&expected,pixel(scale,top),pixel(scale,bottom));
+            char hp[32];snprintf(hp,sizeof(hp),board?"%u/%u":"HP %u / %u",expected.hp,expected.max_hp);
+            assert(has_text(hp));
+            ui.pointer_x=pixel(scale,board?l.board_x+96+(l.board_width-112)*2/8+8:22+(l.sidebar-24)*2/4+8);
+            ui.pointer_y=pixel(scale,top+8);
+            call_count=0;fe8_inventory_desktop_draw(&ui,&snapshot,pixels,w,w,h);
+            assert(has_text("Unit 0 · Speed") && has_text("Total 33 = Base 30 +3"));
+            ui.pointer_x=ui.pointer_y=-1;
+            int index;Fe8InventoryHitKind kind=fe8_inventory_desktop_hit(&ui,&snapshot,w,h,pixel(scale,380),pixel(scale,25),&index);
+            assert(kind==FE8_INVENTORY_HIT_STAT_MODE);
+            assert(fe8_inventory_desktop_click(&ui,&snapshot,&kind,&index));
+            assert(ui.has_selection && ui.selected.unit_address==snapshot.units[0].address);
+            assert(!memcmp(&snapshot,&original,sizeof(snapshot)));
+        }
+        for(int n=0;n<snapshot.unit_count;++n)snapshot.units[n].effective_stats_valid=false;
+        call_count=0;fe8_inventory_desktop_draw(&ui,&snapshot,pixels,w,w,h);assert(has_text("Base only"));
+        snapshot.units[1].effective_stats_valid=true;
+        call_count=0;fe8_inventory_desktop_draw(&ui,&snapshot,pixels,w,w,h);assert(has_text("Mixed stats"));
+        free(pixels);
+    }
+}
+
 int main(void) {
     fixture();
     for (int board = 0; board < 2; ++board) for (int comfy = 0; comfy < 2; ++comfy) {
@@ -137,6 +189,8 @@ int main(void) {
         for (int zoom = 80; zoom <= 200; zoom += 10)
             check(1280, 960, 1, zoom, comfy, board);
     }
+    effective_modes();
+    puts("Total/base stat modes, modifiers, fallbacks and tooltips passed");
     puts("Unit stat values, owner selection, EXP sentinel, layout, DPI/zoom and read-only painting passed");
     return 0;
 }

@@ -1,0 +1,27 @@
+# The pinned mGBA revision reads/writes a uint16_t state field with LOAD_32 /
+# STORE_32. This is unaligned and overwrites part of the following SIO field.
+# Compile a two-line-corrected build-local copy; never dirty the submodule or
+# weaken sanitizers. Remove when the pinned dependency contains this fix.
+set(_unlicensed "${FE8_MGBA_SOURCE_DIR}/src/gba/cart/unlicensed.c")
+file(READ "${_unlicensed}" _source)
+foreach(_op IN ITEMS LOAD STORE)
+    set(_old "${_op}_32(flags, 0, &state->hw.unlCartFlags);")
+    string(FIND "${_source}" "${_old}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR "mGBA state layout changed; review MgbaStateCompatibility.cmake")
+    endif()
+    string(REPLACE "${_old}" "${_op}_16(flags, 0, &state->hw.unlCartFlags);" _source "${_source}")
+endforeach()
+set(_fixed "${CMAKE_CURRENT_BINARY_DIR}/mgba-compat/unlicensed.c")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mgba-compat")
+file(WRITE "${_fixed}" "${_source}")
+get_target_property(_sources mgba SOURCES)
+list(LENGTH _sources _before)
+list(FILTER _sources EXCLUDE REGEX "(^|/)src/gba/cart/unlicensed[.]c$")
+list(LENGTH _sources _after)
+math(EXPR _removed "${_before}-${_after}")
+if(NOT _removed EQUAL 1)
+    message(FATAL_ERROR "mGBA source layout changed; review state compatibility fix")
+endif()
+set_property(TARGET mgba PROPERTY SOURCES "${_sources}")
+target_sources(mgba PRIVATE "${_fixed}")

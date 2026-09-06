@@ -43,6 +43,7 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_POPUP_CANCEL,
     FE8_INVENTORY_HIT_UNDO,
     FE8_INVENTORY_HIT_SUPPLY_VIEW,
+    FE8_INVENTORY_HIT_STAT_MODE,
     /* Source compatibility for callers that still use the old right-pane name. */
     FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_POOL_ITEM,
 } Fe8InventoryHitKind;
@@ -111,6 +112,7 @@ typedef struct Fe8InventoryUi {
     int drag_hover_index;
     /* Workspace preferences survive opening. Gestures and addresses do not. */
     int by_unit, loadout_scroll, supply_scroll, details_expanded;
+    int stats_base; /* Default totals; this switch changes presentation only. */
     int pointer_x, pointer_y; /* Drawable pixels, converted by shared layout. */
     Fe8InventoryEndpoint comparison;
     int has_comparison;

@@ -169,3 +169,19 @@ fe8_add_test(inventory_history
 
 # Text recorder asserts actual label/value submissions in both inventory views.
 fe8_add_test(inventory_stats test_inventory_stats.c ${inventory_ui_sources})
+
+
+fe8_add_test(inventory_effective_stats test_inventory_effective_stats.c
+    ../app/src/inventory_effective_stats.c ../app/src/address_space.c
+    ../app/src/fe8_profile.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
+target_compile_definitions(test_inventory_effective_stats PRIVATE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_inventory_effective_stats PRIVATE mgba ${DESKTOP_TEXT_LIBS})
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME effective_stats_archanae COMMAND test_inventory_effective_stats "${FE8_ARCHANAE_ROM}" archanae)
+    set_tests_properties(effective_stats_archanae PROPERTIES TIMEOUT 90)
+endif()
+if(FE8_SACRED_ECHOES_ROM)
+    add_test(NAME effective_stats_sacred_echoes COMMAND test_inventory_effective_stats "${FE8_SACRED_ECHOES_ROM}" sacred-echoes)
+    set_tests_properties(effective_stats_sacred_echoes PROPERTIES TIMEOUT 90)
+endif()

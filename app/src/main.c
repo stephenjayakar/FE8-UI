@@ -27,6 +27,7 @@
 #include "prebattle_inventory_ui.h"
 #include "inventory_desktop.h"
 #include "inventory_history.h"
+#include "inventory_effective_stats.h"
 #include "viewport_controller.h"
 
 #include <errno.h>
@@ -544,7 +545,16 @@ static uint32_t scripted_continue_keys(unsigned frame) {
     return 0;
 }
 
-static void undo_inventory_change(Fe8InventoryHistory *history,
+static bool extract_inventory_stats(Fe8StatEvaluator *evaluator, struct mCore *core,
+    const Fe8MemoryReader *reader, const Fe8Profile *profile,
+    const Fe8Catalog *catalog, Fe8InventorySnapshot *snapshot) {
+    if (!fe8_extract_prebattle_inventory(reader, profile, catalog, snapshot)) return false;
+    fe8_stat_evaluator_refresh(evaluator, core, snapshot);
+    return true;
+}
+
+static void undo_inventory_change(Fe8StatEvaluator *evaluator, struct mCore *core,
+    Fe8InventoryHistory *history,
     const Fe8MemoryReader *reader, const Fe8MemoryWriter *writer,
     const Fe8Profile *profile, const Fe8Catalog *catalog,
     Fe8InventorySnapshot *snapshot, Fe8InventoryUi *ui) {
@@ -553,7 +563,7 @@ static void undo_inventory_change(Fe8InventoryHistory *history,
     Fe8InventoryChange change=history->changes[history->count-1];
     if (fe8_inventory_history_undo(history,reader,writer,profile)) {
         fe8_inventory_desktop_feedback(ui,snapshot,change.second,change.first,1);
-        if (fe8_extract_prebattle_inventory(reader,profile,catalog,snapshot))
+        if (extract_inventory_stats(evaluator,core,reader,profile,catalog,snapshot))
             fe8_inventory_ui_rebuild(ui,snapshot);
     } else snprintf(ui->status,sizeof(ui->status),"Undo rejected: the inventory changed. No items were overwritten.");
     ui->undo_count=history->count;
@@ -582,6 +592,7 @@ int main(int argc, char **argv) {
     Fe8Catalog inventory_catalog = {0};
     Fe8InventorySnapshot inventory_snapshot = {0};
     Fe8InventoryHistory inventory_history = {0};
+    Fe8StatEvaluator *stat_evaluator = NULL;
     struct pan_controller pan = {0};
     mColor *video_buffer = NULL;
     Fe8HostPixel *host_frame = NULL;
@@ -710,6 +721,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "FE8 extensions: %s\n", family_match ? profile->profile_name :
         (!settings.extensions_enabled ? "disabled by settings" : "disabled (unknown ROM)"));
 
+    stat_evaluator = fe8_stat_evaluator_create(core);
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         goto cleanup;
@@ -756,7 +769,7 @@ int main(int argc, char **argv) {
     snapshot_valid = family_match &&
         fe8_extract_snapshot(&profile_memory, profile, &snapshot);
     if (options.open_inventory && family_match &&
-            fe8_extract_prebattle_inventory(&profile_memory, profile,
+            extract_inventory_stats(stat_evaluator, core, &profile_memory, profile,
                 &inventory_catalog, &inventory_snapshot)) {
         fe8_inventory_ui_open(&inventory_ui, &inventory_snapshot);
         if (!set_inventory_presentation(&video, &canvas, &canvas_width,
@@ -867,7 +880,7 @@ int main(int argc, char **argv) {
         live_state_valid = family_match &&
             fe8_extract_live_state(&profile_memory, profile, &live_state);
         if (options.open_inventory && family_match &&
-                fe8_extract_prebattle_inventory(&profile_memory, profile,
+                extract_inventory_stats(stat_evaluator, core, &profile_memory, profile,
                     &inventory_catalog, &inventory_snapshot)) {
             fe8_inventory_ui_open(&inventory_ui, &inventory_snapshot);
             if (!set_inventory_presentation(&video, &canvas, &canvas_width,
@@ -1030,7 +1043,7 @@ int main(int argc, char **argv) {
                     frame_deadline = SDL_GetPerformanceCounter();
                     fprintf(stderr, "Inventory manager: closed\n");
                 } else if (fe8_detect_fe8u_family(&profile_memory) &&
-                        fe8_extract_prebattle_inventory(
+                        extract_inventory_stats(stat_evaluator, core,
                             &profile_memory, profile, &inventory_catalog,
                             &inventory_snapshot)) {
                     fe8_inventory_ui_open(&inventory_ui, &inventory_snapshot);
@@ -1092,7 +1105,7 @@ int main(int argc, char **argv) {
                     fe8_inventory_ui_toggle_density(&inventory_ui);
                 } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                         event.key.keysym.scancode == SDL_SCANCODE_U) {
-                    undo_inventory_change(&inventory_history,&profile_memory,&profile_writer,
+                    undo_inventory_change(stat_evaluator,core,&inventory_history,&profile_memory,&profile_writer,
                         profile,&inventory_catalog,&inventory_snapshot,&inventory_ui);
                 } else if (event.type == SDL_MOUSEWHEEL) {
                     int direction = event.wheel.y > 0 ? -3 :
@@ -1156,7 +1169,7 @@ int main(int argc, char **argv) {
                         else SDL_StopTextInput();
                         if (consumed) continue;
                         if (hit == FE8_INVENTORY_HIT_UNDO) {
-                            undo_inventory_change(&inventory_history,&profile_memory,&profile_writer,
+                            undo_inventory_change(stat_evaluator,core,&inventory_history,&profile_memory,&profile_writer,
                                 profile,&inventory_catalog,&inventory_snapshot,&inventory_ui);
                         } else if (hit == FE8_INVENTORY_HIT_CLOSE) {
                             inventory_ui.active = 0;
@@ -1216,7 +1229,7 @@ int main(int argc, char **argv) {
                                     fe8_inventory_desktop_feedback(&inventory_ui,&inventory_snapshot,
                                         inventory_ui.selected,endpoint,0);
                                     inventory_ui.undo_count=inventory_history.count;
-                                    if (fe8_extract_prebattle_inventory(
+                                    if (extract_inventory_stats(stat_evaluator, core,
                                             &profile_memory, profile, &inventory_catalog,
                                             &inventory_snapshot))
                                         fe8_inventory_ui_rebuild(&inventory_ui,
@@ -1715,6 +1728,7 @@ int main(int argc, char **argv) {
                     host_pointer_canvas_y, &index);
             fe8_inventory_ui_inspect(&inventory_ui, &inventory_snapshot, hit, index);
             inventory_ui.undo_count=inventory_history.count;
+            if (!host_pointer_visible) inventory_ui.pointer_x=inventory_ui.pointer_y=-1;
             if (host_pointer_visible) fe8_inventory_desktop_pointer_motion(&inventory_ui,
                 &inventory_snapshot,canvas_width,canvas_height,host_pointer_canvas_x,host_pointer_canvas_y);
             fe8_inventory_ui_draw(&inventory_ui, &inventory_snapshot,
@@ -1780,6 +1794,7 @@ int main(int argc, char **argv) {
     exit_code = EXIT_SUCCESS;
 
 cleanup:
+    fe8_stat_evaluator_destroy(stat_evaluator);
     if (options.perf_stats && perf.started)
         print_perf_stats(&perf, performance_frequency);
     if (audio_initialized)

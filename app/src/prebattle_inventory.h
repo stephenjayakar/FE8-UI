@@ -23,6 +23,12 @@ typedef struct Fe8MemoryWriter {
     Fe8Write8 write8;
 } Fe8MemoryWriter;
 
+typedef enum Fe8UnitStat {
+    FE8_STAT_POWER, FE8_STAT_SKILL, FE8_STAT_SPEED, FE8_STAT_LUCK,
+    FE8_STAT_DEFENSE, FE8_STAT_RESISTANCE, FE8_STAT_CONSTITUTION,
+    FE8_STAT_MOVEMENT, FE8_STAT_MAX_HP, FE8_STAT_COUNT,
+} Fe8UnitStat;
+
 typedef struct Fe8InventoryUnit {
     uint32_t address;
     uint8_t character_id;
@@ -39,6 +45,10 @@ typedef struct Fe8InventoryUnit {
     uint8_t resistance;
     uint8_t constitution;
     uint8_t movement;
+    /* Base fields above are never overwritten by derived values. Totals come
+       from the ROM's unit-stat getters, not a sum of item description text. */
+    int16_t effective_stats[FE8_STAT_COUNT];
+    bool effective_stats_valid;
     uint8_t ranks[FE8_INVENTORY_WEAPON_TYPES];
     uint8_t status;
     uint32_t attributes;
@@ -88,6 +98,10 @@ typedef enum Fe8InventoryUseState {
     FE8_INVENTORY_USE_STATUS,
     FE8_INVENTORY_USE_UNKNOWN,
 } Fe8InventoryUseState;
+
+int fe8_inventory_stat_base(const Fe8InventoryUnit *unit, Fe8UnitStat stat);
+int fe8_inventory_stat_value(const Fe8InventoryUnit *unit, Fe8UnitStat stat,
+    bool base_only);
 
 bool fe8_prebattle_inventory_active(
     const Fe8MemoryReader *memory, const Fe8Profile *profile);

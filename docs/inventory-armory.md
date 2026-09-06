@@ -32,11 +32,49 @@ the portrait. Stat strips select the ally and accept ally drops; they never
 alias the item slot above. Both views retain all five slots at the minimum
 640x480 size; the board fits two compact rows. No stats require opening details.
 
-Pow is the snapshot's stored power field, not an inferred separate Strength or
-Magic stat. These are unit values, not weapon-adjusted attack, growth rates,
-caps, or a forecast of ROM-specific skill effects. Con/Mov use the existing
-class/base/bonus extraction. The EXP-disabled sentinel is shown as `--`, not
-255 points. Browsing stats cannot edit unit values or pending transfers.
+**Total stats** is now the default for the two SHA-verified supplied Archanea
+and Sacred Echoes revisions. A private in-memory mGBA core restores the paused
+state and executes each ROM's actual unit-stat getters. Equipped-weapon bonuses,
+passive equipment, learned/personal/class/item skills and current penalties are
+therefore included to the extent they affect that ROM's stat screen. The exact
+ROM controls stacking, caps, equipment selection and conditional modifiers;
+the frontend does not sum item data tables or double-count consumed boosters.
+
+**Base stats** switches back to stored values. Hover any stat (including maximum
+HP) for `Total 15 = Base 12 +3`. Increases are accented, reductions are red, and
+unchanged values stay neutral. This is a net modifier, not an invented breakdown
+by individual skill. The toggle does not change selection, equipment, undo or
+emulated memory. Both views use the same totals, refreshed on opening, transfer
+and undo rather than during painting. Current HP is not manufactured or healed.
+
+**Base only** identifies unsupported ROMs or failed native evaluation; **Mixed
+stats** identifies partial availability. Hover explains the exact unit's status;
+no unverified number is labeled as a verified total. Pow still represents the
+shared power field, not a guessed extra Magic stat. Base Con/Mov include their
+existing permanent class/base/bonus extraction. The EXP-disabled sentinel is
+`--`, not 255.
+
+These are **current stat-screen totals, not combat forecasts**. Opponent-specific
+skills, activation-chance procs, attack-phase bonuses, weapon might/hit/crit and
+terrain/support battle calculations are not treated as permanent unit stats.
+Battle-preview config is cleared only in the private core, while unit/map state
+is preserved. No enemy or future battle is fabricated.
+
+The evaluator never steps or restores the live core. It copies the ROM and the
+raw serialized state into an independent core with no save-file attachment.
+Every getter starts from that snapshot with interrupts/events suspended and a
+bounded instruction/stack budget. Archanea's separate learned and item-skill
+caches are invalidated in the copy to prevent stale bonuses after host transfers.
+Only two exact SHA-1 revisions are enabled, including verification of the copied
+ROM mapping; mapping changes invalidate the evaluator. Unexpected return values,
+stale inventory/stat snapshots and invalid unit addresses fall back to base.
+
+State restoration also exposed a pinned mGBA defect: the 16-bit unlicensed-cart
+flags were loaded/stored with 32-bit operations, causing unaligned access and a
+possible write into the adjacent SIO field. `cmake/MgbaStateCompatibility.cmake`
+builds a two-line-corrected copy (LOAD_16/STORE_16) without dirtying or changing
+the pinned submodule. The regression test checks the adjacent field and round
+trip. No sanitizer suppression is used.
 
 ## Transfers without an inspector detour
 
@@ -193,3 +231,28 @@ build/tests/test_inventory_rom_dense /path/to/Archanea.gba archanae /tmp/archane
 That command also writes a local `.ss` state for SDL smoke testing. It must not
 be published with the screenshots. Production rendering uses the same decoded
 ROM-backed catalog and portraits as before.
+
+## Effective-stat regression scenarios
+
+`inventory_effective_stats` runs without a ROM in CI to test raw/effective
+selection, unsupported-evaluator fallback and the mGBA state-field fix.
+`effective_stats_archanae` and `effective_stats_sacred_echoes` are enabled by the
+existing optional local ROM paths. They verify actual early-roster extraction,
+Caeda's equipped Slim Lance (+3 Speed) and its removal/undo, a carried Fire Emblem
+(+10 Luck), that an unconsumed Energy Ring gives no Power bonus, learned Fury
+(+2 Power/Speed/Defense/Resistance), stale skill caches, rescue penalties,
+Sacred Echoes Iron Shield (+4 Defense/-1 Speed) and Speed Ring (+10 Speed/+1 Mov).
+Extra equipment/learned-skill cases are explicitly isolated RAM fixtures using
+real ROM data; they are restored afterward and never written to a user's save.
+Each evaluation must leave the live serialized CPU/RAM/timing state unchanged;
+fixture rollback also checks EWRAM and IWRAM byte-for-byte. UI tests verify actual
+Total/Base labels, values, HP, tooltip text, selection preservation and DPI/minimum
+geometry. Optional native captures:
+
+```sh
+build/tests/test_inventory_effective_stats /path/to/Archanea.gba archanae /tmp/archanea
+build/tests/test_inventory_effective_stats /path/to/SacredEchoes.gba sacred-echoes /tmp/echoes
+```
+
+Only screenshots and text validation logs should be shared; no ROMs, save states
+or extracted assets are repository or CI inputs.
