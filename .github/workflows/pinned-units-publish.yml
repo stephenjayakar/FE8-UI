@@ -1,0 +1,121 @@
+name: Validate sticky Armory pins
+on:
+  push:
+    branches: [feature/armory-pinned-units]
+    paths: [.github/workflows/pinned-units-publish.yml]
+permissions:
+  contents: read
+env:
+  FILE_HASHES: |
+    {
+      "CMakeLists.txt": "cc1f5b144e1da04eacd16d54e39b68207876a8b5b7601ef3adc74ca421c0185a",
+      "README.md": "176aeb5b8d061aa12b07eee7af447467e80794023d1fe53fe2c8da265ae2d3f8",
+      "app/src/inventory_desktop.c": "9a8edec160839fbf3aed544b5609ca26d13bb03688e1c6bb2919e321b3f8674e",
+      "app/src/inventory_pins.c": "16cb36051c17d304db668c6e9ece3c65a70d31298c7a52da02f9ba16249ac159",
+      "app/src/inventory_pins.h": "b7b1d905c909175c68d93dd6f2f44306230a0f3c6efa4c1f268670985747fbe5",
+      "app/src/main.c": "83afefd4acfc97e992a939687d3dd92e62ac7aa2e77845b5d9dc8c92b049e3c9",
+      "app/src/prebattle_inventory_ui.c": "8d55b23151693cb6d5b554ff081eeb9b96b17e7fb4335ba1e9533ab78f841587",
+      "app/src/prebattle_inventory_ui.h": "e7ed0990410baabe6ddc2a449f85fefeec4973f4f32fa48370ff942265c0cd63",
+      "docs/inventory-armory.md": "6a53094a409959ea0d795a15f57743b1e437a1add088e2528dd00be024f3d8af",
+      "tests/CMakeLists.txt": "1df8f2239fcfb13331a1d7b588cb61221aa6cc9c66944e3ff60156f3ff22efbe",
+      "tests/test_inventory_pins.c": "4205b85dfbdd06d9b0647c3a7ee7812ef234142a36ba955a97339ce4dd765302",
+      "tests/test_inventory_rom.c": "af4085ec15eff0aacb042ba396a0b8d763d63147304e0947797b1888a3485d7d"
+    }
+  PIN_APPLY: |
+    import base64, hashlib, json, lzma, os, subprocess, urllib.request
+    from pathlib import Path
+    assert os.environ['GITHUB_REF'] == 'refs/heads/feature/armory-pinned-units'
+    parts = []
+    for sha in ['fa9090689cf1a87a158930e4e9bad66212157466', '6e395075e1bb0dd5d879da694a9ec8941d38978f', '61a1bedeb34fac019b55ae4f0b6e4b92734a4a0d']:
+        request = urllib.request.Request('https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs/' + sha, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            part = base64.b64decode(json.load(response)['content'])
+        assert hashlib.sha1(b'blob ' + str(len(part)).encode() + b'\0' + part).hexdigest() == sha
+        parts.append(part)
+    patch = lzma.decompress(base64.b64decode(b''.join(parts)))
+    assert hashlib.sha256(patch).hexdigest() == 'd18c0f3af1d4c42e3c94aa293d81c0f7d3be7022be1c10033b31ce02af56027a'
+    expected = json.loads(os.environ['FILE_HASHES'])
+    names = subprocess.check_output(['git', 'apply', '--numstat', '-'], input=patch).decode().splitlines()
+    assert {line.split('\t')[2] for line in names} == set(expected)
+    subprocess.run(['git', 'apply', '--check', '--whitespace=error', '-'], input=patch, check=True)
+    subprocess.run(['git', 'apply', '--whitespace=error', '-'], input=patch, check=True)
+    for name, digest in expected.items():
+        assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+    print('Verified twelve source/test/documentation files. No ROMs, saves, fonts or extracted assets.')
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply checksum-verified source patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 -c "$PIN_APPLY"
+      - name: Resolve emulator for validation without changing the committed pin
+        shell: bash
+        run: |
+          expected=d79a4921f21cb8e582614917888b9e83616a888b
+          test "$(git ls-tree HEAD third_party/mgba | awk '{print $3}')" = "$expected"
+          if ! git submodule update --init --depth 1 third_party/mgba; then
+            echo '::warning::The existing committed mGBA pin is unavailable upstream. This validation uses previously verified afd6f14; the committed gitlink is preserved.'
+            git -C third_party/mgba fetch --depth 1 origin afd6f14eaf8bd35214ed3fb9dc69a92bfc3877a9
+            git -C third_party/mgba checkout --detach afd6f14eaf8bd35214ed3fb9dc69a92bfc3877a9
+          fi
+          echo "Validation mGBA: $(git -C third_party/mgba rev-parse HEAD)"
+          echo "Committed mGBA: $expected"
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build libsdl2-dev libfreetype-dev zlib1g-dev fonts-dejavu-core
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja sdl2
+      - name: Build complete application
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFE8_BUILD_TESTS=ON "${args[@]}"
+          cmake --build build --parallel 3
+      - name: Run complete regression suite
+        run: ctest --test-dir build --output-on-failure
+      - name: Capture native pinned and scrolling layouts
+        shell: bash
+        run: |
+          mkdir -p build/pin-captures
+          build/tests/test_inventory_pins build/pin-captures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pinned-loadouts-${{ runner.os }}
+          path: build/pin-captures/*.ppm
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/armory-pinned-units
+      - name: Publish validated source and remove temporary transport
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -c "$PIN_APPLY"
+          git diff --check
+          python3 -c 'import json,os,subprocess; subprocess.run(["git","add","--",*json.loads(os.environ["FILE_HASHES"])],check=True)'
+          git rm .github/workflows/pinned-units-publish.yml
+          test "$(git write-tree)" = 249defe683dcf92efe376e79d70c6faa78e54c63
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Keep pinned Armory loadouts visible while the roster scrolls" -m "Add temporary address-and-character keyed pins, independent frozen loadouts and scrolling roster, per-unit Pin/Unpin, Unpin all, and overflow paging. Preserve canonical drag/drop, total stats, comparison, session undo and all five slots at minimum size. Reset pins on inventory reopening, prune stale identities, and guard repeated clicks. Local 35/35 normal and sanitizer tests cover both supplied ROMs; live SDL screenshots confirm pinned pixels stay fixed while scrolling and transfers/undo remain correct. Native Linux/macOS validation uses previously verified mGBA afd6f14 because main's d79a492 pin remains unavailable upstream; the committed pin is unchanged. No ROMs, saves, fonts, extracted assets or temporary workflow added."
+          git push origin HEAD:refs/heads/feature/armory-pinned-units
