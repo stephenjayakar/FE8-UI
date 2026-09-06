@@ -63,6 +63,7 @@ endforeach()
 set(inventory_ui_sources
     ../app/src/prebattle_inventory_ui.c
     ../app/src/inventory_desktop.c
+    ../app/src/inventory_pins.c
     ../app/src/inventory_history.c
     ../app/src/prebattle_inventory.c
     ../app/src/fe8_catalog.c)
@@ -185,3 +186,6 @@ if(FE8_SACRED_ECHOES_ROM)
     add_test(NAME effective_stats_sacred_echoes COMMAND test_inventory_effective_stats "${FE8_SACRED_ECHOES_ROM}" sacred-echoes)
     set_tests_properties(effective_stats_sacred_echoes PROPERTIES TIMEOUT 90)
 endif()
+
+fe8_add_test(inventory_pins test_inventory_pins.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
+target_link_libraries(test_inventory_pins PRIVATE ${DESKTOP_TEXT_LIBS})

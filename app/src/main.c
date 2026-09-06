@@ -1173,7 +1173,10 @@ int main(int argc, char **argv) {
                         } else {
                             /* A second press on a one-click action must not
                                transfer the next row after the first one moved. */
-                            if (event.button.clicks > 1 && hit == FE8_INVENTORY_HIT_QUICK_POOL)
+                            if (event.button.clicks > 1 && (hit == FE8_INVENTORY_HIT_QUICK_POOL ||
+                                    hit == FE8_INVENTORY_HIT_PIN_UNIT ||
+                                    hit == FE8_INVENTORY_HIT_UNPIN_ALL ||
+                                    hit == FE8_INVENTORY_HIT_PIN_PAGE))
                                 continue;
                             if (event.button.clicks == 2 && !inventory_ui.has_selection) {
                                 if (hit == FE8_INVENTORY_HIT_POOL_ITEM)

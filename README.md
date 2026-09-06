@@ -398,3 +398,11 @@ stats, not enemy-specific combat forecasts. Unsupported states/ROMs are marked
 uses a private in-memory emulator and never steps or restores the live game.
 See [the Armory documentation](docs/inventory-armory.md#unit-stats) for scope,
 safety boundaries and regression scenarios.
+
+### Pinned Armory loadouts
+
+In **By unit**, **Pin** keeps an ally's five slots and stats above the scrolling
+roster. Use **Unpin** or **Unpin all** to release them. Pins last for the current
+open inventory session and remain usable for drag/drop, comparisons and Undo.
+Overflow pins use their own previous/next controls instead of scrolling away.
+See [temporary pinned loadouts](docs/inventory-armory.md#temporary-pinned-loadouts).

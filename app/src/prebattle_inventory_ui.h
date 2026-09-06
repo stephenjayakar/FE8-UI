@@ -44,6 +44,9 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_UNDO,
     FE8_INVENTORY_HIT_SUPPLY_VIEW,
     FE8_INVENTORY_HIT_STAT_MODE,
+    FE8_INVENTORY_HIT_PIN_UNIT,
+    FE8_INVENTORY_HIT_UNPIN_ALL,
+    FE8_INVENTORY_HIT_PIN_PAGE,
     /* Source compatibility for callers that still use the old right-pane name. */
     FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_POOL_ITEM,
 } Fe8InventoryHitKind;
@@ -67,6 +70,11 @@ typedef struct Fe8InventoryListEntry {
     uint16_t item;
     int unit_index;
 } Fe8InventoryListEntry;
+
+typedef struct Fe8InventoryUnitPin {
+    uint32_t address;
+    uint8_t character_id;
+} Fe8InventoryUnitPin;
 
 typedef struct Fe8InventoryUi {
     int active;
@@ -112,6 +120,9 @@ typedef struct Fe8InventoryUi {
     int drag_hover_index;
     /* Workspace preferences survive opening. Gestures and addresses do not. */
     int by_unit, loadout_scroll, supply_scroll, details_expanded;
+    /* Temporary frozen loadouts. Cleared on open; never persisted into a save. */
+    Fe8InventoryUnitPin pinned_units[FE8_INVENTORY_UNIT_CAPACITY];
+    int pinned_count, pinned_scroll;
     int stats_base; /* Default totals; this switch changes presentation only. */
     int pointer_x, pointer_y; /* Drawable pixels, converted by shared layout. */
     Fe8InventoryEndpoint comparison;

@@ -59,6 +59,7 @@ add_executable(fe8-mgba-sdl
     app/src/prebattle_inventory.c
     app/src/prebattle_inventory_ui.c
     app/src/inventory_desktop.c
+    app/src/inventory_pins.c
     app/src/inventory_effective_stats.c
     app/src/inventory_history.c
     app/src/pointer_mapping.c

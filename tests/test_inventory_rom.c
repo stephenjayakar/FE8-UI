@@ -9,6 +9,7 @@
 #include "prebattle_inventory_ui.h"
 #ifdef FE8_TEST_DESKTOP
 #include "inventory_desktop.h"
+#include "inventory_pins.h"
 #include "inventory_history.h"
 #endif
 
@@ -349,6 +350,69 @@ static void check_workspace(struct mCore *core,const Fe8MemoryReader *reader,
     ui->details_expanded=0;ui->by_unit=0;
     assert(!memcmp(ram,ewram,ram_size));
 }
+/* Actual scrolling and transfers use canonical unit addresses with pinned rows,
+   not a copied/reordered ROM roster. The test leaves the entire RAM unchanged. */
+static void check_pinned_workspace(struct mCore *core, const Fe8MemoryReader *reader,
+    const Fe8Profile *profile, const Fe8Catalog *catalog, Fe8InventorySnapshot *s,
+    Fe8InventoryUi *ui, const void *ram, const void *ewram, size_t ram_size,
+    const char *prefix) {
+    fe8_inventory_ui_open(ui,s);ui->desktop=1;ui->desktop_scale=1;
+    ui->by_unit=1;ui->pointer_x=ui->pointer_y=-1;
+    Fe8InventoryHitKind kind=FE8_INVENTORY_HIT_PIN_UNIT;int index=0;
+    assert(fe8_inventory_desktop_click(ui,s,&kind,&index));
+    kind=FE8_INVENTORY_HIT_PIN_UNIT;index=1;
+    assert(fe8_inventory_desktop_click(ui,s,&kind,&index));
+    assert(ui->pinned_count==2);
+    capture_workspace(prefix,"pins-before",ui,s,1440,900);
+    Fe8InventoryDesktopLayout l;fe8_inventory_desktop_layout(ui,1440,900,&l);
+    Fe8InventoryBoardView before,after;fe8_inventory_board_view(ui,s,&l,&before);
+    fe8_inventory_desktop_scroll_at(ui,s,1440,900,30,before.top+20,999);
+    fe8_inventory_board_view(ui,s,&l,&after);
+    assert(before.pinned_start==after.pinned_start && after.pinned_rows==before.pinned_rows);
+    if(after.other_count>after.other_rows)assert(after.other_start>before.other_start);
+    capture_workspace(prefix,"pins-scrolled",ui,s,1440,900);
+    capture_workspace(prefix,"pins-minimum",ui,s,640,480);
+    assert(!memcmp(ram,ewram,ram_size));
+    /* Move an actual weapon from a pinned ally to Supply, scroll again, and
+       drag it back to the same frozen slot. Undo both through the real writer. */
+    int slot=0;
+    while(slot<5 && (!s->units[0].items[slot] || !s->units[0].item_info[slot].movable))++slot;
+    assert(slot<5);
+    Fe8InventoryEndpoint source={FE8_INVENTORY_ENDPOINT_UNIT,s->units[0].address,(unsigned)slot};
+    Fe8InventoryHistory history={0};Fe8MemoryWriter writer={core,write8};
+    int x=l.board_x+l.identity_width+slot*l.slot_width+18,y=after.top+30;
+    kind=fe8_inventory_desktop_hit(ui,s,1440,900,x,y,&index);
+    assert(kind==FE8_INVENTORY_HIT_LOADOUT_ITEM && index==slot);
+    fe8_inventory_desktop_pointer_down(ui,s,kind,index,x,y);
+    fe8_inventory_desktop_pointer_motion(ui,s,1440,900,l.supply_x+30,l.deposit_y+12);
+    kind=fe8_inventory_desktop_hit(ui,s,1440,900,l.supply_x+30,l.deposit_y+12,&index);
+    assert(!fe8_inventory_desktop_pointer_up(ui,s,&kind,&index));
+    Fe8InventoryEndpoint supply=fe8_inventory_ui_endpoint(ui,s,kind,index);
+    assert(supply.kind==FE8_INVENTORY_ENDPOINT_SUPPLY);
+    workspace_transfer(&history,reader,&writer,profile,catalog,s,ui,source,supply);
+    assert(ui->pinned_count==2 && history.count==1);
+    fe8_inventory_desktop_scroll(ui,s,1440,900,30,-999);
+    int pool=-1;
+    for(int n=0;n<ui->pool_count;++n)if(ui->pool[n].endpoint.kind==FE8_INVENTORY_ENDPOINT_SUPPLY &&
+        ui->pool[n].endpoint.slot==supply.slot)pool=n;
+    assert(pool>=0);
+    fe8_inventory_desktop_pointer_down(ui,s,FE8_INVENTORY_HIT_POOL_ITEM,pool,l.supply_x+20,l.board_y+12);
+    fe8_inventory_desktop_pointer_motion(ui,s,1440,900,x,y);
+    kind=fe8_inventory_desktop_hit(ui,s,1440,900,x,y,&index);
+    assert(!fe8_inventory_desktop_pointer_up(ui,s,&kind,&index));
+    Fe8InventoryEndpoint dest=fe8_inventory_ui_endpoint(ui,s,kind,index);
+    assert(dest.unit_address==source.unit_address && dest.slot==source.slot);
+    workspace_transfer(&history,reader,&writer,profile,catalog,s,ui,supply,dest);
+    while(history.count) {
+        assert(fe8_inventory_history_undo(&history,reader,&writer,profile));
+        assert(fe8_extract_prebattle_inventory(reader,profile,catalog,s));
+        fe8_inventory_ui_rebuild(ui,s);assert(ui->pinned_count==2);
+    }
+    assert(!memcmp(ram,ewram,ram_size));
+    fe8_inventory_ui_open(ui,s);assert(!ui->pinned_count);
+    puts("  Real pinned loadouts stayed fixed while scrolling; Supply drag and 2-step undo restored RAM exactly");
+}
+
 #endif
 
 /* Validate the snapshot fields independently through the emulator bus. This
@@ -509,6 +573,7 @@ int main(int argc, char **argv) {
     }
     fe8_inventory_ui_adjust_scale(ui, 0, WIDTH, HEIGHT);
     check_workspace(core,&reader,profile,&catalog,snapshot,ui,original_ram,ewram,ewram_size,argc==4?argv[3]:NULL);
+    check_pinned_workspace(core,&reader,profile,&catalog,snapshot,ui,original_ram,ewram,ewram_size,argc==4?argv[3]:NULL);
 #endif
     if (argc == 4) {
         char path[1024];

@@ -1,6 +1,7 @@
 #include "prebattle_inventory_ui.h"
 #include "host_text.h"
 #include "inventory_desktop.h"
+#include "inventory_pins.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -391,6 +392,7 @@ void fe8_inventory_ui_rebuild(Fe8InventoryUi *ui,
     unsigned unit_index;
     if (!ui)
         return;
+    fe8_inventory_pins_reconcile(ui, snapshot);
     ui->pool_count = 0;
     ui->hover_kind = FE8_INVENTORY_HIT_NONE;
     ui->hover_unit_address = 0;
@@ -461,6 +463,8 @@ void fe8_inventory_ui_open(Fe8InventoryUi *ui,
     ui->undo_count = 0;
     ui->flash_ticks = 0;
     ui->loadout_scroll = ui->supply_scroll = 0;
+    ui->pinned_count = ui->pinned_scroll = 0;
+    memset(ui->pinned_units, 0, sizeof(ui->pinned_units));
     ui->search_active = 0;
     ui->detail_scroll = 0;
     ui->sort_descending = 0;

@@ -23,6 +23,47 @@ remembered scope is Supply. The board shows per-owner compatibility; the Supply
 list and item-browser badges use the selected recipient. Inspection, comparison
 baseline, query and filters are shared across views.
 
+## Temporary pinned loadouts
+
+In **By unit**, click **Pin** beside an ally's name to move their complete
+loadout into a frozen section above the scrolling roster. Pinned allies retain
+all five slots and the same base/total stat strip. They are not duplicated in
+the roster below. **Unpin** returns one ally; **Unpin all** clears the section.
+Pins are ordered by when they were added, not by the item-browser sort.
+
+Wheel scrolling over either the pinned section or the other loadouts moves
+only the unpinned roster. Supply still scrolls independently. More pins than
+fit are retained: explicit previous/next buttons page the frozen section,
+without changing the roster's scroll. At 640x480 a denser row keeps at least
+one pinned and one scrolling loadout available. Resizing never silently unpins
+an ally or puts a pinned row back into the scrolling list.
+
+Pins survive item transfers, Undo, filters, density/zoom changes and switching
+between By item / By unit within the open manager. Closing and reopening the
+Armory starts with no pins; no favorite list or save-game data is written.
+A pin is keyed by unit address **and character ID**, not a visual row index.
+Snapshot refreshes discard missing/replaced characters rather than transferring
+a pin to another character reusing the same unit slot.
+
+Frozen and scrolling rows share the same drawing, stat-hover and canonical
+endpoint mapping. Drag between either section, drop on a pinned ally to Give,
+use its nearby swap picker, or drag its equipment to Supply normally. Pin and
+paging controls are never inventory write targets, and pinning does not change
+the current recipient, inspected item, comparison target, or undo history.
+
+`inventory_pins` checks pixel-identical frozen sections before/after scrolling,
+all five slots' canonical endpoints at multiple densities/scales, independent
+Supply scrolling, overflow paging, filtering, transfers, fixed swap slots,
+reused addresses, session reset, snapshot immutability and framebuffer canaries.
+Both supplied-ROM desktop tests also drag from/to a frozen loadout after
+scrolling and verify that two-step Undo restores all EWRAM byte-for-byte.
+Reproducible fixture captures (no ROM required):
+
+```sh
+mkdir -p build/pin-captures
+build/tests/test_inventory_pins build/pin-captures
+```
+
 ## Unit stats
 
 The recipient card in **By item** shows level, EXP, current/max HP and a
