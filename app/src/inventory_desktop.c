@@ -421,7 +421,7 @@ static Fe8InventoryHitKind board_hit(const Fe8InventoryUi *ui,const Fe8Inventory
     }
     int unit=fe8_inventory_board_unit_at(&v,y,&sy);
     if (unit>=0 && in(x,y,l->board_x,sy,l->board_width,v.row_height)) {
-        if (!ui->dragging && in(x,y,l->board_x+l->identity_width-42,sy+6,36,18)) {
+        if (!ui->dragging && in(x,y,l->board_x+l->identity_width-48,sy+6,42,18)) {
             *index=unit; return FE8_INVENTORY_HIT_PIN_UNIT;
         }
         if (x<l->board_x+l->identity_width || y>=sy+v.card_height) {
@@ -1328,8 +1328,8 @@ static void draw_board_unit(Painter *p, const Fe8InventoryUi *ui,
     int compact=l->identity_width<140;
     if(!compact)portrait(p,u,l->board_x+9,y+10,40,36);
     int name_x=l->board_x+(compact?10:56);
-    label(p,name_x,y+(tight?3:l->board_card_height<80?6:10),l->identity_width-(compact?58:102),20,u->name,n==ui->current_unit?ACCENT:TEXT,tight?11:13,1,0);
-    button(p,l->board_x+l->identity_width-42,y+6,36,18,is_pinned?"Unpin":"Pin",is_pinned,1);
+    label(p,name_x,y+(tight?3:l->board_card_height<80?6:10),l->identity_width-(compact?64:108),20,u->name,n==ui->current_unit?ACCENT:TEXT,tight?11:13,1,0);
+    button(p,l->board_x+l->identity_width-48,y+6,42,18,is_pinned?"Unpin":"Pin",is_pinned,1);
     label(p,name_x,y+(l->board_card_height<80?24:30),l->identity_width-(compact?18:62),tight?12:16,u->class_name,MUTED,tight?9:10,0,0);
     experience(b,sizeof(b),u);
     label(p,l->board_x+10,y+(tight?36:l->board_card_height<80?40:48),l->identity_width-20,tight?12:16,b,MUTED,tight?8:10,0,0);
