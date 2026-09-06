@@ -6,6 +6,8 @@
 typedef int (*Fe8HostStateCallback)(void *context, const char *path);
 
 void fe8_macos_load_settings(Fe8HostSettings *settings);
+/* Toggle the shared setting and keep native controls/preferences in sync. */
+void fe8_macos_toggle_extensions(Fe8HostSettings *settings);
 void fe8_macos_install_settings_menu(
     Fe8HostSettings *settings,
     void *state_context,

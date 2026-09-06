@@ -95,6 +95,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) NSMutableArray<NSButton *> *bindingButtons;
 @property(nonatomic, strong) NSButton *listeningButton;
+@property(nonatomic, strong) NSButton *extensionsButton;
 @property(nonatomic, strong) NSTextField *zoomSensitivityValue;
 @property(nonatomic, strong) id keyMonitor;
 @property(nonatomic, assign) void *stateContext;
@@ -188,6 +189,18 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:key];
 }
 
+- (void)toggleExtensions:(id)sender {
+    (void)sender;
+    fe8_macos_toggle_extensions(self.settings);
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(toggleExtensions:))
+        item.state = self.settings->extensions_enabled ?
+            NSControlStateValueOn : NSControlStateValueOff;
+    return YES;
+}
+
 - (void)shaderChanged:(NSPopUpButton *)sender {
     NSInteger shader = sender.indexOfSelectedItem;
     if (shader < 0 || shader >= FE8_HOST_SHADER_COUNT)
@@ -264,6 +277,8 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         check.tag = i;
         check.target = self;
         check.action = @selector(settingChanged:);
+        if (i == 2)
+            self.extensionsButton = check;
         [content addSubview:check];
     }
 
@@ -349,11 +364,11 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         NSInteger tag = FE8_HOTKEY_TAG_BASE + i;
         NSTextField *label = [NSTextField labelWithString:[NSString stringWithUTF8String:
             fe8_host_hotkey_name((enum Fe8HostHotkey)i)]];
-        label.frame = NSMakeRect(30, y + 4, 90, 20);
+        label.frame = NSMakeRect(30, y + 4, 145, 20);
         [content addSubview:label];
         NSButton *binding = [NSButton buttonWithTitle:[self titleForBindingTag:tag]
             target:self action:@selector(captureBinding:)];
-        binding.frame = NSMakeRect(130, y, 265, 26);
+        binding.frame = NSMakeRect(180, y, 215, 26);
         binding.tag = tag;
         binding.bezelStyle = NSBezelStyleRounded;
         [self.bindingButtons addObject:binding];
@@ -433,6 +448,17 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 @end
 
 static Fe8SettingsController *settingsController;
+
+void fe8_macos_toggle_extensions(Fe8HostSettings *settings) {
+    if (!settings)
+        return;
+    fe8_host_toggle_extensions(settings);
+    [NSUserDefaults.standardUserDefaults setBool:settings->extensions_enabled
+        forKey:kExtensionsKey];
+    if (settingsController.settings == settings)
+        settingsController.extensionsButton.state = settings->extensions_enabled ?
+            NSControlStateValueOn : NSControlStateValueOff;
+}
 
 void fe8_macos_load_settings(Fe8HostSettings *settings) {
     @autoreleasepool {
@@ -529,6 +555,9 @@ void fe8_macos_install_settings_menu(
             action:@selector(showSettings:) keyEquivalent:@","];
         open.keyEquivalentModifierMask = NSEventModifierFlagCommand;
         open.target = settingsController;
+        [settingsMenu addItem:stateMenuItem(@"Extended Renderer",
+            @selector(toggleExtensions:), @"", 0)];
+        [settingsMenu addItem:NSMenuItem.separatorItem];
         [settingsMenu addItem:open];
         settingsRoot.submenu = settingsMenu;
         [mainMenu addItem:settingsRoot];

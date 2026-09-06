@@ -4,6 +4,10 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
     (void)settings;
 }
 
+void fe8_macos_toggle_extensions(Fe8HostSettings *settings) {
+    fe8_host_toggle_extensions(settings);
+}
+
 void fe8_macos_install_settings_menu(
     Fe8HostSettings *settings,
     void *state_context,
