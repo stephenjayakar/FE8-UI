@@ -147,6 +147,13 @@ Fe8InventoryUseState fe8_inventory_item_use_state(
     staff = (attributes & FE8_ITEM_ATTRIBUTE_STAFF) != 0;
     if (!weapon && !staff)
         return FE8_INVENTORY_USE_ITEM;
+    if (item->lock_kind == FE8_ITEM_LOCK_UNKNOWN)
+        return FE8_INVENTORY_USE_UNKNOWN;
+    if (item->lock_kind == FE8_ITEM_LOCK_CHARACTER || item->lock_kind == FE8_ITEM_LOCK_CLASS) {
+        uint8_t id = item->lock_kind == FE8_ITEM_LOCK_CHARACTER ? unit->character_id : unit->class_id;
+        if (!id || !(item->lock_ids[id / 8] & (1u << (id % 8))))
+            return FE8_INVENTORY_USE_LOCKED;
+    }
     if (missing_item_lock(attributes, unit->attributes))
         return FE8_INVENTORY_USE_LOCKED;
     if ((attributes & FE8_ITEM_ATTRIBUTE_LOCK_3) != 0) {
@@ -205,6 +212,8 @@ bool fe8_extract_prebattle_inventory(
         unit = &snapshot->units[snapshot->unit_count++];
         unit->address = address;
         unit->character_id = read8(memory, character + 4);
+        unit->class_id = valid_range(class_data, 5, FE8_ROM_START, FE8_ROM_END) ?
+            read8(memory, class_data + 4) : 0;
         unit->level = read8(memory, address + 8);
         unit->exp = read8(memory, address + 9);
         unit->max_hp = read8(memory, address + 0x12);

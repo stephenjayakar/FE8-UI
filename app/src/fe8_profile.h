@@ -27,6 +27,8 @@ typedef struct Fe8InventoryLayout {
     uint32_t get_convoy_items;
     uint16_t convoy_capacity;
     uint32_t immovable_item_attributes;
+    /* Optional SkillSystem high-byte character/class lock pointer table. */
+    uint32_t weapon_lock_table;
 } Fe8InventoryLayout;
 
 typedef struct Fe8Profile {
