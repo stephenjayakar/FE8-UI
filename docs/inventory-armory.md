@@ -5,87 +5,117 @@ what do we own, and what should happen to this item?** It uses the existing
 ROM-backed snapshot rather than pretending to know gameplay rules the profile
 cannot determine.
 
-## Workflow
+## Two views, one inventory
 
-Open with `I`. Choose a recipient in the left-hand roster. Clicking an item in
-the army-wide browser or one of the recipient's five slots **only inspects it**.
-The inspector stays pinned while searching, filtering, sorting, scrolling, or
-changing recipient. Hover remains independent from the pending transfer.
+Open with `I`. The game is paused while the manager is open.
 
-* **Give / Store beside each item** performs the common transfer in one click.
-  Give uses the selected recipient's first empty slot. Store moves their carried
-  item to the actual free convoy slot. Fixed items and a full convoy are disabled.
-* **Double-click an item** does the same without leaving its row: give to the
-  selected recipient, or store when it already belongs to that recipient.
-* **Drag an item** onto a loadout slot to move or swap, onto an ally in the roster
-  to give, or onto the pinned supply destination to store. A five-point movement
-  threshold separates inspection clicks from dragging at every DPI/UI scale.
-  The source is an address/slot pair, never a filtered or sorted row number.
-* **Full recipients** show Swap instead of Give and require an explicit loadout
-  slot. Dropping on a full ally selects that ally and keeps destination choice
-  open; it never silently replaces an item. The inspector's **Move / swap** is
-  still available, but is no longer required for normal transfers.
+**By item** is a searchable, sortable index of carried and Supply equipment.
+The left workbench identifies the selected recipient. **By unit** displays one
+row per ally and all five slots, including empties and fixed equipment. Wider
+windows keep a Supply list alongside the loadouts; the Supply bar opens the
+item browser at smaller widths. Each view retains its own scroll position.
+Click an ally to select the recipient; click an item only to inspect it.
 
-Dropping outside a destination, onto the same slot, or onto fixed equipment does
-not write. Escape, right-click, focus loss, and window resize cancel dragging.
-Scrolling while dragging updates the highlighted destination. A changed source
-item invalidates the gesture; successful transactions retain expected-value
-checks and undo. Repeated clicks on an inline action do not apply it to the next
-row after sorting changes the list.
+The board's search and usability filters highlight matching equipment rather
+than hiding slots: a nonmatching ally must remain a possible drop destination.
+Counts include all carried items on the board even when the item browser's
+remembered scope is Supply. The board shows per-owner compatibility; the Supply
+list and item-browser badges use the selected recipient. Inspection, comparison
+baseline, query and filters are shared across views.
 
-`U` retains the existing single-step, expected-value-checked undo. Clicking a
-unit name or class opens its ROM-backed help when no move is pending. The game
-remains paused while the manager is open. `Close`, `I`, or `Esc` returns to it.
-`Esc` first leaves search, then cancels a pending move, then closes the manager.
+## Transfers without an inspector detour
 
-## Finding equipment
+* **Inline Give / Store** performs the common transfer in one click. Give uses
+  the selected recipient's first empty slot. Store resolves the real free convoy
+  slot, including a sparse convoy. An incompatible weapon's Give action reads
+  **Carry**: transferability and weapon usability are independent.
+* **Double-click an item-browser or left-workbench item** for its Give/Store
+  action. Board single clicks inspect; drag there for direct transfers.
+* **Drag onto any loadout slot** to move or swap, onto an ally to give, or onto
+  the pinned Supply bar to store. No prior recipient change is required.
+* **Full recipients** open a five-slot chooser beside the click or drop. The
+  incoming item/recipient and each outgoing item's owner are shown before an
+  exchange. Fixed destinations cannot be selected. This opens on release, not
+  on a timed hover. The chooser clamps to the viewport, scales with the UI,
+  consumes outside clicks, and dismisses on outside click, Escape or right-click.
 
-Search matches item names, owners, owner classes, and item types. Multiple words
-are ANDed; matching is ASCII case-insensitive. `/` focuses search; Enter or Esc
-leaves it. Text input is UTF-8 bounded and never falls through to the I/A/S/D/U
-shortcuts. Backspace removes a whole UTF-8 code point. Ctrl/Cmd+A clears the query
-for replacement. There is no general-purpose text selection or IME preedit UI.
+The drag threshold is five logical points at any DPI/zoom. Sorting does not
+change a gesture's address/slot source. Scrolling during dragging updates the
+highlighted destination. Same-slot drops, identical-item exchanges, background
+drops and fixed equipment do not write. Source changes invalidate the gesture;
+actual writes also check expected source and destination values. Resize and
+focus loss cancel dragging and pending swaps. The explicit Move / swap action
+remains available for click-only operation.
 
-Type chips expose every weapon/staff type plus Items. **Ready only** uses the
-existing rank, lock, and status check for the selected recipient; it deliberately
-does not guess consumable-use rules. The roster previews the inspected item's
-compatibility with each recipient, independently of whether it can be moved.
+Successful moves name the item, origin and destination in the footer; swaps
+name both legs. The receiving slot highlights briefly. List scroll offsets are
+not reset by the transfer, although a sort/filter may naturally reposition or
+exclude the moved row. The inspector follows the destination, even when hidden
+by a filter. Changing the recipient preserves scroll unless the recipient-only
+usability filter changes the result set.
 
-The All items/Supply toggle and type/name/uses/owner sorts remain available.
-Click an active sortable column to reverse it. Clear filters resets the query,
-type, and Ready-only filter together. Filtering never changes game inventory
-order or the canonical endpoints used for writes. A pinned source stays selected
-even when a filter excludes it from the visible list.
+## Undo and state boundaries
 
-## Layout and data boundaries
+Click **Undo** or press `U` to reverse the most recent of up to 32 transactions
+in the paused session. The footer displays the remaining count. Every undo uses
+the same guarded transaction with inverted expected values. A rejected undo
+leaves the history intact; it never overwrites a changed item. Capacity eviction
+removes only the oldest entry. Identical-item/no-op and failed moves do not
+create history. Resume, opening a different ROM and state changes clear history.
 
-The recipient card uses the already decoded portrait, name, class, level, HP,
-weapon ranks, and five inventory slots. The browser prioritizes identity, uses,
-and ownership, progressively revealing combat columns as space permits. The
-inspector shows raw item stats, ownership, durability, required rank, recipient
-rank, and the ROM description. Its description region scrolls independently.
-On larger windows it also compares might/hit/weight with the first carried
-weapon, explicitly labeled **vs carried**; this is not an equipped-item claim,
-a combat forecast, or an estimate of ROM-specific skill effects.
+`I` or Close returns to the game. Escape first leaves search or cancels the
+current move before it closes the manager. All moving/browsing state is host UI
+state, not part of the ROM's save format.
 
-The inspector moves below the workspace in smaller windows. A 640x480 logical
-minimum keeps all five slots, at least one recipient, an item list, transfer
-actions, and status feedback visible. `D` changes row density. `+`/`-`/`0` retain
-UI scaling independently of game zoom and Retina density. Drawing and pointer
-mapping share one geometry model.
+## Finding and understanding equipment
 
-Architecture:
+`/` focuses search. Item name, owner, owner class and type match case-insensitive
+ANDed words. Enter/Escape leaves search. UTF-8 input and backspace are bounded;
+Ctrl/Cmd+A clears the query. There is no general-purpose text selection or IME
+preedit UI. Type chips show matching counts. **Usable by [recipient]** means the
+known rank/lock/status predicate permits the weapon, not that a consumable has
+been evaluated. The All/Supply toggle and Type/Name/Uses/Owner sorts remain;
+clicking the active sortable header reverses it. Clear filters resets query,
+type and usability together.
 
-1. `Fe8InventorySnapshot` and the canonical pool are read-only inputs.
-2. `fe8_inventory_desktop_visible` derives a filtered, optionally reversed index
-   view. It never edits those inputs or treats a visible row as an endpoint.
-3. `fe8_inventory_desktop_click` consumes browsing controls and resolves only
-   Give/Store requests into canonical endpoints. The pointer gesture helpers
-   resolve drops through that same action handler. Neither can write game memory. The existing `main.c` guarded transaction and undo remain the only
-   write path; fixed items and changed expected values are still rejected.
+Labels explain **Can use**, **Needs D · has E**, **No lance proficiency**,
+**Silenced**, **Personal weapon**, or **Restriction unknown**. A sole personal or
+class whitelist is named only when that ID resolves in the current snapshot.
+An absent named character is not guessed from the item name. The roster header
+explicitly identifies the item whose compatibility is being previewed.
 
-No new frontend framework, dependency, hardcoded character list, ROM assets, or
-save format is needed by the application.
+## Comparison and responsive layout
+
+A carried weapon's **vs** control pins the exact comparison slot. Inspect a
+candidate to compare raw might/hit/weight against that baseline. A swap hover
+previews the actual destination slot instead. The owner and baseline item are
+named. Hit/might losses are not painted as benefits; weight changes stay neutral.
+No first-carried weapon is implicitly assumed to be equipped or the correct
+replacement. These are catalog stat differences, not a skill-adjusted forecast.
+
+At narrower sizes a 48-point detail summary replaces the permanently tall
+inspector. Details expands a scrollable drawer over the workspace. Five slots,
+a visible ally list, Supply access, cancellation and Undo remain available at
+640x480 logical points. At larger item-view sizes the full inspector is inline.
+`D` controls row density and `+`/`-`/`0` retain independent UI zoom and Retina
+scaling. Draw and hit testing use the same logical geometry. Original bitmap
+fallback tests remain in place. No new fonts, icons, framework or ROM assets are
+shipped by this change.
+
+## Architecture
+
+`Fe8InventorySnapshot` and its canonical pool remain read-only. Filtered browser
+indices and board `unit * 5 + slot` indices are ephemeral hit results, immediately
+resolved into address/slot endpoints. They are never retained as write targets.
+The popup keeps its canonical source, expected encoded item and recipient
+address, so filter/order changes cannot redirect a swap.
+
+`inventory_desktop` derives views, paints and resolves gestures. It never writes
+game memory. `inventory_history` owns the bounded command history and invokes
+`fe8_swap_inventory_endpoints` for both transfers and undo. `main.c` executes
+those commands and refreshes the coherent snapshot after success. The existing
+expected-value, address, profile and fixed-equipment protections remain the only
+write path.
 
 ## Archanae personal weapons
 
@@ -105,31 +135,40 @@ The profile remains SHA-verified; unrelated ROMs do not reinterpret these bits.
 
 ## Validation and reproducible captures
 
-`inventory_workspace` exercises filtering, multi-token/owner queries, Ready
-states, source pinning, explicit actions, fixed items, UTF-8 editing, sorting,
-canonical endpoint mapping, scrolling, several density/DPI/zoom combinations,
-snapshot immutability, and framebuffer/stride guards. It also checks quick
-Give/Store, pointer jitter, drag destinations, source pinning through sorting,
-full recipients, cancellation, fixed equipment, and stale source protection.
-`fe8_catalog_locks` checks character/class lists, malformed data and profile
-isolation. The optional Archanae integration test executes the ROM's native
-predicate to confirm it rejects Marth and accepts Athena. Because Athena is not
-in the early test roster, the positive case uses her real character record in
-an isolated scratch unit, then restores the complete state. Both supplied-ROM
-integration tests exercise quick Give/Store and drag Give/swap followed by undo
-at 80–130% UI scale, checking exact RAM restoration. The previous desktop
-regression matrix is retained with design-independent geometry assertions.
+`inventory_loadouts` checks every board slot's canonical endpoint across window,
+zoom, density and DPI combinations, filter/scope invariants, nearby picker
+geometry, fixed destinations, stale sources, explicit/hover comparison and
+explanations. Both board/drawer and modal painting check framebuffer tail and
+stride canaries and snapshot immutability. `inventory_history` verifies bounded
+multi-step rollback, capacity eviction, no-ops and expected-value rejection.
+The earlier item-browser, drag, text, portrait and profile tests remain enabled.
 
-After building, make deterministic renderer captures without a ROM:
+The optional real-ROM desktop test advances each supplied unmodified game to
+its actual roster. It exercises original quick transfers and undo at 80–130%,
+then board drag, Supply drop, nearby swap and full session undo. It fills a
+recipient only with existing transferable items, never manufactured equipment;
+all EWRAM must match byte-for-byte after undo. Archanae's native predicate is
+still checked for Borderland Sword (Marth rejected, Athena accepted via her real
+character record in an isolated scratch unit with complete state restoration).
+
+Build-time ROM inputs are local-only `FE8_ARCHANAE_ROM` and
+`FE8_SACRED_ECHOES_ROM`. Native CI uses only deterministic synthetic inventories:
 
 ```sh
 mkdir -p build/armory-captures
 build/tests/test_inventory_workspace build/armory-captures
+build/tests/test_inventory_loadouts build/armory-captures
 ```
 
-This produces overview, filtered, compact, and minimum-window PPM images. These
-are deliberately synthetic inventories, not a user's save game. An optional
-second argument supplies a local portrait-only fixture: for each of 12 units,
-16 ABGR uint32 palette entries followed by 80x72 palette indices. Do not commit
-that extracted input, any ROM, save, or font. The production app continues to
-read portraits, text, and equipment from its normal ROM/profile pipeline.
+The tests emit PPM captures for the item view, board, local swap chooser,
+comparison, minimum window and drawer. The workspace test still accepts its
+optional portrait-only fixture, but no extracted fixture, ROM, save or font is
+committed. Local real-ROM captures are produced with:
+
+```sh
+build/tests/test_inventory_rom_dense /path/to/Archanea.gba archanae /tmp/archanea
+```
+
+That command also writes a local `.ss` state for SDL smoke testing. It must not
+be published with the screenshots. Production rendering uses the same decoded
+ROM-backed catalog and portraits as before.

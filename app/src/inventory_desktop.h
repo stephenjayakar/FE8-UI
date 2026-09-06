@@ -13,6 +13,11 @@ typedef struct Fe8InventoryDesktopLayout {
     int search_y, filters_y, filter_height, filter_columns;
     int detail_x, detail_y, detail_width, detail_height, detail_wide;
     int action_x, action_y, action_width;
+    int detail_collapsed, detail_overlay, usable_width;
+    int board_x, board_y, board_width, board_row_height, board_rows;
+    int identity_width, slot_width, supply_x, supply_width;
+    int popup_x, popup_y, popup_width, popup_height, popup_rows_y;
+
     int quick_x, quick_width;
 } Fe8InventoryDesktopLayout;
 
@@ -52,4 +57,13 @@ int fe8_inventory_desktop_pointer_up(Fe8InventoryUi *ui,
     const Fe8InventorySnapshot *snapshot, Fe8InventoryHitKind *kind, int *index);
 void fe8_inventory_desktop_cancel_drag(Fe8InventoryUi *ui);
 
+/* Read-only explanations and comparison targets, shared by all views. */
+void fe8_inventory_desktop_use_reason(const Fe8InventorySnapshot *snapshot,
+    const Fe8InventoryUnit *unit, const Fe8ItemInfo *item, char *out, size_t capacity);
+int fe8_inventory_desktop_comparison(const Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, Fe8InventoryEndpoint *endpoint);
+void fe8_inventory_desktop_feedback(Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *before, Fe8InventoryEndpoint from,
+    Fe8InventoryEndpoint to, int undo);
+void fe8_inventory_desktop_cancel_move(Fe8InventoryUi *ui);
 #endif

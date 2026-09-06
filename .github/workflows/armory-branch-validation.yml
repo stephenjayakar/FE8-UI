@@ -52,6 +52,7 @@ jobs:
         run: |
           mkdir -p build/armory-captures
           build/tests/test_inventory_workspace build/armory-captures
+          build/tests/test_inventory_loadouts build/armory-captures
       - uses: actions/upload-artifact@v4
         with:
           name: armory-native-captures-${{ runner.os }}

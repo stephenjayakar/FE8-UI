@@ -26,6 +26,7 @@
 #include "prebattle_inventory.h"
 #include "prebattle_inventory_ui.h"
 #include "inventory_desktop.h"
+#include "inventory_history.h"
 #include "viewport_controller.h"
 
 #include <errno.h>
@@ -543,6 +544,21 @@ static uint32_t scripted_continue_keys(unsigned frame) {
     return 0;
 }
 
+static void undo_inventory_change(Fe8InventoryHistory *history,
+    const Fe8MemoryReader *reader, const Fe8MemoryWriter *writer,
+    const Fe8Profile *profile, const Fe8Catalog *catalog,
+    Fe8InventorySnapshot *snapshot, Fe8InventoryUi *ui) {
+    if (!history->count) return;
+    fe8_inventory_desktop_cancel_move(ui);
+    Fe8InventoryChange change=history->changes[history->count-1];
+    if (fe8_inventory_history_undo(history,reader,writer,profile)) {
+        fe8_inventory_desktop_feedback(ui,snapshot,change.second,change.first,1);
+        if (fe8_extract_prebattle_inventory(reader,profile,catalog,snapshot))
+            fe8_inventory_ui_rebuild(ui,snapshot);
+    } else snprintf(ui->status,sizeof(ui->status),"Undo rejected: the inventory changed. No items were overwritten.");
+    ui->undo_count=history->count;
+}
+
 int main(int argc, char **argv) {
     struct fe8_options options;
     struct mCore *core = NULL;
@@ -565,13 +581,7 @@ int main(int argc, char **argv) {
     Fe8InventoryUi inventory_ui;
     Fe8Catalog inventory_catalog = {0};
     Fe8InventorySnapshot inventory_snapshot = {0};
-    struct {
-        int valid;
-        Fe8InventoryEndpoint first;
-        Fe8InventoryEndpoint second;
-        uint16_t first_item;
-        uint16_t second_item;
-    } inventory_undo = {0};
+    Fe8InventoryHistory inventory_history = {0};
     struct pan_controller pan = {0};
     mColor *video_buffer = NULL;
     Fe8HostPixel *host_frame = NULL;
@@ -770,7 +780,7 @@ int main(int argc, char **argv) {
                     &canvas_height, &viewport, &gba_x, &gba_y,
                     &inventory_ui, 0, settings.shader);
             inventory_ui.active = 0;
-            inventory_undo.valid = 0;
+            inventory_history.count = 0;
             map_identity_valid = 0;
             fe8_palette_mapping_reset(&palette_mapping);
             fe8_terrain_cache_reset(terrain_cache);
@@ -961,12 +971,12 @@ int main(int argc, char **argv) {
                 if (event.type == SDL_WINDOWEVENT &&
                         (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
                          event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
-                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                    fe8_inventory_desktop_cancel_move(&inventory_ui);
                     SDL_CaptureMouse(SDL_FALSE);
                 }
                 if (event.type == SDL_KEYDOWN && inventory_ui.drag_armed) {
                     int cancelled = inventory_ui.dragging;
-                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                    fe8_inventory_desktop_cancel_move(&inventory_ui);
                     SDL_CaptureMouse(SDL_FALSE);
                     if (cancelled && event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
                         snprintf(inventory_ui.status,sizeof(inventory_ui.status),"Move cancelled. No items changed.");
@@ -1001,7 +1011,7 @@ int main(int argc, char **argv) {
                 if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                         event.key.keysym.scancode == SDL_SCANCODE_ESCAPE &&
                         inventory_ui.has_selection) {
-                    inventory_ui.has_selection = 0;
+                    fe8_inventory_desktop_cancel_move(&inventory_ui);
                     snprintf(inventory_ui.status, sizeof(inventory_ui.status),
                         "Move cancelled. No items changed.");
                     continue;
@@ -1028,7 +1038,7 @@ int main(int argc, char **argv) {
                             &canvas_width, &canvas_height, &viewport,
                             &gba_x, &gba_y, &inventory_ui, 1, settings.shader))
                         running = 0;
-                    inventory_undo.valid = 0;
+                    inventory_history.count = 0;
                     keyboard_keys = 0;
                     hotkeys_down = 0;
                     fe8_mouse_cancel(&mouse);
@@ -1081,22 +1091,9 @@ int main(int argc, char **argv) {
                         event.key.keysym.scancode == SDL_SCANCODE_D) {
                     fe8_inventory_ui_toggle_density(&inventory_ui);
                 } else if (event.type == SDL_KEYDOWN && !event.key.repeat &&
-                        event.key.keysym.scancode == SDL_SCANCODE_U &&
-                        inventory_undo.valid) {
-                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
-                    inventory_ui.has_selection = 0;
-                    if (fe8_swap_inventory_endpoints(&profile_memory, &profile_writer,
-                            profile, inventory_undo.first, inventory_undo.second_item,
-                            inventory_undo.second, inventory_undo.first_item)) {
-                        if (fe8_extract_prebattle_inventory(
-                                &profile_memory, profile, &inventory_catalog,
-                                &inventory_snapshot))
-                            fe8_inventory_ui_rebuild(&inventory_ui,
-                                &inventory_snapshot);
-                        snprintf(inventory_ui.status, sizeof(inventory_ui.status),
-                            "Undid last swap");
-                        inventory_undo.valid = 0;
-                    }
+                        event.key.keysym.scancode == SDL_SCANCODE_U) {
+                    undo_inventory_change(&inventory_history,&profile_memory,&profile_writer,
+                        profile,&inventory_catalog,&inventory_snapshot,&inventory_ui);
                 } else if (event.type == SDL_MOUSEWHEEL) {
                     int direction = event.wheel.y > 0 ? -3 :
                         event.wheel.y < 0 ? 3 : 0;
@@ -1110,7 +1107,7 @@ int main(int argc, char **argv) {
                         host_pointer_canvas_x, host_pointer_canvas_y);
                 } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                         event.button.button == SDL_BUTTON_RIGHT) {
-                    fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                    fe8_inventory_desktop_cancel_move(&inventory_ui);
                     SDL_CaptureMouse(SDL_FALSE);
                     inventory_ui.has_selection = 0;
                     snprintf(inventory_ui.status, sizeof(inventory_ui.status),
@@ -1125,10 +1122,12 @@ int main(int argc, char **argv) {
                         event.button.x, event.button.y, &canvas_x, &canvas_y);
                     if (release) SDL_CaptureMouse(SDL_FALSE);
                     if (!mapped) {
-                        if (release) fe8_inventory_desktop_cancel_drag(&inventory_ui);
+                        if (release) fe8_inventory_desktop_cancel_move(&inventory_ui);
                         continue;
                     }
                     {
+                        if (release) fe8_inventory_desktop_pointer_motion(&inventory_ui,&inventory_snapshot,
+                            canvas_width,canvas_height,canvas_x,canvas_y);
                         Fe8InventoryHitKind hit = fe8_inventory_ui_hit_test(&inventory_ui,
                             &inventory_snapshot, canvas_width, canvas_height,
                             canvas_x, canvas_y, &index);
@@ -1156,7 +1155,10 @@ int main(int argc, char **argv) {
                         if (inventory_ui.search_active) SDL_StartTextInput();
                         else SDL_StopTextInput();
                         if (consumed) continue;
-                        if (hit == FE8_INVENTORY_HIT_CLOSE) {
+                        if (hit == FE8_INVENTORY_HIT_UNDO) {
+                            undo_inventory_change(&inventory_history,&profile_memory,&profile_writer,
+                                profile,&inventory_catalog,&inventory_snapshot,&inventory_ui);
+                        } else if (hit == FE8_INVENTORY_HIT_CLOSE) {
                             inventory_ui.active = 0;
                             inventory_ui.has_selection = 0;
                             set_inventory_presentation(&video, &canvas, &canvas_width,
@@ -1184,7 +1186,7 @@ int main(int argc, char **argv) {
                                 snprintf(inventory_ui.status, sizeof(inventory_ui.status),
                                     "Choose a destination on %s",
                                     inventory_snapshot.units[index].name);
-                            else
+                            else if (!inventory_history.count)
                                 snprintf(inventory_ui.status, sizeof(inventory_ui.status),
                                     "Choose an item for %s",
                                     inventory_snapshot.units[index].name);
@@ -1208,28 +1210,23 @@ int main(int argc, char **argv) {
                             } else {
                                 uint16_t first_item = fe8_inventory_ui_endpoint_item(
                                     &inventory_snapshot, inventory_ui.selected);
-                                if (fe8_swap_inventory_endpoints(&profile_memory,
+                                if (fe8_inventory_history_transfer(&inventory_history,&profile_memory,
                                         &profile_writer, profile, inventory_ui.selected,
                                         first_item, endpoint, endpoint_item)) {
-                                    inventory_undo.valid = 1;
-                                    inventory_undo.first = inventory_ui.selected;
-                                    inventory_undo.first_item = first_item;
-                                    inventory_undo.second = endpoint;
-                                    inventory_undo.second_item = endpoint_item;
-                                    inventory_ui.detail = endpoint;
-                                    inventory_ui.has_detail = 1;
-                                    inventory_ui.detail_scroll = 0;
+                                    fe8_inventory_desktop_feedback(&inventory_ui,&inventory_snapshot,
+                                        inventory_ui.selected,endpoint,0);
+                                    inventory_ui.undo_count=inventory_history.count;
                                     if (fe8_extract_prebattle_inventory(
                                             &profile_memory, profile, &inventory_catalog,
                                             &inventory_snapshot))
                                         fe8_inventory_ui_rebuild(&inventory_ui,
                                             &inventory_snapshot);
-                                    snprintf(inventory_ui.status,
-                                        sizeof(inventory_ui.status),
-                                        "Moved item - press U to undo");
+
                                 } else {
                                     snprintf(inventory_ui.status,
                                         sizeof(inventory_ui.status),
+                                        "%s", first_item == endpoint_item ?
+                                        "No change: these items are identical." :
                                         "Move rejected - game state changed");
                                 }
                                 inventory_ui.has_selection = 0;
@@ -1449,6 +1446,8 @@ int main(int argc, char **argv) {
         }
 
         if (!inventory_ui.active) {
+            inventory_history.count=0;
+            inventory_ui.undo_count=0;
             unsigned multiplier = speed_up_active ?
                 fe8_host_speedup_multiplier(settings.speedup_rate) : 1;
             unsigned batch_limit = fe8_scheduler_batch_limit(
@@ -1715,8 +1714,12 @@ int main(int argc, char **argv) {
                     canvas_width, canvas_height, host_pointer_canvas_x,
                     host_pointer_canvas_y, &index);
             fe8_inventory_ui_inspect(&inventory_ui, &inventory_snapshot, hit, index);
+            inventory_ui.undo_count=inventory_history.count;
+            if (host_pointer_visible) fe8_inventory_desktop_pointer_motion(&inventory_ui,
+                &inventory_snapshot,canvas_width,canvas_height,host_pointer_canvas_x,host_pointer_canvas_y);
             fe8_inventory_ui_draw(&inventory_ui, &inventory_snapshot,
                 canvas, canvas_width, canvas_width, canvas_height);
+            if (inventory_ui.flash_ticks>0) --inventory_ui.flash_ticks;
         }
         if (inventory_ui.active) {
             SDL_ShowCursor(SDL_ENABLE);

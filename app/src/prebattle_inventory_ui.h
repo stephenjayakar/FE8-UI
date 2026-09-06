@@ -34,6 +34,15 @@ typedef enum Fe8InventoryHitKind {
     FE8_INVENTORY_HIT_CLOSE,
     FE8_INVENTORY_HIT_QUICK_POOL,
     FE8_INVENTORY_HIT_QUICK_UNIT,
+    FE8_INVENTORY_HIT_VIEW_ITEMS,
+    FE8_INVENTORY_HIT_VIEW_UNITS,
+    FE8_INVENTORY_HIT_LOADOUT_ITEM, /* Immediate index = unit * 5 + slot. */
+    FE8_INVENTORY_HIT_COMPARE,
+    FE8_INVENTORY_HIT_DETAILS,
+    FE8_INVENTORY_HIT_SWAP_SLOT,
+    FE8_INVENTORY_HIT_POPUP_CANCEL,
+    FE8_INVENTORY_HIT_UNDO,
+    FE8_INVENTORY_HIT_SUPPLY_VIEW,
     /* Source compatibility for callers that still use the old right-pane name. */
     FE8_INVENTORY_HIT_SUPPLY_ITEM = FE8_INVENTORY_HIT_POOL_ITEM,
 } Fe8InventoryHitKind;
@@ -81,7 +90,7 @@ typedef struct Fe8InventoryUi {
        address, not a roster index that could become stale after a refresh. */
     Fe8InventoryHitKind hover_kind;
     uint32_t hover_unit_address;
-    char status[96];
+    char status[192];
     /* Desktop view state is separate from both the snapshot and a pending move.
        detail/selected store canonical endpoints, never filtered row indices. */
     char query[64];
@@ -100,6 +109,22 @@ typedef struct Fe8InventoryUi {
     uint16_t drag_item;
     Fe8InventoryHitKind drag_hover_kind;
     int drag_hover_index;
+    /* Workspace preferences survive opening. Gestures and addresses do not. */
+    int by_unit, loadout_scroll, supply_scroll, details_expanded;
+    int pointer_x, pointer_y; /* Drawable pixels, converted by shared layout. */
+    Fe8InventoryEndpoint comparison;
+    int has_comparison;
+    Fe8InventoryEndpoint preview_comparison;
+    int has_preview_comparison;
+    int popup_open;
+    uint32_t popup_unit_address;
+    Fe8InventoryEndpoint popup_source;
+    uint16_t popup_item;
+    int popup_anchor_x, popup_anchor_y; /* Drawable pixels at activation. */
+    int undo_count;
+    Fe8InventoryEndpoint flash;
+    int flash_ticks;
+
 } Fe8InventoryUi;
 
 void fe8_inventory_ui_init(Fe8InventoryUi *ui);

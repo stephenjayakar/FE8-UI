@@ -456,6 +456,11 @@ void fe8_inventory_ui_open(Fe8InventoryUi *ui,
     fe8_inventory_desktop_cancel_drag(ui);
     ui->has_inspected = 0;
     ui->has_detail = 0;
+    ui->has_comparison = 0;
+    ui->popup_open = 0;
+    ui->undo_count = 0;
+    ui->flash_ticks = 0;
+    ui->loadout_scroll = ui->supply_scroll = 0;
     ui->search_active = 0;
     ui->detail_scroll = 0;
     ui->sort_descending = 0;
@@ -632,6 +637,13 @@ Fe8InventoryEndpoint fe8_inventory_ui_endpoint(const Fe8InventoryUi *ui,
     };
     if (!ui || !snapshot)
         return endpoint;
+    if ((kind == FE8_INVENTORY_HIT_LOADOUT_ITEM || kind == FE8_INVENTORY_HIT_COMPARE) &&
+            index >= 0 && index < snapshot->unit_count * FE8_INVENTORY_ITEM_SLOTS) {
+        endpoint.kind = FE8_INVENTORY_ENDPOINT_UNIT;
+        endpoint.unit_address = snapshot->units[index / FE8_INVENTORY_ITEM_SLOTS].address;
+        endpoint.slot = (unsigned)(index % FE8_INVENTORY_ITEM_SLOTS);
+        return endpoint;
+    }
     if (kind == FE8_INVENTORY_HIT_UNIT_ITEM && ui->current_unit >= 0 &&
             ui->current_unit < snapshot->unit_count && index >= 0 &&
             index < FE8_INVENTORY_ITEM_SLOTS) {
@@ -672,7 +684,9 @@ void fe8_inventory_ui_inspect(Fe8InventoryUi *ui,
         ui->hover_kind = kind;
         return;
     }
-    if ((kind == FE8_INVENTORY_HIT_UNIT_ITEM &&
+    if ((kind == FE8_INVENTORY_HIT_LOADOUT_ITEM && index >= 0 &&
+            index < snapshot->unit_count * FE8_INVENTORY_ITEM_SLOTS) ||
+            (kind == FE8_INVENTORY_HIT_UNIT_ITEM &&
             target_unit(ui, snapshot) && index >= 0 &&
             index < FE8_INVENTORY_ITEM_SLOTS) ||
             (kind == FE8_INVENTORY_HIT_POOL_ITEM && index >= 0 &&

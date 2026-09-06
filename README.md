@@ -17,31 +17,42 @@ the game's metatiles from emulated EWRAM/VRAM/palette memory, renders a 480×320
 terrain canvas, and places mGBA's exact frame over its center.
 
 Whenever a live FE8 roster exists, press **I** to open **Armory**. The game
-pauses while it is open. Choose a recipient in the left sidebar; browse the
-entire army and Supply in one searchable, filterable item list. A single click
-pins an item's stats, ownership, description and compatibility in the inspector.
+pauses while it is open. **By item** searches the army-wide equipment pool;
+**By unit** shows each ally's five slots with Supply alongside on wider windows.
+Drag between any visible slots without selecting either ally first. Click an
+ally's portrait/name to choose the recipient of inline Give actions.
 
-Move equipment without going through the inspector: click **Give / Store**
-beside an item, **double-click** its row, or **drag** it onto a loadout slot,
-recipient, or the pinned Supply destination. Give uses an empty slot; full
-recipients require an explicit slot to swap. The five loadout slots are always
-available. **U** undoes the most recent transaction. Right-click or **Escape**
-cancels a move; **I**, Close, or Escape outside search/move mode closes Armory.
+Single-click an item to inspect. **Give / Store** beside a browser item and
+**double-clicking** an item-browser row perform quick transfers; drag onto an
+ally to give or the pinned Supply bar to store. A full ally opens a five-slot
+**swap chooser beside the click/drop**, with the incoming and outgoing owners
+shown before the exchange. No occupied slot is replaced implicitly.
 
-Press **/** to search item names, owners, classes, and types. Weapon-type chips
-and **Ready only** narrow the list without changing inventory order. **S** cycles
-Type/Name/Uses/Owner sorting; clicking the active sortable header reverses it.
-**A** toggles the army-wide pool and Supply. Inspection stays pinned through
-searching, filtering, sorting, and recipient changes.
+**Undo** or **U** reverses up to 32 transactions in the current paused session.
+Every step validates the expected items. Undo history clears on gameplay
+resume or ROM/state changes. Right-click or **Escape** cancels a move; **I**,
+Close, or Escape outside search/move mode returns to the game.
 
-Armory renders at full desktop resolution, independently of game zoom. Its
-inspector moves below the workspace in smaller windows. **D** or the density
-button switches Compact/Comfortable spacing. **+** (or **=**) / **-** adjusts UI
-size in 10% steps; keypad keys work too. **0** resets to 100%. The 80–200% range
-is capped to keep the current window usable; resizing fits the display without
-losing the session preference. Text is re-rasterized, not stretched. Identity,
-uses, ownership and inline actions take priority over optional combat columns;
-full stats and scrolling descriptions remain available in the inspector.
+**/** searches item names, owners, classes and types. Counted type filters and
+**Usable by [recipient]** filter the item browser; in By unit they highlight
+matches while keeping all loadout destinations visible. **S** cycles sorting,
+**A** toggles the item browser's All/Supply scope, and the active column header
+reverses the sort. Personal restrictions, missing proficiency and rank deficits
+are explained rather than reduced to a generic badge. **Carry** explicitly
+means transferable but not usable by the selected ally.
+
+Choose a carried weapon's **vs** control as the comparison baseline; candidate
+items show raw might/hit/weight tradeoffs, never a combat forecast. Hovering a
+swap slot previews that exact exchange. A persistent detail selection and
+independent scroll positions survive switching between the two views.
+
+Armory renders at full desktop resolution, independently of game zoom. Smaller
+windows use a compact detail summary with an expandable drawer, leaving more
+room for allies and equipment. **D** switches row density. **+** (or **=**) /
+**-** adjusts UI size in 10% steps; keypad keys work too. **0** resets to 100%.
+The 80–200% preference fits the current window without losing the session
+setting. Text is re-rasterized, not stretched. Full descriptions remain
+scrollable in the inspector.
 See [the Armory workflow and validation notes](docs/inventory-armory.md).
 
 Text is rasterized at the display's drawable resolution (CoreText on macOS,
