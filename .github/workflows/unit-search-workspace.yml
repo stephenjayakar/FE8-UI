@@ -1,0 +1,21 @@
+name: Unit search workspace
+on:
+  push:
+    branches: [fix/armory-unit-search]
+    paths: [.github/workflows/unit-search-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package source without game data or credentials
+        run: git archive --format=tar.gz HEAD > "$RUNNER_TEMP/unit-search-source.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unit-search-source
+          path: ${{ runner.temp }}/unit-search-source.tar.gz
+          retention-days: 1
