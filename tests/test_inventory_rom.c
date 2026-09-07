@@ -413,6 +413,59 @@ static void check_pinned_workspace(struct mCore *core, const Fe8MemoryReader *re
     puts("  Real pinned loadouts stayed fixed while scrolling; Supply drag and 2-step undo restored RAM exactly");
 }
 
+/* Search by an actual ROM unit name, then resolve a drag from the frozen source
+   to the filtered result. No seed equipment or synthetic roster is needed. */
+static void check_search_workspace(struct mCore *core,const Fe8MemoryReader *reader,
+    const Fe8Profile *profile,const Fe8Catalog *catalog,Fe8InventorySnapshot *s,
+    Fe8InventoryUi *ui,const void *ram,const void *ewram,size_t ram_size,const char *prefix) {
+    fe8_inventory_ui_open(ui,s);ui->desktop=1;ui->desktop_scale=1;
+    ui->zoom_percent=100;ui->comfortable=0;ui->by_unit=1;ui->pointer_x=ui->pointer_y=-1;
+    int recipient=s->unit_count-1;
+    for(int n=0;n<s->unit_count;++n)if(!strcmp(s->units[n].name,"Marth"))recipient=n;
+    int slot=0;while(slot<5 && s->units[recipient].items[slot])++slot;assert(slot<5);
+    Fe8InventoryEndpoint source;int source_index=available_source(s,recipient,&source);assert(source_index>=0);
+    Fe8InventoryDesktopLayout l;Fe8InventoryBoardView v;
+    fe8_inventory_desktop_layout(ui,1440,900,&l);
+    fe8_inventory_desktop_scroll(ui,s,1440,900,30,999);
+    ui->search_active=1;fe8_inventory_desktop_text(ui,s->units[recipient].name);
+    fe8_inventory_board_view(ui,s,&l,&v);
+    assert(!ui->loadout_scroll && v.other_count==1 && v.others[0]==recipient);
+    capture_workspace(prefix,"search-name",ui,s,1440,900);
+    Fe8InventoryHitKind kind=FE8_INVENTORY_HIT_PIN_UNIT;int index=source_index/5;
+    assert(fe8_inventory_desktop_click(ui,s,&kind,&index));
+    fe8_inventory_board_view(ui,s,&l,&v);
+    assert(v.pinned_count==1 && v.other_count==1 && v.match_count==1);
+    capture_workspace(prefix,"search-pinned",ui,s,1440,900);
+    capture_workspace(prefix,"search-minimum",ui,s,640,480);
+    int sx=l.board_x+l.identity_width+(source_index%5)*l.slot_width+18,sy=v.top+30;
+    int dx=l.board_x+l.identity_width+slot*l.slot_width+18,dy=v.other_y+30;
+    kind=fe8_inventory_desktop_hit(ui,s,1440,900,sx,sy,&index);assert(index==source_index);
+    fe8_inventory_desktop_pointer_down(ui,s,kind,index,sx,sy);
+    fe8_inventory_desktop_pointer_motion(ui,s,1440,900,dx,dy);
+    kind=fe8_inventory_desktop_hit(ui,s,1440,900,dx,dy,&index);
+    assert(kind==FE8_INVENTORY_HIT_LOADOUT_ITEM && index==recipient*5+slot);
+    assert(!fe8_inventory_desktop_pointer_up(ui,s,&kind,&index));
+    Fe8InventoryEndpoint to=fe8_inventory_ui_endpoint(ui,s,kind,index);
+    assert(to.unit_address==s->units[recipient].address && to.slot==(unsigned)slot);
+    Fe8InventoryHistory history={0};Fe8MemoryWriter writer={core,write8};
+    workspace_transfer(&history,reader,&writer,profile,catalog,s,ui,source,to);
+    assert(ui->pinned_count==1 && !strcmp(ui->query,s->units[recipient].name));
+    capture_workspace(prefix,"search-transfer",ui,s,1440,900);
+    assert(fe8_inventory_history_undo(&history,reader,&writer,profile));
+    assert(fe8_extract_prebattle_inventory(reader,profile,catalog,s));fe8_inventory_ui_rebuild(ui,s);
+    assert(!memcmp(ram,ewram,ram_size));
+    ui->undo_count=0;ui->flash_ticks=0;ui->has_detail=0;ui->status[0]=0;
+    fe8_inventory_desktop_clear_query(ui);ui->search_active=1;
+    fe8_inventory_desktop_text(ui,"no such unit");fe8_inventory_board_view(ui,s,&l,&v);
+    assert(v.other_count==0 && v.match_count==0 && v.pinned_count==1);
+    capture_workspace(prefix,"search-empty",ui,s,1440,900);
+    capture_workspace(prefix,"search-empty-minimum",ui,s,640,480);
+    fe8_inventory_desktop_clear_query(ui);fe8_inventory_board_view(ui,s,&l,&v);
+    assert(v.other_count+v.pinned_count==s->unit_count);
+    assert(!memcmp(ram,ewram,ram_size));fe8_inventory_ui_open(ui,s);
+    puts("  Unit name search filtered the real roster; drag to filtered unit and Undo restored all RAM exactly");
+}
+
 #endif
 
 /* Validate the snapshot fields independently through the emulator bus. This
@@ -574,6 +627,7 @@ int main(int argc, char **argv) {
     fe8_inventory_ui_adjust_scale(ui, 0, WIDTH, HEIGHT);
     check_workspace(core,&reader,profile,&catalog,snapshot,ui,original_ram,ewram,ewram_size,argc==4?argv[3]:NULL);
     check_pinned_workspace(core,&reader,profile,&catalog,snapshot,ui,original_ram,ewram,ewram_size,argc==4?argv[3]:NULL);
+    check_search_workspace(core,&reader,profile,&catalog,snapshot,ui,original_ram,ewram,ewram_size,argc==4?argv[3]:NULL);
 #endif
     if (argc == 4) {
         char path[1024];

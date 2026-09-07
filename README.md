@@ -34,8 +34,10 @@ resume or ROM/state changes. Right-click or **Escape** cancels a move; **I**,
 Close, or Escape outside search/move mode returns to the game.
 
 **/** searches item names, owners, classes and types. Counted type filters and
-**Usable by [recipient]** filter the item browser; in By unit they highlight
-matches while keeping all loadout destinations visible. **S** cycles sorting,
+**Usable by [recipient]** filter the item browser. In **By unit**, text search
+filters unpinned units by name, class or carried equipment; pinned loadouts stay
+visible. Type/usability chips highlight slots within those rows. Empty-inventory
+allies remain searchable by name, and Clear filters restores the roster. **S** cycles sorting,
 **A** toggles the item browser's All/Supply scope, and the active column header
 reverses the sort. Personal restrictions, missing proficiency and rank deficits
 are explained rather than reduced to a generic badge. **Carry** explicitly

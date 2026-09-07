@@ -878,7 +878,7 @@ int main(int argc, char **argv) {
                 video.vsync_active ? "on" : "off",
                 settings.extensions_enabled ? "on" : "off",
                 settings.mouse_enabled ? "on" : "off",
-                fe8_host_shader_name(settings.shader),
+                fe8_host_shader_name(video.shader),
                 settings.zoom_sensitivity * 100.0,
                 fe8_host_speedup_name(settings.speedup_rate));
         }

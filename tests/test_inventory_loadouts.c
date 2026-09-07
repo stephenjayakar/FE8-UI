@@ -87,8 +87,8 @@ static void geometry(int width,int height,float dpi,int zoom,int comfortable) {
     (void)first;
     fe8_inventory_desktop_scroll(&ui,&snapshot,width,height,(int)(30*scale),999);
     assert(ui.loadout_scroll==(snapshot.unit_count>l.board_rows?snapshot.unit_count-l.board_rows:0));
-    /* Every row is retained while filtering. Unmatched equipment is dimmed,
-       not removed as a possible destination. */
+    /* Unmatched units are filtered, leaving a safe empty-state viewport.
+       The drawer and framebuffer guards still apply with no search results. */
     strcpy(ui.query,"nothing matches");ui.type_filter=7;
     size_t stride=width+7,total=stride*height+16;
     uint32_t *pixels=malloc(total*sizeof(*pixels));assert(pixels);

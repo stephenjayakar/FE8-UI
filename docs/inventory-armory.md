@@ -16,10 +16,23 @@ windows keep a Supply list alongside the loadouts; the Supply bar opens the
 item browser at smaller widths. Each view retains its own scroll position.
 Click an ally to select the recipient; click an item only to inspect it.
 
-The board's search and usability filters highlight matching equipment rather
-than hiding slots: a nonmatching ally must remain a possible drop destination.
-Counts include all carried items on the board even when the item browser's
-remembered scope is Supply. The board shows per-owner compatibility; the Supply
+In **By unit**, text search filters the unpinned roster by unit name, class or
+carried equipment, using case-insensitive ANDed words. Units with empty
+inventories still match their name/class. Matching rows retain all five slots;
+type and usability chips highlight equipment without hiding those recipients.
+Pinned loadouts remain visible regardless of the query, with their frozen page
+and geometry unchanged. The footer counts matching units separately from pins;
+no-match results show an empty state rather than leaving unrelated allies visible.
+
+Typing, backspacing, Ctrl/Cmd+A and Clear filters reset the result scroll to the
+first match without changing the selected recipient, source, comparison or Undo.
+Drawing, scrolling, pinning and drag/drop all consume the same filtered snapshot
+indices, resolved immediately into canonical address/slot targets. A hidden
+source stays selected, and clearing the query restores the roster. Item-browser
+and Supply search retain their existing item-based behavior.
+
+Counts include matching carried items even when the item browser's remembered
+scope is Supply. The board shows per-owner compatibility; the Supply
 list and item-browser badges use the selected recipient. Inspection, comparison
 baseline, query and filters are shared across views.
 
@@ -297,3 +310,10 @@ build/tests/test_inventory_effective_stats /path/to/SacredEchoes.gba sacred-echo
 
 Only screenshots and text validation logs should be shared; no ROMs, save states
 or extracted assets are repository or CI inputs.
+
+`inventory_unit_search` covers name/class/item queries, empty inventories,
+case/whitespace/multi-token matching, no matches, query editing and scroll reset,
+stable pinned layout/page, scope independence, filtered pinning and canonical
+slot/drag targets across minimum size, density, zoom and DPI. Both supplied-ROM
+desktop tests search actual unit names, transfer into a filtered loadout, and
+verify that Undo restores all EWRAM byte-for-byte.
