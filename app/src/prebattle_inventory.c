@@ -10,7 +10,12 @@
 #define FE8_UNIT_ITEM_OFFSET UINT32_C(0x1E)
 #define FE8_UNIT_RANK_OFFSET UINT32_C(0x28)
 #define FE8_UNIT_STATUS_OFFSET UINT32_C(0x30)
+#define FE8_UNIT_MAP_SPRITE_HANDLE_OFFSET UINT32_C(0x3C)
 #define FE8_UNIT_STATE_DEAD UINT32_C(1u << 2)
+#define FE8_OBJ_VRAM UINT32_C(0x06010000)
+#define FE8_OBJ_PALETTE UINT32_C(0x05000200)
+#define FE8_OBJ_TILE_BYTES UINT32_C(32)
+#define FE8_OBJ_TILE_ROW_STRIDE UINT32_C(32)
 #define FE8_BM_FLAG_PREPSCREEN UINT8_C(1u << 4)
 
 #define FE8_ITEM_ATTRIBUTE_WEAPON UINT32_C(1u << 0)
@@ -80,6 +85,94 @@ static uint16_t read16(const Fe8MemoryReader *memory, uint32_t address) {
 
 static uint32_t read32(const Fe8MemoryReader *memory, uint32_t address) {
     return (uint32_t)read16(memory, address) | ((uint32_t)read16(memory, address + 2) << 16);
+}
+
+static uint32_t gba_color(uint16_t color) {
+    uint32_t red = color & 31;
+    uint32_t green = (color >> 5) & 31;
+    uint32_t blue = (color >> 10) & 31;
+    red = (red << 3) | (red >> 2);
+    green = (green << 3) | (green >> 2);
+    blue = (blue << 3) | (blue >> 2);
+    return UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;
+}
+
+static bool extract_map_sprite(const Fe8MemoryReader *memory, uint32_t unit_address,
+    Fe8InventoryUnit *unit) {
+    uint32_t handle = read32(memory, unit_address + FE8_UNIT_MAP_SPRITE_HANDLE_OFFSET);
+    uint16_t oam2;
+    uint8_t config;
+    unsigned width;
+    unsigned height;
+    unsigned tile_base;
+    unsigned palette_bank;
+    bool visible = false;
+
+    unit->map_sprite_width = 0;
+    unit->map_sprite_height = 0;
+    memset(unit->map_sprite, 0, sizeof(unit->map_sprite));
+    memset(unit->map_sprite_palette, 0, sizeof(unit->map_sprite_palette));
+    if (!valid_range(handle, 12, FE8_EWRAM_START, FE8_EWRAM_END))
+        return false;
+
+    oam2 = read16(memory, handle + 8);
+    config = read8(memory, handle + 0x0B);
+    if ((config & 0x80) != 0)
+        return false;
+    switch (config & 0x0F) {
+    case 0:
+    case 3:
+        width = 16;
+        height = 16;
+        break;
+    case 1:
+    case 4:
+        width = 16;
+        height = 32;
+        break;
+    case 2:
+    case 5:
+        width = 32;
+        height = 32;
+        break;
+    default:
+        return false;
+    }
+
+    tile_base = oam2 & 0x3FF;
+    palette_bank = (oam2 >> 12) & 0x0F;
+    unit->map_sprite_width = (uint8_t)width;
+    unit->map_sprite_height = (uint8_t)height;
+    for (unsigned index = 1; index < FE8_MAP_SPRITE_PALETTE_SIZE; ++index) {
+        unit->map_sprite_palette[index] = gba_color(read16(memory,
+            FE8_OBJ_PALETTE + (palette_bank * 16 + index) * 2));
+    }
+    for (unsigned y = 0; y < height; ++y) {
+        unsigned tile_y = y >> 3;
+        unsigned pixel_y = y & 7;
+        for (unsigned x = 0; x < width; ++x) {
+            unsigned tile_x = x >> 3;
+            unsigned tile = (tile_base + tile_y * FE8_OBJ_TILE_ROW_STRIDE + tile_x) & 0x3FF;
+            uint32_t packed_address = FE8_OBJ_VRAM + tile * FE8_OBJ_TILE_BYTES +
+                pixel_y * 4 + (x & 7) / 2;
+            uint8_t packed = read8(memory, packed_address);
+            uint8_t color_index = (x & 1) ? packed >> 4 : packed & 0x0F;
+            unit->map_sprite[y * FE8_MAP_SPRITE_MAX_WIDTH + x] = color_index;
+            if (color_index != 0)
+                visible = true;
+        }
+    }
+    return visible;
+}
+
+static void copy_map_sprite(Fe8InventoryUnit *target,
+    const Fe8InventoryUnit *source) {
+    memcpy(target->map_sprite, source->map_sprite, sizeof(target->map_sprite));
+    memcpy(target->map_sprite_palette, source->map_sprite_palette,
+        sizeof(target->map_sprite_palette));
+    target->map_sprite_width = source->map_sprite_width;
+    target->map_sprite_height = source->map_sprite_height;
+    target->map_sprite_valid = source->map_sprite_valid;
 }
 
 static uint8_t clamp_stat(int value) {
@@ -283,10 +376,26 @@ bool fe8_extract_prebattle_inventory(
             unit->class_description[0] = '\0';
         unit->portrait_valid = fe8_catalog_portrait(memory, catalog,
             unit->portrait_id, unit->portrait, unit->portrait_palette);
+        unit->map_sprite_valid = extract_map_sprite(memory, address, unit);
         for (slot = 0; slot < FE8_INVENTORY_ITEM_SLOTS; ++slot)
         {
             unit->items[slot] = read16(memory, address + FE8_UNIT_ITEM_OFFSET + slot * 2);
             fe8_catalog_item(memory, catalog, unit->items[slot], &unit->item_info[slot]);
+        }
+    }
+    /* Reserve units do not always own an SMSHandle while the prep UI is
+       drawing. A same-class ally uses the same standing sprite, so reuse an
+       already captured class image rather than showing nothing when possible. */
+    for (index = 0; index < snapshot->unit_count; ++index) {
+        Fe8InventoryUnit *unit = &snapshot->units[index];
+        if (unit->map_sprite_valid)
+            continue;
+        for (unsigned match = 0; match < snapshot->unit_count; ++match) {
+            const Fe8InventoryUnit *candidate = &snapshot->units[match];
+            if (candidate->map_sprite_valid && candidate->class_id == unit->class_id) {
+                copy_map_sprite(unit, candidate);
+                break;
+            }
         }
     }
     if (valid_range(supply_address, supply_capacity * 2,

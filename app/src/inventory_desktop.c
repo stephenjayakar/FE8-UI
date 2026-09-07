@@ -330,7 +330,9 @@ void fe8_inventory_desktop_layout(const Fe8InventoryUi *ui, int width, int heigh
     l->side_row_height = l->height < 720 ? 24 : ui->comfortable ? 36 : 32;
     /* At minimum size the compact stats grid still leaves all five item
        slots and one roster row. Taller windows use larger stat cells. */
-    l->stats_y = l->top + (l->height < 600 ? 108 : l->height < 720 ? 116 : 128);
+    /* The selected-unit art now gets a proper identity block. Keep the
+       stat grid below it instead of squeezing the larger portrait. */
+    l->stats_y = l->top + (l->height < 600 ? 108 : 128);
     l->stat_row_height = l->height < 600 ? 18 : l->height < 720 ? 22 : 28;
     l->items_y = l->stats_y + 2 * l->stat_row_height + (l->height < 600 ? 4 : 20);
     l->roster_y = l->items_y + 5 * l->side_row_height + 22;
@@ -961,6 +963,28 @@ static void portrait(Painter *p,const Fe8InventoryUnit *u,int x,int y,int w,int 
         if(idx&&idx<FE8_PORTRAIT_PALETTE_SIZE)p->pixels[dy*p->stride+dx]=u->portrait_palette[idx];
     }
 }
+static void map_sprite(Painter *p,const Fe8InventoryUnit *u,int x,int y,int w,int h) {
+    if(!u||!u->map_sprite_valid||!u->map_sprite_width||!u->map_sprite_height)return;
+    card(p,x,y,w,h,RAISED);
+    int inner_w=w-8,inner_h=h-8;
+    if(inner_w<=0||inner_h<=0)return;
+    int draw_w=inner_w,draw_h=inner_h;
+    if(draw_w*u->map_sprite_height>draw_h*u->map_sprite_width)
+        draw_w=draw_h*u->map_sprite_width/u->map_sprite_height;
+    else draw_h=draw_w*u->map_sprite_height/u->map_sprite_width;
+    int left=x+(w-draw_w)/2,top=y+(h-draw_h)/2;
+    int x0=px(p,left),y0=px(p,top),ww=px(p,left+draw_w)-x0,hh=px(p,top+draw_h)-y0;
+    if(ww<=0||hh<=0)return;
+    for(int yy=0;yy<hh;++yy)for(int xx=0;xx<ww;++xx) {
+        int dx=x0+xx,dy=y0+yy;
+        if(dx<0||dy<0||dx>=p->width||dy>=p->height)continue;
+        unsigned sx=(unsigned)xx*u->map_sprite_width/(unsigned)ww;
+        unsigned sy=(unsigned)yy*u->map_sprite_height/(unsigned)hh;
+        unsigned idx=u->map_sprite[sy*FE8_MAP_SPRITE_MAX_WIDTH+sx];
+        if(idx&&idx<FE8_MAP_SPRITE_PALETTE_SIZE)
+            p->pixels[dy*p->stride+dx]=u->map_sprite_palette[idx];
+    }
+}
 static void scroll_mark(Painter *p,int x,int y,int h,int count,int rows,int start) {
     if(count<=rows||rows<=0||h<=0)return;
     int thumb=clamp(h*rows/count,12,h);
@@ -1005,19 +1029,29 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
     char b[160];
     card(p,PAD,l->top,l->sidebar,l->bottom-l->top,PANEL);
     if(u) {
-        portrait(p,u,PAD+8,l->top+6,l->height<600?72:80,l->height<600?64:72);
-        label(p,PAD+94,l->top+6,l->sidebar-104,24,u->name,TEXT,19,1,0);
-        label(p,PAD+94,l->top+30,l->sidebar-104,18,u->class_name,MUTED,12,0,0);
+        int short_art=l->height<600;
+        int art_w=short_art?82:108,art_h=short_art?68:96;
+        int sprite_size=short_art?32:46;
+        int info_x=PAD+art_w+20;
+        int info_w=PAD+l->sidebar-info_x-8;
+        int ranks_y=l->top+(short_art?82:104);
+        portrait(p,u,PAD+8,l->top+6,art_w,art_h);
+        /* The map sprite reads like a physical game-piece badge while keeping
+           the portrait itself large and the identity text in a stable column. */
+        map_sprite(p,u,PAD+12+art_w-sprite_size,l->top+art_h-sprite_size+2,
+            sprite_size,sprite_size);
+        label(p,info_x,l->top+6,info_w,24,u->name,TEXT,19,1,0);
+        label(p,info_x,l->top+30,info_w,18,u->class_name,MUTED,12,0,0);
         experience(b,sizeof(b),u);
-        label(p,PAD+94,l->top+51,l->sidebar-104,16,b,MUTED,10,0,0);
+        label(p,info_x,l->top+51,info_w,16,b,MUTED,10,0,0);
         snprintf(b,sizeof(b),"HP %u / %d",u->hp,fe8_inventory_stat_value(u,FE8_STAT_MAX_HP,ui->stats_base));
-        label(p,PAD+94,l->top+68,l->sidebar-104,16,b,ACCENT,11,1,0);
+        label(p,info_x,l->top+68,info_w,16,b,ACCENT,11,1,0);
         int x=PAD+10;
         for(int t=0;t<8;++t)if(u->ranks[t]&&x<PAD+l->sidebar-34) {
             snprintf(b,sizeof(b),"%.2s %c",TYPES[t+1],rank_letter(u->ranks[t]));
-            badge(p,x,l->top+86,44,b,TYPE_COLORS[t+1]);x+=48;
+            badge(p,x,ranks_y,44,b,TYPE_COLORS[t+1]);x+=48;
         }
-        if(x==PAD+10)label(p,x,l->top+88,l->sidebar-20,16,"No weapon ranks",MUTED,11,0,0);
+        if(x==PAD+10)label(p,x,ranks_y+2,l->sidebar-20,16,"No weapon ranks",MUTED,11,0,0);
         if(l->height>=720)label(p,PAD+10,l->stats_y-18,l->sidebar-20,16,ui->stats_base || !u->effective_stats_valid?"BASE STATS":"TOTAL STATS · Hover for modifiers",MUTED,10,1,0);
         card(p,PAD+6,l->stats_y,l->sidebar-18,2*l->stat_row_height,RAISED);
         draw_unit_stats(p,ui,u,PAD+10,l->stats_y,l->sidebar-24,4,l->stat_row_height);
@@ -1326,9 +1360,12 @@ static void draw_board_unit(Painter *p, const Fe8InventoryUi *ui,
     const Fe8InventoryUnit *u=&s->units[n];
     if(n==ui->current_unit)card(p,l->board_x+4,y+4,l->identity_width-10,l->board_card_height-8,SELECTED);
     int compact=l->identity_width<140;
-    if(!compact)portrait(p,u,l->board_x+9,y+10,40,36);
-    int name_x=l->board_x+(compact?10:56);
-    label(p,name_x,y+(tight?3:l->board_card_height<80?6:10),l->identity_width-(compact?64:108),20,u->name,n==ui->current_unit?ACCENT:TEXT,tight?11:13,1,0);
+    if(!compact) {
+        portrait(p,u,l->board_x+9,y+7,48,44);
+        map_sprite(p,u,l->board_x+31,y+27,28,28);
+    }
+    int name_x=l->board_x+(compact?10:64);
+    label(p,name_x,y+(tight?3:l->board_card_height<80?6:10),l->identity_width-(compact?64:116),20,u->name,n==ui->current_unit?ACCENT:TEXT,tight?11:13,1,0);
     button(p,l->board_x+l->identity_width-48,y+6,42,18,is_pinned?"Unpin":"Pin",is_pinned,1);
     label(p,name_x,y+(l->board_card_height<80?24:30),l->identity_width-(compact?18:62),tight?12:16,u->class_name,MUTED,tight?9:10,0,0);
     experience(b,sizeof(b),u);

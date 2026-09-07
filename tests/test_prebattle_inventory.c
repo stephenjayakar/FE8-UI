@@ -10,12 +10,18 @@
 #define UA_LOCK_1 UINT32_C(1u << 16)
 
 static unsigned char ewram[0x40000];
+static unsigned char vram[0x18000];
+static unsigned char palette[0x400];
 static unsigned char rom[0x2000000];
 
 static uint8_t read8(void *context, uint32_t address) {
     (void)context;
     if (address >= 0x02000000 && address < 0x02040000)
         return ewram[address - 0x02000000];
+    if (address >= 0x05000000 && address < 0x05000400)
+        return palette[address - 0x05000000];
+    if (address >= 0x06000000 && address < 0x06018000)
+        return vram[address - 0x06000000];
     if (address >= 0x08000000 && address < 0x0A000000)
         return rom[address - 0x08000000];
     return 0;
@@ -58,6 +64,8 @@ int main(void) {
     uint32_t character_a = 0x08010000;
     uint32_t character_b = 0x08010034;
     memset(ewram, 0, sizeof(ewram));
+    memset(vram, 0, sizeof(vram));
+    memset(palette, 0, sizeof(palette));
     memset(rom, 0, sizeof(rom));
     profile.convoy_items = 0x0203B200;
     profile.inventory.convoy_capacity = 200;
@@ -189,6 +197,14 @@ int main(void) {
     put16(first + 0x1E, 0x281C);
     put16(second + 0x20, 0x052D);
 
+    /* A live 16x16 SMSHandle for Alice: tile 0x80, blue OBJ palette 12. */
+    put32(first + 0x3C, 0x02020000);
+    put16(0x02020000 + 8, (uint16_t)(0xC000 | 0x0080));
+    write8(NULL, 0x02020000 + 0x0B, 0);
+    vram[0x10000 + 0x80 * 32] = 0x11;
+    palette[0x200 + (12 * 16 + 1) * 2] = 0x1F;
+    palette[0x200 + (12 * 16 + 1) * 2 + 1] = 0;
+
     put16(0x0203B200, 0x1435);
     assert(fe8_extract_prebattle_inventory(&memory, &profile, &catalog, &snapshot));
     assert(snapshot.chapter == 9 && snapshot.unit_count == 2);
@@ -209,6 +225,13 @@ int main(void) {
     assert(snapshot.units[0].ranks[0] == 31 && snapshot.units[0].status == 3);
     assert((snapshot.units[0].attributes & UA_LOCK_1) != 0);
     assert((snapshot.units[0].attributes & UINT32_C(1u << 17)) != 0);
+    assert(snapshot.units[0].map_sprite_valid);
+    assert(snapshot.units[0].map_sprite_width == 16 &&
+        snapshot.units[0].map_sprite_height == 16);
+    assert(snapshot.units[0].map_sprite[0] == 1);
+    assert(snapshot.units[0].map_sprite_palette[1] == UINT32_C(0xFF0000FF));
+    /* Bob has no handle, but shares Alice's class and inherits the captured SMS. */
+    assert(snapshot.units[1].map_sprite_valid && snapshot.units[1].map_sprite[0] == 1);
     assert(snapshot.units[0].items[0] == 0x281C);
     assert(snapshot.units[1].items[1] == 0x052D);
     assert(snapshot.supply_count == 1 && snapshot.supply[0] == 0x1435);
