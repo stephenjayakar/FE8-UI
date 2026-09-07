@@ -75,12 +75,14 @@ static void check_rows(Fe8InventoryUi *ui,const Fe8InventoryDesktopLayout *l,
     int seen[FE8_INVENTORY_UNIT_CAPACITY]={0};
     for(int n=0;n<v->pinned_count;++n)assert(!seen[v->pinned[n]]++);
     for(int n=0;n<v->other_count;++n)assert(!seen[v->others[n]]++);
-    for(int n=0;n<snapshot.unit_count;++n)assert(seen[n]==1);
+    for(int n=0;n<snapshot.unit_count;++n)
+        assert(seen[n]==(fe8_inventory_unit_pinned(ui,&snapshot.units[n]) ||
+            fe8_inventory_desktop_unit_matches(ui,&snapshot,n)));
     for(int group=0;group<2;++group) {
         int rows=group?v->other_rows:v->pinned_rows;
         int start=group?v->other_start:v->pinned_start;
         int top=group?v->other_y:v->top;
-        for(int row=0;row<rows;++row) {
+        for(int row=0;row<rows && start+row<(group?v->other_count:v->pinned_count);++row) {
             int n=group?v->others[start+row]:v->pinned[start+row];
             int y=top+row*v->row_height,index=-1;
             for(int slot=0;slot<5;++slot) {
@@ -138,7 +140,8 @@ static void matrix(int width,int height,float dpi,int zoom,int comfortable) {
     ui.type_filter=8;ui.usable_only=1;strcpy(ui.query,"no matching equipment");
     fe8_inventory_ui_toggle_scope(&ui,&snapshot);
     fe8_inventory_board_view(&ui,&snapshot,&l,&after);check_rows(&ui,&l,&after,width,height);
-    assert(after.pinned_count==5 && after.other_count==19);
+    assert(after.pinned_count==5 && after.other_count==0 && after.other_total==19);
+    assert(after.pinned_rows==before.pinned_rows && after.row_height==before.row_height);
     assert(hit(&ui,width,height,right-60,l.board_y-15,&index)==FE8_INVENTORY_HIT_UNPIN_ALL);
     assert(click(&ui,FE8_INVENTORY_HIT_UNPIN_ALL,index));assert(!ui.pinned_count);
     assert(!memcmp(&snapshot,&original,sizeof(snapshot)));free(initial);free(pixels);

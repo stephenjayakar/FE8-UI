@@ -189,3 +189,6 @@ endif()
 
 fe8_add_test(inventory_pins test_inventory_pins.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
 target_link_libraries(test_inventory_pins PRIVATE ${DESKTOP_TEXT_LIBS})
+
+fe8_add_test(inventory_unit_search test_inventory_unit_search.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
+target_link_libraries(test_inventory_unit_search PRIVATE ${DESKTOP_TEXT_LIBS})

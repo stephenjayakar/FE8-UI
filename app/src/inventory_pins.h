@@ -8,7 +8,7 @@
 typedef struct Fe8InventoryBoardView {
     int pinned[FE8_INVENTORY_UNIT_CAPACITY];
     int others[FE8_INVENTORY_UNIT_CAPACITY];
-    int pinned_count, other_count;
+    int pinned_count, other_count, other_total, match_count;
     int pinned_rows, other_rows, pinned_start, other_start;
     int top, other_y, row_height, card_height;
 } Fe8InventoryBoardView;

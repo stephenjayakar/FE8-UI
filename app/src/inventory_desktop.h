@@ -40,6 +40,11 @@ void fe8_inventory_ui_toggle_density(Fe8InventoryUi *ui);
 /* Pure derived view. Empty supply destinations are deliberately not filtered. */
 int fe8_inventory_desktop_visible(const Fe8InventoryUi *ui,
     const Fe8InventorySnapshot *snapshot, int indices[FE8_INVENTORY_POOL_CAPACITY]);
+/* Name/class or carried-equipment query match, independent of pool scope.
+   Pinned units bypass this filter in the board view, not in this predicate. */
+int fe8_inventory_desktop_unit_matches(const Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *snapshot, int unit);
+void fe8_inventory_desktop_clear_query(Fe8InventoryUi *ui);
 void fe8_inventory_desktop_text(Fe8InventoryUi *ui, const char *utf8);
 void fe8_inventory_desktop_backspace(Fe8InventoryUi *ui);
 /* Returns 1 when the view consumed a click without any game-memory write.

@@ -137,9 +137,33 @@ static int matches_query(const char *query, const Fe8InventoryListEntry *e, cons
         n = (size_t)(query - start);
         if (n && !contains(e->info ? e->info->name : "", start, n) &&
             !contains(owner, start, n) && !contains(class_name, start, n) &&
-            !contains(TYPES[type_key(e->info)], start, n)) return 0;
+            !(e->info && contains(TYPES[type_key(e->info)], start, n))) return 0;
     }
     return 1;
+}
+/* Search the unit itself first: empty loadouts must remain findable. Carried
+   equipment uses the same ANDed item/owner/class/type tokens as By item. Type
+   and usability chips still highlight slots; they do not hide recipients. */
+int fe8_inventory_desktop_unit_matches(const Fe8InventoryUi *ui,
+    const Fe8InventorySnapshot *s, int unit) {
+    if (!ui || !s || unit < 0 || unit >= s->unit_count ||
+            unit >= FE8_INVENTORY_UNIT_CAPACITY) return 0;
+    Fe8InventoryListEntry entry = {0};
+    entry.unit_index = unit;
+    if (matches_query(ui->query, &entry, s)) return 1;
+    const Fe8InventoryUnit *u = &s->units[unit];
+    for (int slot = 0; slot < FE8_INVENTORY_ITEM_SLOTS; ++slot) {
+        if (!u->items[slot]) continue;
+        entry.info = &u->item_info[slot];
+        if (matches_query(ui->query, &entry, s)) return 1;
+    }
+    return 0;
+}
+void fe8_inventory_desktop_clear_query(Fe8InventoryUi *ui) {
+    if (!ui) return;
+    ui->query[0] = 0;
+    ui->loadout_scroll = 0;
+    changed_view(ui);
 }
 int fe8_inventory_desktop_visible(const Fe8InventoryUi *ui, const Fe8InventorySnapshot *s,
     int indices[FE8_INVENTORY_POOL_CAPACITY]) {
@@ -176,6 +200,7 @@ void fe8_inventory_desktop_text(Fe8InventoryUi *ui, const char *utf8) {
         length += n; utf8 += n;
     }
     ui->query[length] = 0;
+    ui->loadout_scroll = 0;
     changed_view(ui);
 }
 void fe8_inventory_desktop_backspace(Fe8InventoryUi *ui) {
@@ -183,6 +208,7 @@ void fe8_inventory_desktop_backspace(Fe8InventoryUi *ui) {
     if (!ui || !ui->search_active || !(n = strlen(ui->query))) return;
     do { --n; } while (n && ((unsigned char)ui->query[n] & 0xC0) == 0x80);
     ui->query[n] = 0;
+    ui->loadout_scroll = 0;
     changed_view(ui);
 }
 
@@ -240,8 +266,8 @@ static void type_counts(const Fe8InventoryUi *ui, const Fe8InventorySnapshot *s,
     for (int n=0;n<ui->pool_count;++n) if (entry_matches(ui,s,&ui->pool[n],0)) {
         ++counts[0]; ++counts[type_key(ui->pool[n].info)];
     }
-    /* The board always represents every ally, even when the item browser's
-       remembered scope is Supply. Count those carried items exactly once. */
+    /* Unit search is independent of the item browser's remembered Supply
+       scope. Count matching carried items exactly once. */
     if (ui->by_unit && ui->pool_scope==FE8_INVENTORY_POOL_SUPPLY)
         for (int n=0;n<s->unit_count;++n) for (int j=0;j<5;++j) {
             const Fe8InventoryUnit *u=&s->units[n];
@@ -701,7 +727,7 @@ int fe8_inventory_desktop_click(Fe8InventoryUi *ui, const Fe8InventorySnapshot *
     case FE8_INVENTORY_HIT_USABLE:
         ui->usable_only = !ui->usable_only; changed_view(ui); return 1;
     case FE8_INVENTORY_HIT_RESET:
-        ui->query[0] = 0; ui->type_filter = 0; ui->usable_only = 0; changed_view(ui); return 1;
+        ui->type_filter = 0; ui->usable_only = 0; fe8_inventory_desktop_clear_query(ui); return 1;
     case FE8_INVENTORY_HIT_CANCEL:
         fe8_inventory_desktop_cancel_move(ui);
         snprintf(ui->status,sizeof(ui->status),"Move cancelled. No items changed."); return 1;
@@ -1386,7 +1412,7 @@ static void draw_board(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySna
     int search_w=l->board_width-180;
     card(p,l->board_x,l->top,search_w,30,RAISED);
     if(ui->search_active)border(p,l->board_x,l->top,search_w,30,ACCENT);
-    snprintf(b,sizeof(b),"%s%s",ui->query[0]?ui->query:"Find equipment or an ally...",ui->search_active?" |":"");
+    snprintf(b,sizeof(b),"%s%s",ui->query[0]?ui->query:"Find units, classes or equipment...",ui->search_active?" |":"");
     label(p,l->board_x+10,l->top+6,search_w-20,20,b,ui->query[0]?TEXT:MUTED,12,0,0);
     const Fe8InventoryUnit *recipient=target(ui,s);
     snprintf(b,sizeof(b),"Usable by %s",recipient?recipient->name:"ally");
@@ -1422,10 +1448,11 @@ static void draw_board(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySna
         }
         for (int row=0;row<v.pinned_rows;++row)
             draw_board_unit(p,ui,s,&row_layout,v.pinned[v.pinned_start+row],v.top+row*v.row_height,1);
-        if (v.other_count) {
+        if (v.other_total) {
             int yy=v.other_y-22;
             fill(p,l->board_x+6,yy,l->board_width-14,1,LINE);
-            snprintf(b,sizeof(b),"OTHER UNITS · %d",v.other_count);
+            if (ui->query[0]) snprintf(b,sizeof(b),"MATCHING UNITS · %d / %d",v.other_count,v.other_total);
+            else snprintf(b,sizeof(b),"OTHER UNITS · %d",v.other_count);
             label(p,l->board_x+10,yy+4,180,16,b,MUTED,9,1,0);
             label(p,l->board_x+190,yy+4,l->board_width-206,16,"Scroll roster · Pins stay above",MUTED,9,0,0);
         }
@@ -1434,6 +1461,13 @@ static void draw_board(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySna
         draw_board_unit(p,ui,s,&row_layout,v.others[v.other_start+row],v.other_y+row*v.row_height,0);
     scroll_mark(p,l->board_x+l->board_width-4,v.other_y,v.other_rows*v.row_height,
         v.other_count,v.other_rows,v.other_start);
+    if (!v.other_count && v.other_total && v.other_rows) {
+        int h=l->deposit_y-v.other_y;
+        label(p,l->board_x+18,v.other_y+8,l->board_width-36,26,
+            v.match_count ? "Matching units are pinned above" : "No matching units",TEXT,16,1,0);
+        if (h>=64) label(p,l->board_x+18,v.other_y+38,l->board_width-36,h-42,
+            "Try a unit name, class or carried item. Clear filters below to show the roster.",MUTED,12,0,1);
+    }
     if(l->supply_width) {
         card(p,l->supply_x,l->top,l->supply_width,l->bottom-l->top,PANEL);
         label(p,l->supply_x+14,l->top+8,150,26,"Supply",TEXT,20,1,0);
@@ -1462,7 +1496,10 @@ static void draw_board(Painter *p,const Fe8InventoryUi *ui,const Fe8InventorySna
         scroll_mark(p,l->supply_x+l->supply_width-4,l->board_y,rows*32,n,rows,first);
     }
     fill(p,PAD,l->deposit_y,l->width-2*PAD,1,LINE);
-    snprintf(b,sizeof(b),"%s",ui->query[0]||ui->type_filter||ui->usable_only?"Matching items highlighted · Clear filters":"All five slots stay visible · Drag between allies");
+    if (ui->query[0]) {
+        if (v.pinned_count) snprintf(b,sizeof(b),"%d match%s · %d pinned · Clear filters",v.match_count,v.match_count==1?"":"es",v.pinned_count);
+        else snprintf(b,sizeof(b),"%d matching unit%s · Clear filters",v.match_count,v.match_count==1?"":"s");
+    } else snprintf(b,sizeof(b),"%s",ui->type_filter||ui->usable_only?"Matching items highlighted · Clear filters":"All five slots stay visible · Drag between allies");
     label(p,PAD+8,l->deposit_y+8,l->board_width-196,20,b,MUTED,11,0,0);
     int sx=l->supply_width?l->supply_x:l->board_x+l->board_width-188;
     int sw=l->supply_width?l->supply_width:188;

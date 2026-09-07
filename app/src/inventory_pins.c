@@ -40,21 +40,24 @@ int fe8_inventory_pin_toggle(Fe8InventoryUi *ui, const Fe8InventorySnapshot *s, 
     const Fe8InventoryUnit *unit = &s->units[index];
     int before = 0;
     for (int n = 0; n < index; ++n)
-        before += !fe8_inventory_unit_pinned(ui, &s->units[n]);
+        before += !fe8_inventory_unit_pinned(ui, &s->units[n]) &&
+            fe8_inventory_desktop_unit_matches(ui, s, n);
     for (int n = 0; n < ui->pinned_count; ++n) {
         if (!pin_matches(ui->pinned_units[n], unit)) continue;
         memmove(ui->pinned_units + n, ui->pinned_units + n + 1,
             (ui->pinned_count - n - 1) * sizeof(ui->pinned_units[0]));
         memset(ui->pinned_units + --ui->pinned_count, 0, sizeof(ui->pinned_units[0]));
         /* Keep the same unpinned unit at the top when insertion precedes it. */
-        if (before <= ui->loadout_scroll) ++ui->loadout_scroll;
+        if (fe8_inventory_desktop_unit_matches(ui, s, index) && before <= ui->loadout_scroll)
+            ++ui->loadout_scroll;
         if (n < ui->pinned_scroll) --ui->pinned_scroll;
         if (!ui->pinned_count) ui->pinned_scroll = 0;
         return -1;
     }
     if (ui->pinned_count >= FE8_INVENTORY_UNIT_CAPACITY) return 0;
     ui->pinned_units[ui->pinned_count++] = (Fe8InventoryUnitPin){unit->address, unit->character_id};
-    if (before < ui->loadout_scroll) --ui->loadout_scroll;
+    if (fe8_inventory_desktop_unit_matches(ui, s, index) && before < ui->loadout_scroll)
+        --ui->loadout_scroll;
     ui->pinned_scroll = ui->pinned_count - 1; /* Bring the newly pinned ally into view. */
     return 1;
 }
@@ -69,18 +72,26 @@ void fe8_inventory_board_view(const Fe8InventoryUi *ui, const Fe8InventorySnapsh
             if (!used[n] && pin_matches(ui->pinned_units[p], &s->units[n])) {
                 used[n] = 1; v->pinned[v->pinned_count++] = n; break;
             }
-    for (int n = 0; n < count; ++n)
-        if (!used[n]) v->others[v->other_count++] = n;
+    for (int n = 0; n < count; ++n) {
+        int match = fe8_inventory_desktop_unit_matches(ui, s, n);
+        v->match_count += match;
+        if (!used[n]) {
+            ++v->other_total;
+            if (match) v->others[v->other_count++] = n;
+        }
+    }
     v->top = v->other_y = l->board_y;
     v->row_height = l->board_row_height;
     v->card_height = l->board_card_height;
     v->other_rows = l->board_rows;
     if (v->pinned_count) {
-        int gap = v->other_count ? 22 : 0;
+        /* Keep the frozen section's geometry/page stable while searching.
+           The unpinned viewport may contain fewer results or an empty state. */
+        int gap = v->other_total ? 22 : 0;
         int space = max(0, l->deposit_y - l->board_y - gap);
         /* Minimum window: slightly denser cards retain a pinned ally AND a
            scrolling ally, with all five slots and the full stat strip intact. */
-        if (v->other_count && space < 2 * v->row_height) {
+        if (v->other_total && space < 2 * v->row_height) {
             v->row_height = space / 2;
             v->card_height = v->row_height - (l->board_row_height - l->board_card_height);
         }
@@ -89,8 +100,8 @@ void fe8_inventory_board_view(const Fe8InventoryUi *ui, const Fe8InventorySnapsh
             return;
         }
         int rows = space / v->row_height;
-        v->pinned_rows = min(v->pinned_count, v->other_count ? max(1, rows / 2) : rows);
-        v->other_rows = min(v->other_count, max(0, rows - v->pinned_rows));
+        v->pinned_rows = min(v->pinned_count, v->other_total ? max(1, rows / 2) : rows);
+        v->other_rows = min(v->other_total, max(0, rows - v->pinned_rows));
         /* Do not waste a large screen when only a few unpinned allies remain. */
         v->pinned_rows = min(v->pinned_count, max(0, rows - v->other_rows));
         v->other_y = v->top + v->pinned_rows * v->row_height + gap;

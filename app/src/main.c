@@ -878,7 +878,7 @@ int main(int argc, char **argv) {
                 video.vsync_active ? "on" : "off",
                 settings.extensions_enabled ? "on" : "off",
                 settings.mouse_enabled ? "on" : "off",
-                fe8_host_shader_name(video.shader),
+                fe8_host_shader_name(settings.shader),
                 settings.zoom_sensitivity * 100.0,
                 fe8_host_speedup_name(settings.speedup_rate));
         }
@@ -1015,8 +1015,7 @@ int main(int argc, char **argv) {
                         SDL_StopTextInput();
                     } else if (key == SDL_SCANCODE_A &&
                             (event.key.keysym.mod & (KMOD_CTRL | KMOD_GUI))) {
-                        inventory_ui.query[0] = 0;
-                        inventory_ui.pool_scroll = 0;
+                        fe8_inventory_desktop_clear_query(&inventory_ui);
                     }
                     continue;
                 }
