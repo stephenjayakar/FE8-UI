@@ -298,6 +298,17 @@ static int snapshot_unit_mouse_target(
     return snapshot->unit_map[offset] != 0;
 }
 
+static int snapshot_locked_unit_mouse_target(
+    const Fe8Snapshot *snapshot, int x, int y) {
+    size_t offset;
+    if (!snapshot_unit_mouse_target(snapshot, x, y) ||
+            !(snapshot->game_state_bits & 1) ||
+            !(snapshot->flags & FE8_SNAPSHOT_RANGE))
+        return 0;
+    offset = (size_t)y * snapshot->map_width + x;
+    return snapshot->range[offset] != 0;
+}
+
 static void set_mouse_map_target(Fe8MouseController *mouse,
     const Fe8Snapshot *snapshot, int x, int y, int confirm) {
     fe8_mouse_set_target_safe(mouse, x, y, confirm,
@@ -1437,6 +1448,8 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                     event.button.button == SDL_BUTTON_RIGHT && settings.mouse_enabled) {
+                /* A cancel click must preempt menu/pointer navigation already queued. */
+                fe8_mouse_cancel(&mouse);
                 fe8_mouse_queue_pulse(&mouse, UINT32_C(1) << FE8_HOST_B);
                 pointer_tile_valid = 0;
                 pointer_canvas_valid = 0;
@@ -1448,7 +1461,11 @@ int main(int argc, char **argv) {
                 int canvas_y;
                 int shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
                 if (snapshot_valid && visual_profile_active &&
-                        snapshot.input_lock == 0) {
+                        (snapshot.input_lock == 0 ||
+                            (!shift && snapshot.phase == 0 &&
+                                snapshot.active_unit_address &&
+                                (snapshot.game_state_bits & 1) &&
+                                (snapshot.flags & FE8_SNAPSHOT_RANGE)))) {
                     if (!fe8_host_video_event_to_canvas(&video,
                             event.button.x, event.button.y, &canvas_x, &canvas_y))
                         continue;
@@ -1466,6 +1483,20 @@ int main(int argc, char **argv) {
                         int map_y;
                         if (fe8_canvas_to_map_tile(&map_state, viewport,
                                 canvas_x, canvas_y, &map_x, &map_y)) {
+                            /* Target selectors can hold the normal map-input lock.
+                               Only bypass that lock for an occupied tile in FE8's
+                               live target range; other locked clicks stay native A. */
+                            if (snapshot.input_lock != 0 &&
+                                    !snapshot_locked_unit_mouse_target(
+                                        &snapshot, map_x, map_y)) {
+                                fe8_mouse_queue_pulse(
+                                    &mouse, UINT32_C(1) << FE8_HOST_A);
+                                native_pointer_valid = 0;
+                                fprintf(stderr,
+                                    "Mouse left-click: A queued for native UI
+");
+                                continue;
+                            }
                             pointer_canvas_valid = 1;
                             pointer_canvas_x = canvas_x;
                             pointer_canvas_y = canvas_y;
