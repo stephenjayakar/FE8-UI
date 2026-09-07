@@ -1758,6 +1758,7 @@ int main(int argc, char **argv) {
                 &inventory_snapshot,canvas_width,canvas_height,host_pointer_canvas_x,host_pointer_canvas_y);
             fe8_inventory_ui_draw(&inventory_ui, &inventory_snapshot,
                 canvas, canvas_width, canvas_width, canvas_height);
+            ++inventory_ui.animation_frame;
             if (inventory_ui.flash_ticks>0) --inventory_ui.flash_ticks;
         }
         if (inventory_ui.active) {

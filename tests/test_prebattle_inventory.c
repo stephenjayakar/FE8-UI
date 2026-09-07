@@ -197,11 +197,19 @@ int main(void) {
     put16(first + 0x1E, 0x281C);
     put16(second + 0x20, 0x052D);
 
-    /* A live 16x16 SMSHandle for Alice: tile 0x80, blue OBJ palette 12. */
+    /* A live 16x16 SMSHandle for Alice: tile 0x80, blue OBJ palette 12.
+       FE8 keeps three 0x2000-byte standing-sprite frames immediately before
+       its two counters and SMSHandle array. Frame 1 matches live VRAM here. */
     put32(first + 0x3C, 0x02020000);
     put16(0x02020000 + 8, (uint16_t)(0xC000 | 0x0080));
     write8(NULL, 0x02020000 + 0x0B, 0);
-    vram[0x10000 + 0x80 * 32] = 0x11;
+    {
+        uint32_t sms_gfx = profile.sms_handle_array - 8 - 3 * 0x2000;
+        ewram[sms_gfx - 0x02000000] = 0x11;
+        ewram[sms_gfx - 0x02000000 + 0x2000] = 0x22;
+        ewram[sms_gfx - 0x02000000 + 0x4000] = 0x33;
+    }
+    vram[0x10000 + 0x80 * 32] = 0x22;
     palette[0x200 + (12 * 16 + 1) * 2] = 0x1F;
     palette[0x200 + (12 * 16 + 1) * 2 + 1] = 0;
 
@@ -228,10 +236,15 @@ int main(void) {
     assert(snapshot.units[0].map_sprite_valid);
     assert(snapshot.units[0].map_sprite_width == 16 &&
         snapshot.units[0].map_sprite_height == 16);
-    assert(snapshot.units[0].map_sprite[0] == 1);
+    assert(snapshot.units[0].map_sprite[0][0] == 1);
+    assert(snapshot.units[0].map_sprite[1][0] == 2);
+    assert(snapshot.units[0].map_sprite[2][0] == 3);
     assert(snapshot.units[0].map_sprite_palette[1] == UINT32_C(0xFF0000FF));
-    /* Bob has no handle, but shares Alice's class and inherits the captured SMS. */
-    assert(snapshot.units[1].map_sprite_valid && snapshot.units[1].map_sprite[0] == 1);
+    /* Bob has no handle, but shares Alice's class and inherits all SMS frames. */
+    assert(snapshot.units[1].map_sprite_valid &&
+        snapshot.units[1].map_sprite[0][0] == 1 &&
+        snapshot.units[1].map_sprite[1][0] == 2 &&
+        snapshot.units[1].map_sprite[2][0] == 3);
     assert(snapshot.units[0].items[0] == 0x281C);
     assert(snapshot.units[1].items[1] == 0x052D);
     assert(snapshot.supply_count == 1 && snapshot.supply[0] == 0x1435);

@@ -16,6 +16,7 @@ enum {
     FE8_SUPPLY_MAX_CAPACITY = 200,
     FE8_MAP_SPRITE_MAX_WIDTH = 32,
     FE8_MAP_SPRITE_MAX_HEIGHT = 32,
+    FE8_MAP_SPRITE_FRAME_COUNT = 3,
     FE8_MAP_SPRITE_PALETTE_SIZE = 16,
 };
 
@@ -65,7 +66,8 @@ typedef struct Fe8InventoryUnit {
     bool portrait_valid;
     /* A snapshot of the standing map sprite currently owned by FE8. Keeping
        pixels here makes the desktop inventory independent of later VRAM churn. */
-    uint8_t map_sprite[FE8_MAP_SPRITE_MAX_WIDTH * FE8_MAP_SPRITE_MAX_HEIGHT];
+    uint8_t map_sprite[FE8_MAP_SPRITE_FRAME_COUNT]
+        [FE8_MAP_SPRITE_MAX_WIDTH * FE8_MAP_SPRITE_MAX_HEIGHT];
     uint32_t map_sprite_palette[FE8_MAP_SPRITE_PALETTE_SIZE];
     uint8_t map_sprite_width;
     uint8_t map_sprite_height;

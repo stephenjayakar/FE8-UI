@@ -16,6 +16,10 @@
 #define FE8_OBJ_PALETTE UINT32_C(0x05000200)
 #define FE8_OBJ_TILE_BYTES UINT32_C(32)
 #define FE8_OBJ_TILE_ROW_STRIDE UINT32_C(32)
+#define FE8_OBJ_VRAM_BYTES UINT32_C(0x8000)
+#define FE8_SMS_GFX_TILE_BASE UINT32_C(0x80)
+#define FE8_SMS_GFX_FRAME_BYTES UINT32_C(0x2000)
+#define FE8_SMS_GFX_COUNTER_BYTES UINT32_C(8)
 #define FE8_BM_FLAG_PREPSCREEN UINT8_C(1u << 4)
 
 #define FE8_ITEM_ATTRIBUTE_WEAPON UINT32_C(1u << 0)
@@ -97,8 +101,41 @@ static uint32_t gba_color(uint16_t color) {
     return UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;
 }
 
-static bool extract_map_sprite(const Fe8MemoryReader *memory, uint32_t unit_address,
-    Fe8InventoryUnit *unit) {
+static bool decode_map_sprite(const Fe8MemoryReader *memory,
+    uint32_t sheet_address, unsigned first_tile, unsigned tile_count,
+    unsigned tile_base, unsigned width, unsigned height,
+    uint8_t pixels[FE8_MAP_SPRITE_MAX_WIDTH * FE8_MAP_SPRITE_MAX_HEIGHT],
+    bool *visible) {
+    bool any = false;
+    memset(pixels, 0,
+        FE8_MAP_SPRITE_MAX_WIDTH * FE8_MAP_SPRITE_MAX_HEIGHT * sizeof(*pixels));
+    for (unsigned y = 0; y < height; ++y) {
+        unsigned tile_y = y >> 3;
+        unsigned pixel_y = y & 7;
+        for (unsigned x = 0; x < width; ++x) {
+            unsigned tile_x = x >> 3;
+            unsigned tile = (tile_base + tile_y * FE8_OBJ_TILE_ROW_STRIDE + tile_x) & 0x3FF;
+            uint32_t packed_address;
+            uint8_t packed;
+            uint8_t color_index;
+            if (tile < first_tile || tile - first_tile >= tile_count)
+                return false;
+            packed_address = sheet_address +
+                (tile - first_tile) * FE8_OBJ_TILE_BYTES + pixel_y * 4 + (x & 7) / 2;
+            packed = read8(memory, packed_address);
+            color_index = (x & 1) ? packed >> 4 : packed & 0x0F;
+            pixels[y * FE8_MAP_SPRITE_MAX_WIDTH + x] = color_index;
+            if (color_index != 0)
+                any = true;
+        }
+    }
+    if (visible)
+        *visible = any;
+    return true;
+}
+
+static bool extract_map_sprite(const Fe8MemoryReader *memory,
+    const Fe8Profile *profile, uint32_t unit_address, Fe8InventoryUnit *unit) {
     uint32_t handle = read32(memory, unit_address + FE8_UNIT_MAP_SPRITE_HANDLE_OFFSET);
     uint16_t oam2;
     uint8_t config;
@@ -106,7 +143,9 @@ static bool extract_map_sprite(const Fe8MemoryReader *memory, uint32_t unit_addr
     unsigned height;
     unsigned tile_base;
     unsigned palette_bank;
-    bool visible = false;
+    bool live_visible = false;
+    bool animation_valid = false;
+    uint8_t live[FE8_MAP_SPRITE_MAX_WIDTH * FE8_MAP_SPRITE_MAX_HEIGHT];
 
     unit->map_sprite_width = 0;
     unit->map_sprite_height = 0;
@@ -147,22 +186,47 @@ static bool extract_map_sprite(const Fe8MemoryReader *memory, uint32_t unit_addr
         unit->map_sprite_palette[index] = gba_color(read16(memory,
             FE8_OBJ_PALETTE + (palette_bank * 16 + index) * 2));
     }
-    for (unsigned y = 0; y < height; ++y) {
-        unsigned tile_y = y >> 3;
-        unsigned pixel_y = y & 7;
-        for (unsigned x = 0; x < width; ++x) {
-            unsigned tile_x = x >> 3;
-            unsigned tile = (tile_base + tile_y * FE8_OBJ_TILE_ROW_STRIDE + tile_x) & 0x3FF;
-            uint32_t packed_address = FE8_OBJ_VRAM + tile * FE8_OBJ_TILE_BYTES +
-                pixel_y * 4 + (x & 7) / 2;
-            uint8_t packed = read8(memory, packed_address);
-            uint8_t color_index = (x & 1) ? packed >> 4 : packed & 0x0F;
-            unit->map_sprite[y * FE8_MAP_SPRITE_MAX_WIDTH + x] = color_index;
-            if (color_index != 0)
-                visible = true;
+    if (!decode_map_sprite(memory, FE8_OBJ_VRAM, 0,
+            FE8_OBJ_VRAM_BYTES / FE8_OBJ_TILE_BYTES, tile_base, width, height,
+            live, &live_visible) || !live_visible)
+        return false;
+
+    /* FE8 keeps three standing-map-sprite sheets immediately before the SMS
+       counters/handle array and swaps them into OBJ VRAM on a 72-frame cycle.
+       Hacks can repoint that RAM, so derive it from the profile and only trust
+       it after one of its frames exactly matches the live sprite we can see. */
+    if (profile && profile->sms_handle_array >= FE8_EWRAM_START +
+            FE8_MAP_SPRITE_FRAME_COUNT * FE8_SMS_GFX_FRAME_BYTES +
+            FE8_SMS_GFX_COUNTER_BYTES) {
+        uint32_t sheet = profile->sms_handle_array - FE8_SMS_GFX_COUNTER_BYTES -
+            FE8_MAP_SPRITE_FRAME_COUNT * FE8_SMS_GFX_FRAME_BYTES;
+        if (valid_range(sheet,
+                FE8_MAP_SPRITE_FRAME_COUNT * FE8_SMS_GFX_FRAME_BYTES,
+                FE8_EWRAM_START, FE8_EWRAM_END)) {
+            bool all_frames_valid = true;
+            bool live_match = false;
+            for (unsigned frame = 0; frame < FE8_MAP_SPRITE_FRAME_COUNT; ++frame) {
+                bool frame_visible = false;
+                if (!decode_map_sprite(memory,
+                        sheet + frame * FE8_SMS_GFX_FRAME_BYTES,
+                        FE8_SMS_GFX_TILE_BASE,
+                        FE8_SMS_GFX_FRAME_BYTES / FE8_OBJ_TILE_BYTES,
+                        tile_base, width, height, unit->map_sprite[frame],
+                        &frame_visible) || !frame_visible) {
+                    all_frames_valid = false;
+                    break;
+                }
+                if (memcmp(unit->map_sprite[frame], live, sizeof(live)) == 0)
+                    live_match = true;
+            }
+            animation_valid = all_frames_valid && live_match;
         }
     }
-    return visible;
+    if (!animation_valid) {
+        for (unsigned frame = 0; frame < FE8_MAP_SPRITE_FRAME_COUNT; ++frame)
+            memcpy(unit->map_sprite[frame], live, sizeof(live));
+    }
+    return true;
 }
 
 static void copy_map_sprite(Fe8InventoryUnit *target,
@@ -376,7 +440,7 @@ bool fe8_extract_prebattle_inventory(
             unit->class_description[0] = '\0';
         unit->portrait_valid = fe8_catalog_portrait(memory, catalog,
             unit->portrait_id, unit->portrait, unit->portrait_palette);
-        unit->map_sprite_valid = extract_map_sprite(memory, address, unit);
+        unit->map_sprite_valid = extract_map_sprite(memory, profile, address, unit);
         for (slot = 0; slot < FE8_INVENTORY_ITEM_SLOTS; ++slot)
         {
             unit->items[slot] = read16(memory, address + FE8_UNIT_ITEM_OFFSET + slot * 2);

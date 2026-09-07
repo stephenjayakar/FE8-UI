@@ -897,6 +897,12 @@ int fe8_inventory_desktop_pointer_up(Fe8InventoryUi *ui,
    non-packed strides and fractional display densities. */
 static uint32_t abgr(uint32_t c) { return (c & 0xFF00FF00) | ((c & 0xFF0000) >> 16) | ((c & 0xFF) << 16); }
 static int px(const Painter *p, int v) { return (int)(v * p->scale + 0.5f); }
+static int pointer_over(const Painter *p, const Fe8InventoryUi *ui,
+    int x, int y, int w, int h) {
+    if (!ui || ui->pointer_x < 0 || ui->pointer_y < 0 || w <= 0 || h <= 0) return 0;
+    return ui->pointer_x >= px(p,x) && ui->pointer_x < px(p,x+w) &&
+        ui->pointer_y >= px(p,y) && ui->pointer_y < px(p,y+h);
+}
 static void fill(Painter *p,int x,int y,int w,int h,uint32_t color) {
     int x0=clamp(px(p,x),0,p->width),y0=clamp(px(p,y),0,p->height);
     int x1=clamp(px(p,x+w),0,p->width),y1=clamp(px(p,y+h),0,p->height);
@@ -963,24 +969,35 @@ static void portrait(Painter *p,const Fe8InventoryUnit *u,int x,int y,int w,int 
         if(idx&&idx<FE8_PORTRAIT_PALETTE_SIZE)p->pixels[dy*p->stride+dx]=u->portrait_palette[idx];
     }
 }
-static void map_sprite(Painter *p,const Fe8InventoryUnit *u,int x,int y,int w,int h) {
+static unsigned map_sprite_frame(const Fe8InventoryUi *ui) {
+    unsigned clock = ui ? ui->animation_frame % 72u : 0;
+    if (clock >= 68) return 1;
+    if (clock >= 36) return 2;
+    if (clock >= 32) return 1;
+    return 0;
+}
+static void map_sprite(Painter *p,const Fe8InventoryUi *ui,
+    const Fe8InventoryUnit *u,int x,int y,int w,int h) {
     if(!u||!u->map_sprite_valid||!u->map_sprite_width||!u->map_sprite_height)return;
     card(p,x,y,w,h,RAISED);
     int inner_w=w-8,inner_h=h-8;
     if(inner_w<=0||inner_h<=0)return;
+    /* All classes get the same badge footprint. Preserve FE8's native
+       16x16/16x32/32x32 proportions instead of stretching tall sprites. */
     int draw_w=inner_w,draw_h=inner_h;
     if(draw_w*u->map_sprite_height>draw_h*u->map_sprite_width)
         draw_w=draw_h*u->map_sprite_width/u->map_sprite_height;
     else draw_h=draw_w*u->map_sprite_height/u->map_sprite_width;
     int left=x+(w-draw_w)/2,top=y+(h-draw_h)/2;
     int x0=px(p,left),y0=px(p,top),ww=px(p,left+draw_w)-x0,hh=px(p,top+draw_h)-y0;
+    unsigned frame=map_sprite_frame(ui);
     if(ww<=0||hh<=0)return;
     for(int yy=0;yy<hh;++yy)for(int xx=0;xx<ww;++xx) {
         int dx=x0+xx,dy=y0+yy;
         if(dx<0||dy<0||dx>=p->width||dy>=p->height)continue;
         unsigned sx=(unsigned)xx*u->map_sprite_width/(unsigned)ww;
         unsigned sy=(unsigned)yy*u->map_sprite_height/(unsigned)hh;
-        unsigned idx=u->map_sprite[sy*FE8_MAP_SPRITE_MAX_WIDTH+sx];
+        unsigned idx=u->map_sprite[frame][sy*FE8_MAP_SPRITE_MAX_WIDTH+sx];
         if(idx&&idx<FE8_MAP_SPRITE_PALETTE_SIZE)
             p->pixels[dy*p->stride+dx]=u->map_sprite_palette[idx];
     }
@@ -1031,15 +1048,12 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
     if(u) {
         int short_art=l->height<600;
         int art_w=short_art?82:108,art_h=short_art?68:96;
-        int sprite_size=short_art?32:46;
+        int art_x=PAD+8,art_y=l->top+6;
+        int portrait_hover=pointer_over(p,ui,art_x,art_y,art_w,art_h);
         int info_x=PAD+art_w+20;
         int info_w=PAD+l->sidebar-info_x-8;
         int ranks_y=l->top+(short_art?82:104);
-        portrait(p,u,PAD+8,l->top+6,art_w,art_h);
-        /* The map sprite reads like a physical game-piece badge while keeping
-           the portrait itself large and the identity text in a stable column. */
-        map_sprite(p,u,PAD+12+art_w-sprite_size,l->top+art_h-sprite_size+2,
-            sprite_size,sprite_size);
+        portrait(p,u,art_x,art_y,art_w,art_h);
         label(p,info_x,l->top+6,info_w,24,u->name,TEXT,19,1,0);
         label(p,info_x,l->top+30,info_w,18,u->class_name,MUTED,12,0,0);
         experience(b,sizeof(b),u);
@@ -1052,6 +1066,15 @@ static void draw_sidebar(Painter *p,const Fe8InventoryUi *ui,const Fe8InventoryS
             badge(p,x,ranks_y,44,b,TYPE_COLORS[t+1]);x+=48;
         }
         if(x==PAD+10)label(p,x,ranks_y+2,l->sidebar-20,16,"No weapon ranks",MUTED,11,0,0);
+        if(portrait_hover) {
+            int hover_w=short_art?100:132,hover_h=short_art?84:116;
+            int hover_x=PAD+6,hover_y=l->top+3;
+            int sprite_size=short_art?34:44;
+            portrait(p,u,hover_x,hover_y,hover_w,hover_h);
+            border(p,hover_x,hover_y,hover_w,hover_h,ACCENT);
+            map_sprite(p,ui,u,hover_x+hover_w-sprite_size+3,
+                hover_y+hover_h-sprite_size+3,sprite_size,sprite_size);
+        }
         if(l->height>=720)label(p,PAD+10,l->stats_y-18,l->sidebar-20,16,ui->stats_base || !u->effective_stats_valid?"BASE STATS":"TOTAL STATS · Hover for modifiers",MUTED,10,1,0);
         card(p,PAD+6,l->stats_y,l->sidebar-18,2*l->stat_row_height,RAISED);
         draw_unit_stats(p,ui,u,PAD+10,l->stats_y,l->sidebar-24,4,l->stat_row_height);
@@ -1360,9 +1383,11 @@ static void draw_board_unit(Painter *p, const Fe8InventoryUi *ui,
     const Fe8InventoryUnit *u=&s->units[n];
     if(n==ui->current_unit)card(p,l->board_x+4,y+4,l->identity_width-10,l->board_card_height-8,SELECTED);
     int compact=l->identity_width<140;
+    int portrait_hover=0;
     if(!compact) {
-        portrait(p,u,l->board_x+9,y+7,48,44);
-        map_sprite(p,u,l->board_x+31,y+27,28,28);
+        int art_x=l->board_x+9,art_y=y+7;
+        portrait(p,u,art_x,art_y,48,44);
+        portrait_hover=pointer_over(p,ui,art_x,art_y,48,44);
     }
     int name_x=l->board_x+(compact?10:64);
     label(p,name_x,y+(tight?3:l->board_card_height<80?6:10),l->identity_width-(compact?64:116),20,u->name,n==ui->current_unit?ACCENT:TEXT,tight?11:13,1,0);
@@ -1373,6 +1398,16 @@ static void draw_board_unit(Painter *p, const Fe8InventoryUi *ui,
     if(l->board_card_height>=80) {
         snprintf(b,sizeof(b),"%d / 5 items",occupied(u));
         label(p,l->board_x+10,y+65,l->identity_width-20,14,b,MUTED,9,0,0);
+    }
+    if(portrait_hover) {
+        int hover_w=l->board_card_height<80?58:72;
+        int hover_h=l->board_card_height<80?52:66;
+        int hover_x=l->board_x+7,hover_y=y+4;
+        int sprite_size=l->board_card_height<80?28:34;
+        portrait(p,u,hover_x,hover_y,hover_w,hover_h);
+        border(p,hover_x,hover_y,hover_w,hover_h,ACCENT);
+        map_sprite(p,ui,u,hover_x+hover_w-sprite_size+2,
+            hover_y+hover_h-sprite_size+2,sprite_size,sprite_size);
     }
     int stats_y=y+l->board_card_height,stats_h=l->board_row_height-l->board_card_height;
     /* A stat strip spans the whole ally row; clicking or dropping here

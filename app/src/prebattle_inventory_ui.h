@@ -125,6 +125,7 @@ typedef struct Fe8InventoryUi {
     int pinned_count, pinned_scroll;
     int stats_base; /* Default totals; this switch changes presentation only. */
     int pointer_x, pointer_y; /* Drawable pixels, converted by shared layout. */
+    unsigned animation_frame; /* Host UI tick; advances while game emulation is paused. */
     Fe8InventoryEndpoint comparison;
     int has_comparison;
     Fe8InventoryEndpoint preview_comparison;

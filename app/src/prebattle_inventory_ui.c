@@ -462,6 +462,7 @@ void fe8_inventory_ui_open(Fe8InventoryUi *ui,
     ui->popup_open = 0;
     ui->undo_count = 0;
     ui->flash_ticks = 0;
+    ui->animation_frame = 0;
     ui->loadout_scroll = ui->supply_scroll = 0;
     ui->pinned_count = ui->pinned_scroll = 0;
     memset(ui->pinned_units, 0, sizeof(ui->pinned_units));
