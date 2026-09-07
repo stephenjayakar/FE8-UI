@@ -1493,8 +1493,7 @@ int main(int argc, char **argv) {
                                     &mouse, UINT32_C(1) << FE8_HOST_A);
                                 native_pointer_valid = 0;
                                 fprintf(stderr,
-                                    "Mouse left-click: A queued for native UI
-");
+                                    "Mouse left-click: A queued for native UI\n");
                                 continue;
                             }
                             pointer_canvas_valid = 1;
