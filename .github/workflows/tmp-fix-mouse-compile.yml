@@ -1,0 +1,37 @@
+name: Temporary fix mouse compile
+
+on:
+  push:
+    branches: [tmp/fix-mouse-compile]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mouse-interactivity
+          fetch-depth: 0
+      - name: Fix unterminated diagnostic string
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main.c')
+          s = p.read_text()
+          bad = '                                fprintf(stderr,\n                                    "Mouse left-click: A queued for native UI\n");\n'
+          good = '                                fprintf(stderr,\n                                    "Mouse left-click: A queued for native UI\\n");\n'
+          if s.count(bad) != 1:
+              raise SystemExit(f'expected one bad string, found {s.count(bad)}')
+          p.write_text(s.replace(bad, good, 1))
+          PY
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main.c
+          git commit -m 'Fix mouse target diagnostic compile error'
+          git push origin HEAD:feature/mouse-interactivity
