@@ -1,0 +1,132 @@
+name: Apply inventory portrait sprite patch
+
+on:
+  push:
+    branches: [inventory-portrait-sprite]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: inventory-portrait-sprite
+      - name: Apply targeted source changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "app/src/prebattle_inventory.h",
+              """    FE8_SUPPLY_RETAIL_CAPACITY = 100,\n    FE8_SUPPLY_MAX_CAPACITY = 200,\n};\n""",
+              """    FE8_SUPPLY_RETAIL_CAPACITY = 100,\n    FE8_SUPPLY_MAX_CAPACITY = 200,\n    FE8_MAP_SPRITE_MAX_WIDTH = 32,\n    FE8_MAP_SPRITE_MAX_HEIGHT = 32,\n    FE8_MAP_SPRITE_PALETTE_SIZE = 16,\n};\n""",
+          )
+          replace_once(
+              "app/src/prebattle_inventory.h",
+              """    uint32_t portrait_palette[FE8_PORTRAIT_PALETTE_SIZE];\n    bool portrait_valid;\n    uint16_t items[FE8_INVENTORY_ITEM_SLOTS];\n""",
+              """    uint32_t portrait_palette[FE8_PORTRAIT_PALETTE_SIZE];\n    bool portrait_valid;\n    /* A snapshot of the standing map sprite currently owned by FE8. Keeping\n       pixels here makes the desktop inventory independent of later VRAM churn. */\n    uint8_t map_sprite[FE8_MAP_SPRITE_MAX_WIDTH * FE8_MAP_SPRITE_MAX_HEIGHT];\n    uint32_t map_sprite_palette[FE8_MAP_SPRITE_PALETTE_SIZE];\n    uint8_t map_sprite_width;\n    uint8_t map_sprite_height;\n    bool map_sprite_valid;\n    uint16_t items[FE8_INVENTORY_ITEM_SLOTS];\n""",
+          )
+
+          replace_once(
+              "app/src/prebattle_inventory.c",
+              """#define FE8_UNIT_RANK_OFFSET UINT32_C(0x28)\n#define FE8_UNIT_STATUS_OFFSET UINT32_C(0x30)\n#define FE8_UNIT_STATE_DEAD UINT32_C(1u << 2)\n""",
+              """#define FE8_UNIT_RANK_OFFSET UINT32_C(0x28)\n#define FE8_UNIT_STATUS_OFFSET UINT32_C(0x30)\n#define FE8_UNIT_MAP_SPRITE_HANDLE_OFFSET UINT32_C(0x3C)\n#define FE8_UNIT_STATE_DEAD UINT32_C(1u << 2)\n#define FE8_OBJ_VRAM UINT32_C(0x06010000)\n#define FE8_OBJ_PALETTE UINT32_C(0x05000200)\n#define FE8_OBJ_TILE_BYTES UINT32_C(32)\n#define FE8_OBJ_TILE_ROW_STRIDE UINT32_C(32)\n""",
+          )
+          replace_once(
+              "app/src/prebattle_inventory.c",
+              """static uint32_t read32(const Fe8MemoryReader *memory, uint32_t address) {\n    return (uint32_t)read16(memory, address) | ((uint32_t)read16(memory, address + 2) << 16);\n}\n\nstatic uint8_t clamp_stat(int value) {\n""",
+              """static uint32_t read32(const Fe8MemoryReader *memory, uint32_t address) {\n    return (uint32_t)read16(memory, address) | ((uint32_t)read16(memory, address + 2) << 16);\n}\n\nstatic uint32_t gba_color(uint16_t color) {\n    uint32_t red = color & 31;\n    uint32_t green = (color >> 5) & 31;\n    uint32_t blue = (color >> 10) & 31;\n    red = (red << 3) | (red >> 2);\n    green = (green << 3) | (green >> 2);\n    blue = (blue << 3) | (blue >> 2);\n    return UINT32_C(0xFF000000) | (blue << 16) | (green << 8) | red;\n}\n\nstatic bool extract_map_sprite(const Fe8MemoryReader *memory, uint32_t unit_address,\n    Fe8InventoryUnit *unit) {\n    uint32_t handle = read32(memory, unit_address + FE8_UNIT_MAP_SPRITE_HANDLE_OFFSET);\n    uint16_t oam2;\n    uint8_t config;\n    unsigned width;\n    unsigned height;\n    unsigned tile_base;\n    unsigned palette_bank;\n    bool visible = false;\n\n    unit->map_sprite_width = 0;\n    unit->map_sprite_height = 0;\n    memset(unit->map_sprite, 0, sizeof(unit->map_sprite));\n    memset(unit->map_sprite_palette, 0, sizeof(unit->map_sprite_palette));\n    if (!valid_range(handle, 12, FE8_EWRAM_START, FE8_EWRAM_END))\n        return false;\n\n    oam2 = read16(memory, handle + 8);\n    config = read8(memory, handle + 0x0B);\n    if ((config & 0x80) != 0)\n        return false;\n    switch (config & 0x0F) {\n    case 0:\n    case 3:\n        width = 16;\n        height = 16;\n        break;\n    case 1:\n    case 4:\n        width = 16;\n        height = 32;\n        break;\n    case 2:\n    case 5:\n        width = 32;\n        height = 32;\n        break;\n    default:\n        return false;\n    }\n\n    tile_base = oam2 & 0x3FF;\n    palette_bank = (oam2 >> 12) & 0x0F;\n    unit->map_sprite_width = (uint8_t)width;\n    unit->map_sprite_height = (uint8_t)height;\n    for (unsigned index = 1; index < FE8_MAP_SPRITE_PALETTE_SIZE; ++index) {\n        unit->map_sprite_palette[index] = gba_color(read16(memory,\n            FE8_OBJ_PALETTE + (palette_bank * 16 + index) * 2));\n    }\n    for (unsigned y = 0; y < height; ++y) {\n        unsigned tile_y = y >> 3;\n        unsigned pixel_y = y & 7;\n        for (unsigned x = 0; x < width; ++x) {\n            unsigned tile_x = x >> 3;\n            unsigned tile = (tile_base + tile_y * FE8_OBJ_TILE_ROW_STRIDE + tile_x) & 0x3FF;\n            uint32_t packed_address = FE8_OBJ_VRAM + tile * FE8_OBJ_TILE_BYTES +\n                pixel_y * 4 + (x & 7) / 2;\n            uint8_t packed = read8(memory, packed_address);\n            uint8_t color_index = (x & 1) ? packed >> 4 : packed & 0x0F;\n            unit->map_sprite[y * FE8_MAP_SPRITE_MAX_WIDTH + x] = color_index;\n            if (color_index != 0)\n                visible = true;\n        }\n    }\n    return visible;\n}\n\nstatic void copy_map_sprite(Fe8InventoryUnit *target,\n    const Fe8InventoryUnit *source) {\n    memcpy(target->map_sprite, source->map_sprite, sizeof(target->map_sprite));\n    memcpy(target->map_sprite_palette, source->map_sprite_palette,\n        sizeof(target->map_sprite_palette));\n    target->map_sprite_width = source->map_sprite_width;\n    target->map_sprite_height = source->map_sprite_height;\n    target->map_sprite_valid = source->map_sprite_valid;\n}\n\nstatic uint8_t clamp_stat(int value) {\n""",
+          )
+          replace_once(
+              "app/src/prebattle_inventory.c",
+              """        unit->portrait_valid = fe8_catalog_portrait(memory, catalog,\n            unit->portrait_id, unit->portrait, unit->portrait_palette);\n        for (slot = 0; slot < FE8_INVENTORY_ITEM_SLOTS; ++slot)\n""",
+              """        unit->portrait_valid = fe8_catalog_portrait(memory, catalog,\n            unit->portrait_id, unit->portrait, unit->portrait_palette);\n        unit->map_sprite_valid = extract_map_sprite(memory, address, unit);\n        for (slot = 0; slot < FE8_INVENTORY_ITEM_SLOTS; ++slot)\n""",
+          )
+          replace_once(
+              "app/src/prebattle_inventory.c",
+              """    }\n    if (valid_range(supply_address, supply_capacity * 2,\n            FE8_EWRAM_START, FE8_EWRAM_END)) {\n""",
+              """    }\n    /* Reserve units do not always own an SMSHandle while the prep UI is\n       drawing. A same-class ally uses the same standing sprite, so reuse an\n       already captured class image rather than showing nothing when possible. */\n    for (index = 0; index < snapshot->unit_count; ++index) {\n        Fe8InventoryUnit *unit = &snapshot->units[index];\n        if (unit->map_sprite_valid)\n            continue;\n        for (unsigned match = 0; match < snapshot->unit_count; ++match) {\n            const Fe8InventoryUnit *candidate = &snapshot->units[match];\n            if (candidate->map_sprite_valid && candidate->class_id == unit->class_id) {\n                copy_map_sprite(unit, candidate);\n                break;\n            }\n        }\n    }\n    if (valid_range(supply_address, supply_capacity * 2,\n            FE8_EWRAM_START, FE8_EWRAM_END)) {\n""",
+          )
+
+          replace_once(
+              "app/src/inventory_desktop.c",
+              """static void scroll_mark(Painter *p,int x,int y,int h,int count,int rows,int start) {\n""",
+              """static void map_sprite(Painter *p,const Fe8InventoryUnit *u,int x,int y,int w,int h) {\n    if(!u||!u->map_sprite_valid||!u->map_sprite_width||!u->map_sprite_height)return;\n    card(p,x,y,w,h,RAISED);\n    int inner_w=w-8,inner_h=h-8;\n    if(inner_w<=0||inner_h<=0)return;\n    int draw_w=inner_w,draw_h=inner_h;\n    if(draw_w*u->map_sprite_height>draw_h*u->map_sprite_width)\n        draw_w=draw_h*u->map_sprite_width/u->map_sprite_height;\n    else draw_h=draw_w*u->map_sprite_height/u->map_sprite_width;\n    int left=x+(w-draw_w)/2,top=y+(h-draw_h)/2;\n    int x0=px(p,left),y0=px(p,top),ww=px(p,left+draw_w)-x0,hh=px(p,top+draw_h)-y0;\n    if(ww<=0||hh<=0)return;\n    for(int yy=0;yy<hh;++yy)for(int xx=0;xx<ww;++xx) {\n        int dx=x0+xx,dy=y0+yy;\n        if(dx<0||dy<0||dx>=p->width||dy>=p->height)continue;\n        unsigned sx=(unsigned)xx*u->map_sprite_width/(unsigned)ww;\n        unsigned sy=(unsigned)yy*u->map_sprite_height/(unsigned)hh;\n        unsigned idx=u->map_sprite[sy*FE8_MAP_SPRITE_MAX_WIDTH+sx];\n        if(idx&&idx<FE8_MAP_SPRITE_PALETTE_SIZE)\n            p->pixels[dy*p->stride+dx]=u->map_sprite_palette[idx];\n    }\n}\nstatic void scroll_mark(Painter *p,int x,int y,int h,int count,int rows,int start) {\n""",
+          )
+          replace_once(
+              "app/src/inventory_desktop.c",
+              """    l->stats_y = l->top + (l->height < 600 ? 108 : l->height < 720 ? 116 : 128);\n""",
+              """    /* The selected-unit art now gets a proper identity block. Keep the\n       stat grid below it instead of squeezing the larger portrait. */\n    l->stats_y = l->top + (l->height < 600 ? 108 : 128);\n""",
+          )
+          replace_once(
+              "app/src/inventory_desktop.c",
+              """    if(u) {\n        portrait(p,u,PAD+8,l->top+6,l->height<600?72:80,l->height<600?64:72);\n        label(p,PAD+94,l->top+6,l->sidebar-104,24,u->name,TEXT,19,1,0);\n        label(p,PAD+94,l->top+30,l->sidebar-104,18,u->class_name,MUTED,12,0,0);\n        experience(b,sizeof(b),u);\n        label(p,PAD+94,l->top+51,l->sidebar-104,16,b,MUTED,10,0,0);\n        snprintf(b,sizeof(b),\"HP %u / %d\",u->hp,fe8_inventory_stat_value(u,FE8_STAT_MAX_HP,ui->stats_base));\n        label(p,PAD+94,l->top+68,l->sidebar-104,16,b,ACCENT,11,1,0);\n        int x=PAD+10;\n        for(int t=0;t<8;++t)if(u->ranks[t]&&x<PAD+l->sidebar-34) {\n            snprintf(b,sizeof(b),\"%.2s %c\",TYPES[t+1],rank_letter(u->ranks[t]));\n            badge(p,x,l->top+86,44,b,TYPE_COLORS[t+1]);x+=48;\n        }\n        if(x==PAD+10)label(p,x,l->top+88,l->sidebar-20,16,\"No weapon ranks\",MUTED,11,0,0);\n""",
+              """    if(u) {\n        int short_art=l->height<600;\n        int art_w=short_art?82:108,art_h=short_art?68:96;\n        int sprite_size=short_art?32:46;\n        int info_x=PAD+art_w+20;\n        int info_w=PAD+l->sidebar-info_x-8;\n        int ranks_y=l->top+(short_art?82:104);\n        portrait(p,u,PAD+8,l->top+6,art_w,art_h);\n        /* The map sprite reads like a physical game-piece badge while keeping\n           the portrait itself large and the identity text in a stable column. */\n        map_sprite(p,u,PAD+12+art_w-sprite_size,l->top+art_h-sprite_size+2,\n            sprite_size,sprite_size);\n        label(p,info_x,l->top+6,info_w,24,u->name,TEXT,19,1,0);\n        label(p,info_x,l->top+30,info_w,18,u->class_name,MUTED,12,0,0);\n        experience(b,sizeof(b),u);\n        label(p,info_x,l->top+51,info_w,16,b,MUTED,10,0,0);\n        snprintf(b,sizeof(b),\"HP %u / %d\",u->hp,fe8_inventory_stat_value(u,FE8_STAT_MAX_HP,ui->stats_base));\n        label(p,info_x,l->top+68,info_w,16,b,ACCENT,11,1,0);\n        int x=PAD+10;\n        for(int t=0;t<8;++t)if(u->ranks[t]&&x<PAD+l->sidebar-34) {\n            snprintf(b,sizeof(b),\"%.2s %c\",TYPES[t+1],rank_letter(u->ranks[t]));\n            badge(p,x,ranks_y,44,b,TYPE_COLORS[t+1]);x+=48;\n        }\n        if(x==PAD+10)label(p,x,ranks_y+2,l->sidebar-20,16,\"No weapon ranks\",MUTED,11,0,0);\n""",
+          )
+          replace_once(
+              "app/src/inventory_desktop.c",
+              """    int compact=l->identity_width<140;\n    if(!compact)portrait(p,u,l->board_x+9,y+10,40,36);\n    int name_x=l->board_x+(compact?10:56);\n""",
+              """    int compact=l->identity_width<140;\n    if(!compact) {\n        portrait(p,u,l->board_x+9,y+7,48,44);\n        map_sprite(p,u,l->board_x+31,y+27,28,28);\n    }\n    int name_x=l->board_x+(compact?10:64);\n""",
+          )
+          replace_once(
+              "app/src/inventory_desktop.c",
+              """    label(p,name_x,y+(tight?3:l->board_card_height<80?6:10),l->identity_width-(compact?64:108),20,u->name,n==ui->current_unit?ACCENT:TEXT,tight?11:13,1,0);\n""",
+              """    label(p,name_x,y+(tight?3:l->board_card_height<80?6:10),l->identity_width-(compact?64:116),20,u->name,n==ui->current_unit?ACCENT:TEXT,tight?11:13,1,0);\n""",
+          )
+
+          # Cover the extractor's new VRAM/palette read in the synthetic memory test.
+          path = Path("tests/test_prebattle_inventory.c")
+          text = path.read_text()
+          text = text.replace(
+              """static unsigned char ewram[0x40000];\nstatic unsigned char rom[0x2000000];\n""",
+              """static unsigned char ewram[0x40000];\nstatic unsigned char vram[0x18000];\nstatic unsigned char palette[0x400];\nstatic unsigned char rom[0x2000000];\n""",
+              1,
+          )
+          text = text.replace(
+              """    if (address >= 0x02000000 && address < 0x02040000)\n        return ewram[address - 0x02000000];\n    if (address >= 0x08000000 && address < 0x0A000000)\n""",
+              """    if (address >= 0x02000000 && address < 0x02040000)\n        return ewram[address - 0x02000000];\n    if (address >= 0x05000000 && address < 0x05000400)\n        return palette[address - 0x05000000];\n    if (address >= 0x06000000 && address < 0x06018000)\n        return vram[address - 0x06000000];\n    if (address >= 0x08000000 && address < 0x0A000000)\n""",
+              1,
+          )
+          text = text.replace(
+              """    memset(ewram, 0, sizeof(ewram));\n    memset(rom, 0, sizeof(rom));\n""",
+              """    memset(ewram, 0, sizeof(ewram));\n    memset(vram, 0, sizeof(vram));\n    memset(palette, 0, sizeof(palette));\n    memset(rom, 0, sizeof(rom));\n""",
+              1,
+          )
+          marker = """    put16(second + 0x20, 0x052D);\n\n    put16(0x0203B200, 0x1435);\n"""
+          insertion = """    put16(second + 0x20, 0x052D);\n\n    /* A live 16x16 SMSHandle for Alice: tile 0x80, blue OBJ palette 12. */\n    put32(first + 0x3C, 0x02020000);\n    put16(0x02020000 + 8, (uint16_t)(0xC000 | 0x0080));\n    write8(NULL, 0x02020000 + 0x0B, 0);\n    vram[0x10000 + 0x80 * 32] = 0x11;\n    palette[0x200 + (12 * 16 + 1) * 2] = 0x1F;\n    palette[0x200 + (12 * 16 + 1) * 2 + 1] = 0;\n\n    put16(0x0203B200, 0x1435);\n"""
+          if marker not in text:
+              raise SystemExit("tests/test_prebattle_inventory.c: sprite fixture marker missing")
+          text = text.replace(marker, insertion, 1)
+          marker = """    assert(snapshot.units[0].items[0] == 0x281C);\n"""
+          insertion = """    assert(snapshot.units[0].map_sprite_valid);\n    assert(snapshot.units[0].map_sprite_width == 16 &&\n        snapshot.units[0].map_sprite_height == 16);\n    assert(snapshot.units[0].map_sprite[0] == 1);\n    assert(snapshot.units[0].map_sprite_palette[1] == UINT32_C(0xFF0000FF));\n    /* Bob has no handle, but shares Alice's class and inherits the captured SMS. */\n    assert(snapshot.units[1].map_sprite_valid && snapshot.units[1].map_sprite[0] == 1);\n    assert(snapshot.units[0].items[0] == 0x281C);\n"""
+          if marker not in text:
+              raise SystemExit("tests/test_prebattle_inventory.c: assertion marker missing")
+          path.write_text(text.replace(marker, insertion, 1))
+          PY
+      - name: Check patch
+        run: |
+          git diff --check
+          git diff --stat
+          grep -q 'map_sprite_valid' app/src/prebattle_inventory.h
+          grep -q 'static void map_sprite' app/src/inventory_desktop.c
+      - name: Commit source changes and remove patch workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/inventory-portrait-sprite-patch.yml
+          git add app/src/prebattle_inventory.h app/src/prebattle_inventory.c app/src/inventory_desktop.c tests/test_prebattle_inventory.c
+          git commit -m "Show larger portraits and map sprites in inventory"
+          git push origin HEAD:inventory-portrait-sprite
