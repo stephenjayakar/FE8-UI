@@ -1,0 +1,25 @@
+name: Temporary mouse macOS build 2
+
+on:
+  push:
+    branches: [tmp/mouse-macos-build-2]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize pinned emulator
+        run: git submodule update --init --depth 1 third_party/mgba
+      - name: Install SDL2
+        run: brew list sdl2 >/dev/null 2>&1 || brew install sdl2
+      - name: Configure
+        run: cmake -S . -B build-native -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTURES=arm64
+      - name: Build
+        run: cmake --build build-native --parallel 3
+      - name: Test
+        run: ctest --test-dir build-native --output-on-failure
