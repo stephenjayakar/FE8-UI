@@ -8,6 +8,8 @@ enum {
     KEY_A = 1 << 0,
     KEY_B = 1 << 1,
     KEY_RIGHT = 1 << 4,
+    KEY_LEFT = 1 << 5,
+    KEY_UP = 1 << 6,
     KEY_DOWN = 1 << 7,
 };
 
@@ -31,7 +33,7 @@ static uint32_t complete_animated_step(
         keys = fe8_mouse_update(mouse, snapshot, 1);
         if (snapshot->cursor_display_x != snapshot->cursor_target_x ||
                 snapshot->cursor_display_y != snapshot->cursor_target_y)
-            assert(keys == KEY_B);
+            assert(keys == (mouse->safe_navigation ? 0 : KEY_B));
     }
     return keys;
 }
@@ -61,7 +63,7 @@ int main(void) {
     fe8_mouse_set_target(&mouse, 3, 1, 0);
     snapshot.input_lock = 1;
     assert(fe8_mouse_update(&mouse, &snapshot, 1) == 0);
-    assert(mouse.active); /* A temporary lock pauses rather than discarding. */
+    assert(mouse.active);
     snapshot.input_lock = 0;
     assert(fe8_mouse_update(&mouse, &snapshot, 1) == (KEY_RIGHT | KEY_B));
 
@@ -101,10 +103,45 @@ int main(void) {
     assert(mouse.active && !mouse.stalled);
     assert(mouse.target_x == 8 && mouse.target_y == 6 && mouse.confirm);
     fe8_mouse_set_target(&mouse, 4, 4, 0);
-    assert(mouse.target_x == 8 && mouse.target_y == 6); /* Click stays latched. */
+    assert(mouse.target_x == 8 && mouse.target_y == 6);
     fe8_mouse_cancel(&mouse);
     fe8_mouse_set_target(&mouse, 4, 4, 0);
     assert(!mouse.confirm && mouse.target_x == 4 && mouse.target_y == 4);
+
+    /* Occupied unit targets use a D-pad-only cadence so B can never
+       cancel an attack/staff selector. They may also accept input while
+       the battle-map lock is held by the target proc. */
+    memset(&mouse, 0, sizeof(mouse));
+    memset(&snapshot, 0, sizeof(snapshot));
+    snapshot.map_width = 10;
+    snapshot.map_height = 10;
+    snapshot.input_lock = 1;
+    fe8_mouse_set_target_safe(&mouse, 2, 0, 1, 1);
+    assert(mouse.safe_navigation);
+    assert(fe8_mouse_update(&mouse, &snapshot, 1) == KEY_RIGHT);
+    keys = complete_animated_step(&mouse, &snapshot);
+    assert(keys == KEY_RIGHT);
+    keys = complete_animated_step(&mouse, &snapshot);
+    assert(keys == KEY_A);
+    assert(!mouse.active && !mouse.safe_navigation);
+
+    /* Native menu navigation is a release-separated FIFO and deliberately
+       works without a valid tactical snapshot. */
+    fe8_mouse_queue_pulse(&mouse, KEY_DOWN);
+    fe8_mouse_queue_pulse(&mouse, KEY_DOWN);
+    fe8_mouse_queue_pulse(&mouse, KEY_A);
+    assert(fe8_mouse_update(&mouse, &snapshot, 0) == KEY_DOWN);
+    assert(fe8_mouse_update(&mouse, &snapshot, 0) == 0);
+    assert(fe8_mouse_update(&mouse, &snapshot, 0) == KEY_DOWN);
+    assert(fe8_mouse_update(&mouse, &snapshot, 0) == 0);
+    assert(fe8_mouse_update(&mouse, &snapshot, 0) == KEY_A);
+    assert(fe8_mouse_update(&mouse, &snapshot, 0) == 0);
+    assert(mouse.queued_count == 0);
+
+    fe8_mouse_queue_pulse(&mouse, KEY_UP);
+    fe8_mouse_queue_pulse(&mouse, KEY_LEFT);
+    fe8_mouse_cancel(&mouse);
+    assert(mouse.queued_count == 0);
     puts("mouse controller tests passed");
     return 0;
 }

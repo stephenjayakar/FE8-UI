@@ -287,10 +287,79 @@ static int snapshot_cursor_controls_camera(const Fe8Snapshot *snapshot) {
         !snapshot->combat_panel_active;
 }
 
+static int snapshot_unit_mouse_target(
+    const Fe8Snapshot *snapshot, int x, int y) {
+    size_t offset;
+    if (!snapshot || !snapshot->active_unit_address ||
+            !(snapshot->flags & FE8_SNAPSHOT_UNIT_MAP) ||
+            x < 0 || y < 0 || x >= snapshot->map_width || y >= snapshot->map_height)
+        return 0;
+    offset = (size_t)y * snapshot->map_width + x;
+    return snapshot->unit_map[offset] != 0;
+}
+
+static int snapshot_locked_unit_mouse_target(
+    const Fe8Snapshot *snapshot, int x, int y) {
+    size_t offset;
+    if (!snapshot_unit_mouse_target(snapshot, x, y) ||
+            !(snapshot->game_state_bits & 1) ||
+            !(snapshot->flags & FE8_SNAPSHOT_RANGE))
+        return 0;
+    offset = (size_t)y * snapshot->map_width + x;
+    return snapshot->range[offset] != 0;
+}
+
 static void set_mouse_map_target(Fe8MouseController *mouse,
     const Fe8Snapshot *snapshot, int x, int y, int confirm) {
-    (void)snapshot;
-    fe8_mouse_set_target(mouse, x, y, confirm);
+    fe8_mouse_set_target_safe(mouse, x, y, confirm,
+        snapshot_unit_mouse_target(snapshot, x, y));
+}
+
+static int snapshot_native_mouse_ui(
+    const Fe8Snapshot *snapshot, int visual_profile_active) {
+    return !visual_profile_active ||
+        (snapshot && snapshot->input_lock != 0 && !snapshot->combat_panel_active);
+}
+
+static void queue_native_pointer_motion(Fe8MouseController *mouse,
+    int *valid, int *anchor_x, int *anchor_y, int x, int y) {
+    enum { ROW_STEP = 14, COLUMN_STEP = 24, MAX_STEPS = 4 };
+    int dx;
+    int dy;
+    int steps = 0;
+    if (!*valid) {
+        *valid = 1;
+        *anchor_x = x;
+        *anchor_y = y;
+        return;
+    }
+    dx = x - *anchor_x;
+    dy = y - *anchor_y;
+    if (abs(dy) >= abs(dx)) {
+        while (dy >= ROW_STEP && steps++ < MAX_STEPS) {
+            fe8_mouse_queue_pulse(mouse, UINT32_C(1) << FE8_HOST_DOWN);
+            *anchor_y += ROW_STEP;
+            dy = y - *anchor_y;
+        }
+        while (dy <= -ROW_STEP && steps++ < MAX_STEPS) {
+            fe8_mouse_queue_pulse(mouse, UINT32_C(1) << FE8_HOST_UP);
+            *anchor_y -= ROW_STEP;
+            dy = y - *anchor_y;
+        }
+        *anchor_x = x;
+    } else {
+        while (dx >= COLUMN_STEP && steps++ < MAX_STEPS) {
+            fe8_mouse_queue_pulse(mouse, UINT32_C(1) << FE8_HOST_RIGHT);
+            *anchor_x += COLUMN_STEP;
+            dx = x - *anchor_x;
+        }
+        while (dx <= -COLUMN_STEP && steps++ < MAX_STEPS) {
+            fe8_mouse_queue_pulse(mouse, UINT32_C(1) << FE8_HOST_LEFT);
+            *anchor_x -= COLUMN_STEP;
+            dx = x - *anchor_x;
+        }
+        *anchor_y = y;
+    }
 }
 
 static void pace_frame(uint64_t *deadline, uint64_t period, uint64_t frequency) {
@@ -653,6 +722,9 @@ int main(int argc, char **argv) {
     int host_pointer_canvas_x = 0;
     int host_pointer_canvas_y = 0;
     int system_cursor_hidden = 0;
+    int native_pointer_valid = 0;
+    int native_pointer_x = 0;
+    int native_pointer_y = 0;
     int16_t previous_camera_x = 0;
     int16_t previous_camera_y = 0;
     int exit_code = EXIT_FAILURE;
@@ -841,6 +913,7 @@ int main(int argc, char **argv) {
             pan.dragging = 0;
             pointer_canvas_valid = 0;
             pointer_tile_valid = 0;
+            native_pointer_valid = 0;
             set_speed_up_mode(0, &speed_up_active, &video, &audio,
                 audio_initialized, &settings, &frame_deadline);
             if (settings.mouse_enabled != applied_mouse_enabled) {
@@ -952,12 +1025,22 @@ int main(int argc, char **argv) {
                         &video, event.motion.x, event.motion.y,
                         &host_pointer_canvas_x, &host_pointer_canvas_y)) {
                     host_pointer_visible = 1;
+                    if (!inventory_ui.active && settings.mouse_enabled &&
+                            snapshot_native_mouse_ui(
+                                snapshot_valid ? &snapshot : NULL, visual_profile_active)) {
+                        queue_native_pointer_motion(&mouse, &native_pointer_valid,
+                            &native_pointer_x, &native_pointer_y,
+                            host_pointer_canvas_x, host_pointer_canvas_y);
+                    } else if (!inventory_ui.active) {
+                        native_pointer_valid = 0;
+                    }
                     if (!inventory_ui.active && !system_cursor_hidden) {
                         SDL_ShowCursor(SDL_DISABLE);
                         system_cursor_hidden = 1;
                     }
                 } else {
                     host_pointer_visible = 0;
+                    native_pointer_valid = 0;
                     if (system_cursor_hidden) {
                         SDL_ShowCursor(SDL_ENABLE);
                         system_cursor_hidden = 0;
@@ -966,6 +1049,7 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_WINDOWEVENT &&
                     event.window.event == SDL_WINDOWEVENT_LEAVE) {
                 host_pointer_visible = 0;
+                native_pointer_valid = 0;
                 if (system_cursor_hidden) {
                     SDL_ShowCursor(SDL_ENABLE);
                     system_cursor_hidden = 0;
@@ -1276,6 +1360,28 @@ int main(int argc, char **argv) {
             if (event.type == SDL_QUIT) {
                 running = 0;
             } else if (event.type == SDL_MOUSEWHEEL) {
+                if (settings.mouse_enabled && snapshot_native_mouse_ui(
+                        snapshot_valid ? &snapshot : NULL, visual_profile_active)) {
+                    int wheel_steps = event.wheel.y;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+                    if (wheel_steps == 0 && event.wheel.preciseY != 0.0f)
+                        wheel_steps = event.wheel.preciseY > 0.0f ? 1 : -1;
+#endif
+                    if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+                        wheel_steps = -wheel_steps;
+                    if (wheel_steps > 3) wheel_steps = 3;
+                    if (wheel_steps < -3) wheel_steps = -3;
+                    while (wheel_steps > 0) {
+                        fe8_mouse_queue_pulse(&mouse, UINT32_C(1) << FE8_HOST_UP);
+                        --wheel_steps;
+                    }
+                    while (wheel_steps < 0) {
+                        fe8_mouse_queue_pulse(&mouse, UINT32_C(1) << FE8_HOST_DOWN);
+                        ++wheel_steps;
+                    }
+                    native_pointer_valid = 0;
+                    continue;
+                }
                 int window_x;
                 int window_y;
                 int old_canvas_x;
@@ -1342,14 +1448,12 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                     event.button.button == SDL_BUTTON_RIGHT && settings.mouse_enabled) {
+                /* A cancel click must preempt menu/pointer navigation already queued. */
                 fe8_mouse_cancel(&mouse);
+                fe8_mouse_queue_pulse(&mouse, UINT32_C(1) << FE8_HOST_B);
                 pointer_tile_valid = 0;
                 pointer_canvas_valid = 0;
-                mouse.pulse_key = UINT32_C(1) << FE8_HOST_B;
-                mouse.press_frames = 2;
-                /* Fast mouse travel already holds B. Force a release first so
-                 * FE8 observes right-click as a new cancel press. */
-                mouse.release_frames = 2;
+                native_pointer_valid = 0;
                 fprintf(stderr, "Mouse right-click: B queued\n");
             } else if (event.type == SDL_MOUSEBUTTONDOWN &&
                     event.button.button == SDL_BUTTON_LEFT && settings.mouse_enabled) {
@@ -1357,7 +1461,11 @@ int main(int argc, char **argv) {
                 int canvas_y;
                 int shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
                 if (snapshot_valid && visual_profile_active &&
-                        snapshot.input_lock == 0) {
+                        (snapshot.input_lock == 0 ||
+                            (!shift && snapshot.phase == 0 &&
+                                snapshot.active_unit_address &&
+                                (snapshot.game_state_bits & 1) &&
+                                (snapshot.flags & FE8_SNAPSHOT_RANGE)))) {
                     if (!fe8_host_video_event_to_canvas(&video,
                             event.button.x, event.button.y, &canvas_x, &canvas_y))
                         continue;
@@ -1375,6 +1483,20 @@ int main(int argc, char **argv) {
                         int map_y;
                         if (fe8_canvas_to_map_tile(&map_state, viewport,
                                 canvas_x, canvas_y, &map_x, &map_y)) {
+                            /* Target selectors can hold the normal map-input lock.
+                               Only bypass that lock for an occupied tile in FE8's
+                               live target range; other locked clicks stay native A. */
+                            if (snapshot.input_lock != 0 &&
+                                    !snapshot_locked_unit_mouse_target(
+                                        &snapshot, map_x, map_y)) {
+                                fe8_mouse_queue_pulse(
+                                    &mouse, UINT32_C(1) << FE8_HOST_A);
+                                native_pointer_valid = 0;
+                                fprintf(stderr,
+                                    "Mouse left-click: A queued for native UI
+");
+                                continue;
+                            }
                             pointer_canvas_valid = 1;
                             pointer_canvas_x = canvas_x;
                             pointer_canvas_y = canvas_y;
@@ -1390,9 +1512,8 @@ int main(int argc, char **argv) {
                         }
                     }
                 } else {
-                    fe8_mouse_cancel(&mouse);
-                    mouse.pulse_key = UINT32_C(1) << FE8_HOST_A;
-                    mouse.press_frames = 2;
+                    fe8_mouse_queue_pulse(&mouse, UINT32_C(1) << FE8_HOST_A);
+                    native_pointer_valid = 0;
                     fprintf(stderr, "Mouse left-click: A queued for native UI\n");
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP &&
