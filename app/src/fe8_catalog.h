@@ -48,6 +48,13 @@ typedef struct Fe8ItemInfo {
     bool movable;
     Fe8ItemLockKind lock_kind;
     uint8_t lock_ids[32]; /* 256-bit ROM-backed whitelist, not display names. */
+    /* Profile-scoped promotion rules decoded from the ROM. When a promotion
+       item has an extra native predicate we cannot model safely, the item is
+       marked as such but promotion_rules_complete remains false. */
+    bool promotion_item;
+    bool promotion_rules_complete;
+    uint8_t promotion_level;
+    uint8_t promotion_class_ids[32];
     char name[28];
     char description[192];
 } Fe8ItemInfo;
