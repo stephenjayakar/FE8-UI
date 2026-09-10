@@ -1,0 +1,71 @@
+name: Release builds
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: git submodule update --init --depth 1 third_party/mgba
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y libsdl2-dev libfreetype-dev fonts-dejavu-core zlib1g-dev
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew list sdl2 >/dev/null 2>&1 || brew install sdl2
+      - name: Build and test
+        run: |
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --parallel 3
+          ctest --test-dir build-release --output-on-failure
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          app=build-release/fe8-mgba-sdl.app
+          binary="$app/Contents/MacOS/fe8-mgba-sdl"
+          mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources/ThirdParty/SDL2" dist
+          sdl=$(otool -L "$binary" | awk '/libSDL2.*dylib/ {print $1}')
+          test -n "$sdl"
+          cp -L "$sdl" "$app/Contents/Frameworks/libSDL2.dylib"
+          cp "$(brew --prefix sdl2)/LICENSE.txt" "$app/Contents/Resources/ThirdParty/SDL2/"
+          install_name_tool -change "$sdl" @executable_path/../Frameworks/libSDL2.dylib "$binary"
+          install_name_tool -id @executable_path/../Frameworks/libSDL2.dylib "$app/Contents/Frameworks/libSDL2.dylib"
+          otool -L "$binary" "$app/Contents/Frameworks/libSDL2.dylib" | tee build-release/dependencies.txt
+          ! grep -E '/opt/homebrew|/usr/local/(opt|Cellar)' build-release/dependencies.txt
+          codesign --force --sign - "$app/Contents/Frameworks/libSDL2.dylib"
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          "$binary" --help > build-release/help.txt 2>&1 || test "$?" -eq 1
+          grep -q 'Usage:' build-release/help.txt
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/FE8-UI-${GITHUB_REF_NAME#v}-macOS-arm64.zip"
+      - name: Package Linux executable
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          name="FE8-UI-${GITHUB_REF_NAME#v}-Linux-x86_64"
+          mkdir -p "$name/licenses" dist
+          cp build-release/fe8-mgba-sdl LICENSE THIRD_PARTY_NOTICES.md "$name/"
+          cp third_party/mgba/LICENSE "$name/licenses/mGBA.txt"
+          ldd "$name/fe8-mgba-sdl" | tee "$name/dependencies.txt"
+          ! grep -q 'not found' "$name/dependencies.txt"
+          "$name/fe8-mgba-sdl" --help > build-release/help.txt 2>&1 || test "$?" -eq 1
+          grep -q 'Usage:' build-release/help.txt
+          printf '%s\n' 'Built for Ubuntu 24.04 x86-64 (glibc 2.39 or newer).' 'Install runtime dependencies: sudo apt install libsdl2-2.0-0 libfreetype6 fonts-dejavu-core zlib1g' 'Run: ./fe8-mgba-sdl --rom /path/to/game.gba' 'A graphical desktop and your own ROM are required.' > "$name/README.txt"
+          tar -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error

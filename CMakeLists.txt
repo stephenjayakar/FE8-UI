@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(fe8_extended_frontend VERSION 0.0.1 LANGUAGES C)
+project(fe8_extended_frontend VERSION 0.0.2 LANGUAGES C)
 
 option(FE8_BUILD_TESTS "Build frontend unit tests" ON)
 
@@ -83,7 +83,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "FE8 Extended Frontend"
         MACOSX_BUNDLE_GUI_IDENTIFIER "org.feuniverse.fe8-extended-frontend"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1")
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_gl.c
         app/src/host_text_macos.m
