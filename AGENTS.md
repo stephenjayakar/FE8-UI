@@ -1,0 +1,408 @@
+# FE8 Extended Frontend
+
+FE8 Extended Frontend runs *Fire Emblem: The Sacred Stones* and compatible
+FE8U ROM hacks through the public libmGBA API while drawing map terrain beyond
+the 240×160 GBA frame. It builds a pinned mGBA `0.11` development snapshot and
+supplies a native macOS game library plus a portable SDL2 command-line
+frontend for Linux.
+
+This repository contains only the original frontend code. mGBA is a required
+build submodule under `third_party/mgba`; the optional FE8 decomp under
+`reference/fireemblem8u` is a development reference and is never compiled into
+the application. ROMs and game assets are not distributed.
+
+The extended renderer is deliberately read-only. libmGBA remains authoritative for CPU,
+memory, PPU, saves, and input. The host reads validated FE8 structures, decodes
+the game's metatiles from emulated EWRAM/VRAM/palette memory, renders a 480×320
+terrain canvas, and places mGBA's exact frame over its center.
+
+Whenever a live FE8 roster exists, press **I** to open **Armory**. The game
+pauses while it is open. **By item** searches the army-wide equipment pool;
+**By unit** shows each ally's five slots with Supply alongside on wider windows.
+Drag between any visible slots without selecting either ally first. Click an
+ally's portrait/name to choose the recipient of inline Give actions.
+
+Single-click an item to inspect. **Give / Store** beside a browser item and
+**double-clicking** an item-browser row perform quick transfers; drag onto an
+ally to give or the pinned Supply bar to store. A full ally opens a five-slot
+**swap chooser beside the click/drop**, with the incoming and outgoing owners
+shown before the exchange. No occupied slot is replaced implicitly.
+
+**Undo** or **U** reverses up to 32 transactions in the current paused session.
+Every step validates the expected items. Undo history clears on gameplay
+resume or ROM/state changes. Right-click or **Escape** cancels a move; **I**,
+Close, or Escape outside search/move mode returns to the game.
+
+**/** searches item names, owners, classes and types. Counted type filters and
+**Usable by [recipient]** filter the item browser; in By unit they highlight
+matches while keeping all loadout destinations visible. **S** cycles sorting,
+**A** toggles the item browser's All/Supply scope, and the active column header
+reverses the sort. Personal restrictions, missing proficiency and rank deficits
+are explained rather than reduced to a generic badge. **Carry** explicitly
+means transferable but not usable by the selected ally.
+
+Choose a carried weapon's **vs** control as the comparison baseline; candidate
+items show raw might/hit/weight tradeoffs, never a combat forecast. Hovering a
+swap slot previews that exact exchange. A persistent detail selection and
+independent scroll positions survive switching between the two views.
+
+Armory renders at full desktop resolution, independently of game zoom. Smaller
+windows use a compact detail summary with an expandable drawer, leaving more
+room for allies and equipment. **D** switches row density. **+** (or **=**) /
+**-** adjusts UI size in 10% steps; keypad keys work too. **0** resets to 100%.
+The 80–200% preference fits the current window without losing the session
+setting. Text is re-rasterized, not stretched. Full descriptions remain
+scrollable in the inspector.
+See [the Armory workflow and validation notes](docs/inventory-armory.md).
+
+Text is rasterized at the display's drawable resolution (CoreText on macOS,
+FreeType on other platforms); portraits retain their original pixel art. Linux
+requires `libfreetype-dev` and a system font such as `fonts-dejavu-core`.
+`FE8_UI_FONT=/path/to/font.ttf` selects an alternative system font. No font or ROM
+assets are bundled. If no scalable font can be found, a warning is logged and
+the emergency bitmap renderer is used. Inventory requires a 640x480 window;
+closing it restores the game's prior minimum window size and zoom.
+
+The manager decodes the active ROM's own character, class, and item text and
+renders the selected character's full menu portrait. It shows level, HP,
+remaining uses, combat stats, source owner, and whether the selected target can
+use each weapon or staff. Compatibility badges distinguish ready gear, missing
+weapon ranks, personal/class locks, status restrictions, unknown restrictions,
+and ordinary non-weapon items. Archanae's extra personal-weapon table is decoded
+in its SHA-verified profile: Borderland Sword is Athena-only, not usable by Marth. Hover a character's name or class in either the roster or portrait card
+for its in-game description in the inspector. Hovering never changes
+the selected target or a pending item transfer; moving away restores item help.
+Missing help text is explicitly marked rather than borrowed from another unit.
+Long labels ellipsize, and hovering exposes their full names. Item names,
+uses, ownership, and badges have separate space; visible scrollbars, hover
+accents, and a persistent shortcut strip make the controls discoverable. ROM-specific addresses and limits
+live in a selected `Fe8Profile`;
+retail FE8U, Sacred Echoes, and Archanae have separate inventory layouts, so another hack
+can be supported without changing the UI or transaction engine. This is the
+sole write-enabled extension: destinations are restricted
+to validated blue-unit and convoy addresses, both source values are checked
+immediately before writing, and a failed verification rolls the swap back. It
+does not edit ROMs or parse cartridge saves.
+
+Sacred Echoes learned spells are shown for context but marked as fixed. Its
+profile identifies magic and staff entries as non-transferable, and both the
+UI and memory transaction layer reject attempts to move them.
+
+## Requirements
+
+- CMake 3.20 or newer
+- A C11 compiler
+- SDL2 development files
+- A legally obtained FE8 ROM (`fireemblem8.gba` or another `.gba` path)
+- Git, for initializing the pinned mGBA submodule
+
+On Debian or Ubuntu, install the Linux toolchain and development packages with:
+
+```sh
+sudo apt-get update
+sudo apt-get install --yes \
+  build-essential cmake ninja-build pkg-config libsdl2-dev zlib1g-dev
+```
+
+On Apple Silicon, install the native arm64 SDL2 package (for example,
+Homebrew's `sdl2`). CMake selects the native arm64 target unless an explicit
+`CMAKE_OSX_ARCHITECTURES` value is supplied.
+
+## Configure and build
+
+From the repository root, bootstrap the pinned dependency and build with the
+portable wrapper:
+
+```sh
+./build.sh -G Ninja
+```
+
+The wrapper delegates to `scripts/bootstrap.sh` and `scripts/build.sh`. It uses
+an already-populated `third_party/mgba` directory without requiring network or
+Git metadata, which lets the source artifact produced by CI build in an
+isolated workspace. In a normal clone it initializes the pinned submodule when
+needed. Pass `--with-reference` directly to `scripts/bootstrap.sh` only when
+decomp symbols or source are needed for frontend research; normal builds never
+initialize or read the optional reference submodule.
+
+Run the complete unit-test suite with:
+
+```sh
+./scripts/test.sh -G Ninja
+```
+
+If SDL2 is installed outside the default prefix, add its prefix while
+configuring. Use `CMAKE_PREFIX_PATH` for a CMake package or `PKG_CONFIG_PATH`
+for an SDL2 `pkg-config` file, for example:
+
+```sh
+PKG_CONFIG_PATH=/opt/sdl2/lib/pkgconfig ./build.sh -G Ninja
+```
+
+The mGBA submodule is pinned at commit
+`afd6f14eaf8bd35214ed3fb9dc69a92bfc3877a9`. The mGBA build is restricted to
+the static GBA core; the SDL2 frontend in `app/src/main.c` is owned by this
+project. The newer pin is deliberate: states produced by mGBA 0.11 cannot be
+restored by the older 0.10.3 state decoder. Linux produces
+`build/fe8-mgba-sdl`; macOS produces `build/fe8-mgba-sdl.app`.
+
+## Install
+
+Build and install with:
+
+```sh
+./install.sh
+```
+
+This installs the application to `/Applications` on macOS and the command-line
+frontend to `/usr/local/bin` on Linux; it prompts for `sudo` only if needed.
+Use a user-owned prefix to avoid elevated permissions, for example:
+
+```sh
+./install.sh --prefix "$HOME/.local"
+```
+
+## Run
+
+On Linux, launch the portable command-line frontend directly:
+
+```sh
+./build/fe8-mgba-sdl \
+  --rom /path/to/fireemblem8.gba \
+  --mute
+```
+
+A graphical session is required for interactive use. The Linux frontend uses
+a built-in bitmap text renderer, so the inventory UI does not require a system
+font package. Automated captures can run under Xvfb; see
+[`docs/testing.md`](docs/testing.md).
+
+On macOS, open the application without arguments to show the native game
+library:
+
+```sh
+open build/fe8-mgba-sdl.app
+```
+
+Drop one or more `.gba` files anywhere in the library window, or use **Add
+ROMs…**. **Play** starts from that game's cartridge save; **Resume State** loads
+its most recent F5 checkpoint. Games are keyed by the ROM's SHA-1, so retail
+FE8 and ROM hacks always receive separate storage under:
+
+```text
+~/Library/Application Support/FE8 Extended Frontend/Games/<ROM SHA-1>/
+├── cartridge.sav
+└── quick-state.ss
+```
+
+If a same-name `.sav` exists beside an imported ROM, it is copied into isolated
+storage on first launch. Removing a row only removes the library reference; it
+does not delete the ROM or that game's saves.
+
+**Settings → Settings…** is available from both the library and a running game.
+Audio, VSync, extended rendering, video shader, zoom sensitivity, and every
+keyboard binding are global and apply to all imported games.
+
+The Settings window also has a global **Hotkeys** section. Hold **Space** to run
+at the configured **2×**, **3×**, **4×** (default), or **Unlimited** speed;
+audio and VSync resume automatically when it is released. Unlimited removes
+frontend frame pacing and runs as quickly as emulation and rendering allow. **F5**
+quick-saves and **F8** quick-loads the current game's isolated state by default.
+**F6** toggles the extended renderer without restarting or closing the inventory
+manager. On macOS, **Settings → Extended Renderer** provides the same toggle.
+All four hotkeys can be rebound by clicking their binding and pressing a key.
+
+The command-line interface remains available for diagnostics and direct launch:
+
+```sh
+build/fe8-mgba-sdl.app/Contents/MacOS/fe8-mgba-sdl \
+  --rom /path/to/fireemblem8.gba \
+  [--state /path/to/state.ss] \
+  [--save /path/to/fireemblem8.sav] \
+  [--mute] \
+  [--no-extensions]
+```
+
+`--rom` is required in command-line mode. `--state` restores an mGBA named state
+after the ROM is reset. It also understands the older PNG-bundled state supplied
+with this test set by safely extracting its `gbAs` core payload in memory.
+`--save` opens or creates a cartridge save through mGBA before reset. Use a copy
+when testing: mGBA may write normal game progress back to this file.
+`--no-extensions` leaves the 480×320 canvas letterboxed and runs as an ordinary
+frontend.
+`--mute` suppresses frontend audio for that command-line run regardless of the
+saved global audio preference.
+
+The extended logical canvas is at least 480×320 and adapts to the drawable's
+aspect ratio. The window starts maximized and uses nearest-neighbor sampling to
+preserve hard pixel edges. Scroll over the canvas for gradual zoom. **Settings →
+Settings… → Zoom sensitivity** provides a continuous Low–High slider from 0.5%
+to 3% per wheel unit; the default is **Low**, matching the original 0.5% rate.
+Zoom stays anchored to the map position beneath the pointer;
+the extended terrain and units are re-rendered for each new canvas size instead
+of cropping an enlarged 480×320 snapshot. Scrolling back out restores the full
+extended view. Quit with Command-Q or the window close button; Escape does not
+exit a running game.
+Emulation is paced from libmGBA's GBA timing (59.728 fps), independently of a
+60 Hz or 120 Hz display refresh rate.
+
+Audio is enabled by default and converted from libmGBA's native stream to the
+CoreAudio device format through SDL. Presentation uses VSync while retaining
+GBA-clock pacing. Open **Settings → Settings…** in the macOS menu bar (or press
+Command-comma) to toggle audio, VSync, or the extended renderer and select a
+video preset. **Off** is the default sharp, unfiltered presentation; **CRT (TV
+Mode)** adds mGBA's subtle horizontal blend and scanlines; **Scanlines** keeps
+the pixels sharp while darkening alternating lines. The shader processes the
+entire dynamic host canvas, including the extended map, and can be changed live.
+
+To rebind a GBA button, click its current binding and press the desired key;
+Escape cancels capture. Standalone modifier keys—including left/right Shift,
+Control, Option, and Command—can be assigned. Settings persist globally through
+macOS user defaults.
+
+The macOS **State** menu provides **Quick Save State**, **Quick Load State**,
+**Save State As…**, and **Load State…**. When launched with `--quick-state
+/path/to/checkpoint.ss`, the configured Quick Save and Quick Load hotkeys use
+that checkpoint. Library launches supply each game's isolated checkpoint
+automatically.
+
+Pointer motion over a validated tactical map moves FE8's
+map cursor. Left-click moves to the latched tile and presses A; right-click
+presses B. Pointer coordinates are converted through the actual window,
+high-DPI drawable, letterboxed 480×320 canvas, and current extended-map
+viewport, so Retina scaling does not alter tile selection. Cursor movement uses
+FE8's normal D-pad path while holding B for the game's native fast-cursor mode,
+so its camera and cursor animation stay synchronized without the sluggish
+default travel speed. B is released before an A confirmation, and right-click
+forces a fresh B press so cancellation remains reliable. If FE8 rejects the
+same step repeatedly, mouse pathing cancels safely and waits for fresh pointer
+motion; it never writes or teleports cursor state. The
+authoritative mGBA frame, host cursor, terrain, units, and hit-testing all share
+the same movable viewport origin, preventing cursor offsets and edge seams.
+Mouse map input is disabled during dialogue and cutscenes, while left/right
+click continue to act as A/B for native UI.
+
+Mouse controls are enabled by default and can be toggled globally under
+**Settings → Settings… → Enable mouse controls**. When enabled, the game canvas
+uses a large blue-and-gold tactician pointer with an exact tip hotspot. Disabling
+the option immediately cancels pending mouse input and restores the normal macOS
+pointer; the preference also applies to games launched later from the library.
+
+Hold Shift and drag with the left button to pan the extended map. A Shift-click
+without dragging recenters the host viewport on that tile. Panning changes only
+the host view and does not mutate FE8's camera.
+
+Keyboard bindings:
+
+| GBA input | Keyboard |
+| --- | --- |
+| A / B | Z / X |
+| D-pad | Arrow keys |
+| Start / Select | Return / Backspace |
+| L / R | A / S |
+
+## ROM-hack compatibility
+
+Retail FE8U and FE8U-derived hacks with the standard `BE8E` header are allowed
+to attempt the retail-layout profile. Every pointer, dimension, row table, and
+cursor coordinate is validated each frame before the extension activates. The
+frontend first tries FE8's normal terrain palette layout, then probes the other
+GBA palette-bank offsets when the decoded geometry matches but its colors do
+not. The selected offset is validated against the canonical mGBA frame and is
+rediscovered after a game mode invalidates it.
+
+This was tested end-to-end on a retail FE8U 28×24 tactical map. A visual
+compatibility check compares host-decoded terrain with the canonical frame
+before trusting an FE8U-family profile. Hacks that relocate globals, replace
+tileset storage, or change the renderer continue to run through mGBA while the
+enhancement safely falls back instead of displaying corrupt terrain.
+
+Sacred Echoes v1.1.2 was tested from boot into a 20×14 tactical map. It boots,
+loads its cartridge save, produces audio, and activates extended terrain during
+genuine tactical presentation. Dialogue and cutscenes may leave valid map
+structures resident while repurposing VRAM; the per-frame visual gate falls
+back to the canonical GBA view for those scenes and automatically restores the
+extension when player-phase map rendering resumes.
+
+Pokémblem (tested ROM hash documented below) was tested on its 24×20
+free-roaming overworld. Its metatile map and actors retain FE8-compatible
+structures, but its normal terrain
+palettes use bank offset 6 instead of FE8's offset 11. The adaptive palette
+profile detects that layout at runtime, enabling the existing terrain and unit
+renderers without a ROM-specific address table. See
+[`docs/romhack-compatibility.md`](docs/romhack-compatibility.md).
+
+The frontend draws terrain, fog, FE8's complete standing SMS list (units,
+traps, and world-space map effects), and a host cursor across the extended
+canvas. The canonical mGBA frame is always composited last and follows the map
+while extended rendering is validated, so selected units, map animations,
+range/movement overlays, and transient moving-unit animations remain visible
+and authoritative. Native menus (including pre-battle inventory), unsupported
+scenes, and manually disabled extended rendering instead keep the GBA screen
+centered, discarding stale map panning. Only a recognized tactical combat panel
+may retain a frozen extended backdrop; returning to the map revalidates against
+the current camera.
+
+## Diagnostic capture options
+
+These options exist for repeatable local testing and do not touch ROM data:
+
+```sh
+--capture /tmp/frame.bmp --capture-after 120
+--capture-terrain /tmp/terrain-only.bmp --capture-after 120
+--auto-continue
+--seek-large-map
+--state-out /tmp/large-map.ss
+```
+
+`--auto-continue` sends a small scripted set of normal A/Start inputs.
+`--capture-terrain` saves the host-decoded terrain before the canonical frame,
+units, and UI are composited, which is useful for diagnosing new ROM hacks.
+`--seek-large-map` waits for a validated map larger than 15×10 (or stops after a
+bounded timeout) before capturing. When `--state-out` is supplied, that large,
+interactive checkpoint is also saved for repeatable tests.
+
+## Renderer architecture
+
+`fe8_profile.c` recognizes and validates FE8 memory. `extended_map_renderer.c`
+decodes the full logical metatile map, tile flips, 4bpp graphics, palettes, and
+fog. `extended_unit_renderer.c` reconstructs standing sprites from validated
+unit handles, OBJ VRAM, and OBJ palettes. `display_scaling.c` converts smooth
+wheel zoom into a dynamic host-canvas size while preserving the pointer's map
+anchor. `frame_alignment.c` absorbs the
+one-frame difference between FE8's camera state and its PPU scroll during a
+pan, keeping the native frame locked to the reconstructed terrain. `main.c`
+handles the host camera, HUD composition, frame pacing, and keyboard-to-GBA input. On macOS,
+`host_video_gl.c` presents that canvas using mGBA's `mGLES2Context` and shader
+pass implementation; other platforms retain the SDL renderer fallback. The
+modules communicate through callback-based byte readers rather than private
+mGBA structs.
+
+The core is configured with `setVideoBuffer()` and queried through
+`baseVideoSize()`. `mColor` is converted at this boundary so the host upload
+format remains explicit and portable across mGBA's 16-bit and 32-bit builds.
+
+The three alternative project plans are preserved in
+[`docs/plans/`](docs/plans/README.md).
+The complete build and validation recipe is in
+[`docs/testing.md`](docs/testing.md).
+
+### Armory effective unit stats
+
+The verified Archanea and Sacred Echoes ROM profiles now show **Total stats**
+from their own stat-screen getter code, including active equipment, skills and
+penalties. Click **Total stats / Base stats** to switch; hover a stat for its base
+and net modifier. Transfers and undo recalculate totals. These are current unit
+stats, not enemy-specific combat forecasts. Unsupported states/ROMs are marked
+**Base only** rather than silently pretending bonuses were included. Calculation
+uses a private in-memory emulator and never steps or restores the live game.
+See [the Armory documentation](docs/inventory-armory.md#unit-stats) for scope,
+safety boundaries and regression scenarios.
+
+### Pinned Armory loadouts
+
+In **By unit**, **Pin** keeps an ally's five slots and stats above the scrolling
+roster. Use **Unpin** or **Unpin all** to release them. Pins last for the current
+open inventory session and remain usable for drag/drop, comparisons and Undo.
+Overflow pins use their own previous/next controls instead of scrolling away.
+See [temporary pinned loadouts](docs/inventory-armory.md#temporary-pinned-loadouts).
