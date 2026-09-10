@@ -140,9 +140,7 @@ PKG_CONFIG_PATH=/opt/sdl2/lib/pkgconfig ./build.sh -G Ninja
 ```
 
 The mGBA submodule is pinned at commit
-`d79a4921f21cb8e582614917888b9e83616a888b` in the
-[project fork](https://github.com/stephenjayakar/mgba), which preserves the
-upstream snapshot plus a header warning fix. The mGBA build is restricted to
+`afd6f14eaf8bd35214ed3fb9dc69a92bfc3877a9`. The mGBA build is restricted to
 the static GBA core; the SDL2 frontend in `app/src/main.c` is owned by this
 project. The newer pin is deliberate: states produced by mGBA 0.11 cannot be
 restored by the older 0.10.3 state decoder. Linux produces
