@@ -1,5 +1,6 @@
 #include "mouse_controller.h"
 
+#include <math.h>
 #include <stdio.h>
 
 enum {
@@ -9,7 +10,55 @@ enum {
     FE8_KEY_LEFT = 5,
     FE8_KEY_UP = 6,
     FE8_KEY_DOWN = 7,
+    FE8_SCROLL_MAX_STEPS = 8,
+    FE8_SCROLL_PRESS_FRAMES = 2,
+    FE8_SCROLL_RELEASE_FRAMES = 2,
+    FE8_SCROLL_IDLE_FRAMES = 18,
 };
+
+int fe8_mouse_native_ui(
+    const Fe8LiveState *snapshot, int snapshot_valid, int map_active) {
+    return !map_active || !snapshot_valid || snapshot->input_lock != 0;
+}
+
+void fe8_mouse_cancel_scroll(Fe8MouseController *mouse) {
+    mouse->scroll_fraction = 0;
+    mouse->scroll_steps = 0;
+    mouse->scroll_direction = 0;
+    mouse->scroll_press_frames = 0;
+    mouse->scroll_release_frames = 0;
+    mouse->scroll_idle_frames = 0;
+    mouse->scroll_key = 0;
+}
+
+void fe8_mouse_scroll(Fe8MouseController *mouse, double wheel_delta) {
+    int direction;
+    int steps;
+    if (!isfinite(wheel_delta) || wheel_delta == 0)
+        return;
+    direction = wheel_delta > 0 ? 1 : -1;
+    if (mouse->active)
+        fe8_mouse_cancel(mouse); /* Never carry fast-move B into a menu. */
+    if (mouse->scroll_direction && mouse->scroll_direction != direction)
+        fe8_mouse_cancel_scroll(mouse); /* Reversing cancels the old backlog. */
+    mouse->scroll_direction = direction;
+    mouse->scroll_idle_frames = 0;
+    /* Bound accelerated wheel bursts before converting a double to an int. */
+    if (wheel_delta > FE8_SCROLL_MAX_STEPS)
+        wheel_delta = FE8_SCROLL_MAX_STEPS;
+    else if (wheel_delta < -FE8_SCROLL_MAX_STEPS)
+        wheel_delta = -FE8_SCROLL_MAX_STEPS;
+    mouse->scroll_fraction += wheel_delta;
+    steps = (int)mouse->scroll_fraction;
+    mouse->scroll_fraction -= steps;
+    mouse->scroll_steps += steps;
+    if (mouse->scroll_steps > FE8_SCROLL_MAX_STEPS)
+        mouse->scroll_steps = FE8_SCROLL_MAX_STEPS;
+    else if (mouse->scroll_steps < -FE8_SCROLL_MAX_STEPS)
+        mouse->scroll_steps = -FE8_SCROLL_MAX_STEPS;
+    if (steps && !mouse->scroll_press_frames && !mouse->scroll_release_frames)
+        mouse->scroll_release_frames = FE8_SCROLL_RELEASE_FRAMES;
+}
 
 void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm) {
     if (mouse->active && mouse->confirm && !confirm)
@@ -31,6 +80,7 @@ void fe8_mouse_cancel(Fe8MouseController *mouse) {
     mouse->stalled = 0;
     mouse->confirm = 0;
     mouse->retries = 0;
+    fe8_mouse_cancel_scroll(mouse);
 }
 
 uint32_t fe8_mouse_update(
@@ -46,8 +96,32 @@ uint32_t fe8_mouse_update(
         --mouse->press_frames;
         return mouse->pulse_key;
     }
+    /* Wheel steps are native D-pad pulses, not map travel: no B modifier and
+     * no dependency on a valid map snapshot. Leave release frames between
+     * notches so FE8 sees distinct key edges, even during fast-forward. */
+    if (mouse->scroll_direction) {
+        if (mouse->scroll_release_frames > 0) {
+            --mouse->scroll_release_frames;
+            return 0;
+        }
+        if (mouse->scroll_press_frames > 0) {
+            if (--mouse->scroll_press_frames == 0)
+                mouse->scroll_release_frames = FE8_SCROLL_RELEASE_FRAMES;
+            return mouse->scroll_key;
+        }
+        if (mouse->scroll_steps) {
+            int up = mouse->scroll_steps > 0;
+            mouse->scroll_steps += up ? -1 : 1;
+            mouse->scroll_key = UINT32_C(1) << (up ? FE8_KEY_UP : FE8_KEY_DOWN);
+            mouse->scroll_press_frames = FE8_SCROLL_PRESS_FRAMES - 1;
+            return mouse->scroll_key;
+        }
+        if (++mouse->scroll_idle_frames >= FE8_SCROLL_IDLE_FRAMES)
+            fe8_mouse_cancel_scroll(mouse);
+    }
     if (!snapshot_valid) {
-        fe8_mouse_cancel(mouse);
+        if (mouse->active)
+            fe8_mouse_cancel(mouse);
         return 0;
     }
     if (!mouse->active)
