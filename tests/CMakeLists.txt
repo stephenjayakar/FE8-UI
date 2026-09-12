@@ -196,11 +196,12 @@ target_link_libraries(test_inventory_unit_search PRIVATE ${DESKTOP_TEXT_LIBS})
 fe8_add_test(native_hud test_native_hud.c ../app/src/native_hud.c)
 
 add_executable(test_native_hud_rom test_native_hud_rom.c
-    ../app/src/native_hud.c ../app/src/fe8_profile.c ../app/src/address_space.c)
+    ../app/src/native_hud.c ../app/src/fe8_profile.c ../app/src/address_space.c
+    ../app/src/native_hud_host.c ../app/src/host_cursor.c ../app/src/host_settings.c)
 target_include_directories(test_native_hud_rom PRIVATE ../app/src)
 target_compile_definitions(test_native_hud_rom PRIVATE
     $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
-target_link_libraries(test_native_hud_rom PRIVATE mgba)
+target_link_libraries(test_native_hud_rom PRIVATE mgba ${FE8_SDL_TARGET})
 if(FE8_ARCHANAE_ROM)
     add_test(NAME native_hud_archanae COMMAND test_native_hud_rom "${FE8_ARCHANAE_ROM}")
     set_tests_properties(native_hud_archanae PROPERTIES TIMEOUT 90)

@@ -286,9 +286,15 @@ bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
         /* FE8 blends BG1 against world layers. Encode independent foreground
          * and background coefficients in a straight-alpha host pixel, even
          * when EVA + EVB is 15 rather than 16 (native action menus). */
-        if (LAYER(top_ui) == 1 && ((ppu.blend >> 6) & 3) == 1 && (ppu.blend & 2)) {
+        /* A unit-screen round trip can disable backdrop blending while still
+         * blending BG1 against terrain/units. Test the actual layer below the
+         * panel, not a fixed global target mask. A foreground map cursor is
+         * above BG1, so skip it when reconstructing the panel behind it. */
+        uint32_t below_ui = RANK(first) > RANK(top_ui) ? first : second;
+        if (LAYER(top_ui) == 1 && ((ppu.blend >> 6) & 3) == 1 && (ppu.blend & 2) &&
+                (ppu.blend & (1u << (8 + LAYER(below_ui))))) {
             unsigned eva = minimum(ppu.alpha & 31, 16), evb = minimum((ppu.alpha >> 8) & 31, 16);
-            if (evb >= 16 || eva > 16 - evb || (ppu.blend & 0x3800) != 0x3800) goto fallback;
+            if (evb >= 16 || eva > 16 - evb) goto fallback;
             unsigned a = 16 - evb;
             pixel = (a * 255 / 16) << 24;
             for (unsigned shift = 0; shift < 24; shift += 8)

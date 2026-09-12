@@ -5,7 +5,7 @@
 #include <mgba/core/log.h>
 #include <mgba-util/image.h>
 #include <mgba-util/vfs.h>
-#include "native_hud.h"
+#include "native_hud_host.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -41,7 +41,9 @@ int main(int argc, char **argv) {
     struct VFile *rom=VFileOpen(argv[1],O_RDONLY); assert(rom&&core->loadROM(core,rom));
     mColor *video=calloc(240*160,sizeof(*video));
     Fe8HostPixel *frame=malloc(240*160*sizeof(*frame));
-    Fe8NativeHud *hud=calloc(1,sizeof(*hud));
+    Fe8HudHost *host=calloc(1,sizeof(*host));
+    assert(host);
+    Fe8NativeHud *hud=&host->hud;
     Fe8Snapshot *snapshot=calloc(1,sizeof(*snapshot));
     assert(video&&frame&&hud&&snapshot);
     core->setVideoBuffer(core,video,240); core->reset(core);
@@ -78,6 +80,54 @@ int main(int argc, char **argv) {
         }
     }
     assert(valid>=178);
+    /* Regression: native R unit screens used to leave the HUD permanently
+     * at GBA size. Exercise the real host fallback/reacquisition path too,
+     * preserving a non-default scale across page changes and repeated visits. */
+    assert(core->loadState(core,checkpoint));
+    run(core,2,0); /* refresh the external video buffer after loading state */
+    Fe8HostVideo output={0};
+    output.canvas_width=480; output.canvas_height=320;
+    output.scaling.drawable_width=960; output.scaling.drawable_height=640;
+    host->enabled=true; host->scale_percent=180;
+    assert(fe8_extract_snapshot(&reader,profile,snapshot)); convert(video,frame);
+    assert(fe8_hud_host_update(host,&output,&memory,snapshot,frame,true,120,80)==hud->world);
+    Fe8HudRect positions[FE8_HUD_MAX_PANELS]={0};
+    unsigned panel_count=hud->count;
+    for(unsigned p=0;p<hud->count;++p) positions[hud->panels[p].kind]=hud->panels[p].destination;
+    for(unsigned cycle=0;cycle<3;++cycle) {
+        run(core,3,0x100); run(core,120,0); /* R opens unit/status screen */
+        for(unsigned page=0;page<3;++page) {
+            bool tactical=fe8_extract_snapshot(&reader,profile,snapshot); convert(video,frame);
+            assert(fe8_hud_host_update(host,&output,&memory,snapshot,frame,tactical,120,80)==frame);
+            assert(!host->overlay.pixels&&!hud->count&&!hud->menu_latched);
+            assert(host->scale_percent==180);
+            if(page<2) {run(core,3,page?0x20:0x10);run(core,90,0);}
+        }
+        run(core,3,2); run(core,90,0); /* B closes unit screen */
+        for(unsigned n=0;n<60;++n) {
+            run(core,1,0);
+            assert(fe8_extract_snapshot(&reader,profile,snapshot)); convert(video,frame);
+            assert(fe8_hud_host_update(host,&output,&memory,snapshot,frame,true,120,80)==hud->world);
+            assert(host->overlay.pixels&&host->scale_percent==180&&hud->count==panel_count);
+            for(unsigned p=0;p<hud->count;++p)
+                assert(memcmp(&positions[hud->panels[p].kind],&hud->panels[p].destination,
+                    sizeof positions[0])==0);
+        }
+        /* The renderer toggle must not leave a stale overlay or lose the
+         * preference, and the first supported frame must reacquire it. */
+        assert(fe8_hud_host_update(host,&output,&memory,snapshot,frame,false,120,80)==frame);
+        assert(!host->overlay.pixels&&host->scale_percent==180);
+        output.canvas_width=320; output.canvas_height=213; /* zoomed map, same drawable */
+        assert(core->saveState(core,before));
+        assert(fe8_hud_host_update(host,&output,&memory,snapshot,frame,true,40,26)==hud->world);
+        assert(core->saveState(core,after));
+        assert(memcmp(before,after,bytes)==0);
+        assert(host->overlay.pixels&&host->scale_percent==180&&hud->count==panel_count);
+        for(unsigned p=0;p<hud->count;++p)
+            assert(memcmp(&positions[hud->panels[p].kind],&hud->panels[p].destination,
+                sizeof positions[0])==0);
+        output.canvas_width=480; output.canvas_height=320;
+    }
     /* The map cursor is standing on a player unit in both supplied ROMs. */
     assert(core->loadState(core,checkpoint));
     run(core,3,1); run(core,45,0); run(core,3,1); run(core,45,0);
@@ -103,9 +153,9 @@ int main(int argc, char **argv) {
     /* Native-only/unsupported presentation must not retain an old overlay. */
     assert(!fe8_native_hud_extract(hud,&memory,snapshot,frame,240,false));
     assert(!hud->count&&!hud->menu_latched);
-    printf("%s: idle %u/180, menu %u/90, cancel/reacquire and full-state read-only checks passed\n",
+    printf("%s: idle %u/180, menu %u/90, cancel/reacquire, 3 unit-screen round trips at 180%%, zoom/toggle and full-state read-only checks passed\n",
         profile->profile_name,valid,menu_frames);
-    free(checkpoint);free(before);free(after);free(snapshot);free(hud);free(frame);
+    free(checkpoint);free(before);free(after);free(snapshot);fe8_hud_host_deinit(host);free(host);free(frame);
     core->deinit(core);free(video);
     mLogSetDefaultLogger(NULL);mStandardLoggerDeinit(&logger);
     return 0;

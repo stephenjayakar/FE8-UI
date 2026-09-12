@@ -46,6 +46,14 @@ centered or has a frozen map backdrop. Once the supported tactical layout
 returns, the HUD is reacquired automatically. There is no cached stale unit
 card substituted for an unsupported or transitioning screen.
 
+Native unit/status screens remain GBA-sized while open. Closing one, including
+visits that switch stat pages, restores the anchored HUD at the chosen size;
+no extended-renderer toggle is needed. FE8 can change its blend-target mask
+when leaving these screens (the supplied ROMs change BLDCNT from `0x3C42` to
+`0x1C42`). The compositor checks the layer actually beneath each panel pixel
+instead of requiring the backdrop to be a blend target. Untargeted pixels
+remain opaque, and the canonical-frame agreement check still applies.
+
 `native_hud.c` reads public, raw PPU state through the project's byte-reader
 interface: BG0/BG1 graphics and recognized foreground OBJ sprites are UI;
 BG2/BG3 and map objects stay in world space. Pixels covered by a detached
@@ -91,13 +99,20 @@ mismatch, alpha, hidden-unit recovery, native cursor separation, unknown OBJ
 rejection, corner anchoring, action-menu latching, small/odd/HiDPI dimensions,
 clipping and padded-stride guards. `native_hud_host` covers zoom-independent
 hit testing, letterboxing, scale shortcuts, rebinding priority, capture and
-cursor clipping. The synthetic extraction test also passed ASan/UBSan locally.
+cursor clipping. Synthetic cases cover all 16 BG2/BG3/OBJ/backdrop blend-target
+combinations, mixed lower layers within one panel, and foreground map cursors
+that must not change the window's transparency. The synthetic extraction test
+also passed ASan/UBSan locally.
 
 The two optional `native_hud_*` ROM tests boot through normal button input,
 check 180 idle frames, enter and navigate native action menus for 90 frames,
 cancel and reacquire the HUD, and verify byte-identical emulator save states
-before/after extraction. ROMs and states are neither committed nor emitted as
-CI artifacts.
+before/after extraction. They also make three native unit-screen round trips
+per ROM, switch stat pages, check 60 returned-map frames per visit at 180% HUD
+size, and exercise fallback/reacquisition with the renderer off/on and a zoomed
+map. These regressions fail on the original HUD implementation after closing
+the first unit screen. ROMs and states are neither committed nor emitted as CI
+artifacts.
 
 Local validation: all 40 configured tests passed with both supplied ROMs.
 Interactive SDL/Xvfb checks covered wheel zoom, +/-/0, F6 off/on, menu selection

@@ -87,8 +87,65 @@ static void alpha_and_world_sprites(void) {
     for (int y=120;y<128;++y) for(int x=192;x<200;++x) frame[y*240+x]=0xFF00FF00;
     assert(extract(true)); assert(hud.world[120*240+192]==0xFF00FF00);
     assert(hud.atlas[120*240+192]==0xFFFF0000);
+    /* Foreground cursor OBJ is a blend target, but the backdrop underneath
+     * the panel is not. It must not make the recovered window translucent. */
+    put16(io,0x50,0x1C42); put16(io,0x52,0x030D);
+    assert(extract(true)); assert(hud.atlas[120*240+192]==0xFFFF0000);
     /* Unknown foreground sprite in a panel: preserve canonical presentation. */
     put16(oam,4,3); memcpy(original,frame,sizeof frame); expect_fallback();
+}
+/* Opening/closing a native unit screen changes BLDCNT from 0x3C42 to
+ * 0x1C42 in both supplied ROMs: the backdrop stops being a second target,
+ * while terrain and units still blend. Check every world-target combination,
+ * including different lower layers within the same detached panel. */
+static void blend_target_variants(void) {
+    for (unsigned targets = 0; targets < 16; ++targets) {
+        fixture();
+        put16(io, 0x50, 0x0042 | (targets << 10));
+        put16(io, 0x52, 0x030D);
+        put16(palette, 2, 0x03E0); /* BG3 green */
+        put16(palette, 4, 0x03FF); /* BG2 yellow */
+        put16(palette, (256 + 1) * 2, 0x7C1F); /* OBJ magenta */
+        memset(vram + 0x8000 + 32, 0x11, 32);
+        memset(vram + 64, 0x22, 32);
+        memset(vram + 0x10000 + 32, 0x11, 32);
+        for (unsigned y = 14; y < 20; ++y) {
+            for (unsigned x = 23; x < 26; ++x)
+                put16(vram, 0x7800 + (y * 32 + x) * 2, 1);
+            put16(vram, 0x7000 + (y * 32 + 26) * 2, 2);
+        }
+        put16(oam, 0, 120); put16(oam, 2, 216); put16(oam, 4, (2 << 10) | 1);
+        for (int y = 112; y < 160; ++y) for (int x = 184; x < 240; ++x) {
+            unsigned layer = x < 208 ? 3 : x < 216 ? 2 :
+                x < 224 && y >= 120 && y < 128 ? 4 : 5;
+            uint32_t world = layer == 3 ? 0xFF00FF00 : layer == 2 ? 0xFF00FFFF :
+                layer == 4 ? 0xFFFF00FF : 0xFF0000FF;
+            uint32_t panel = 0xFFFF0000;
+            if (targets & (1u << (layer - 2))) {
+                panel = 0xFF000000;
+                for (unsigned shift = 0; shift < 24; shift += 8)
+                    panel |= (((((0xFFFF0000u >> shift) & 255) * 13) +
+                        ((world >> shift) & 255) * 3) >> 4) << shift;
+            }
+            frame[y * 240 + x] = panel;
+        }
+        memcpy(original, frame, sizeof frame);
+        assert(extract(true));
+        assert(memcmp(frame, original, sizeof frame) == 0);
+        for (int y = 112; y < 160; ++y) for (int x = 184; x < 240; ++x) {
+            unsigned layer = x < 208 ? 3 : x < 216 ? 2 :
+                x < 224 && y >= 120 && y < 128 ? 4 : 5;
+            unsigned pos = y * 240 + x;
+            assert((hud.atlas[pos] >> 24) ==
+                (targets & (1u << (layer - 2)) ? 207u : 255u));
+            uint32_t actual = fe8_native_hud_over(hud.atlas[pos], hud.world[pos]);
+            for (unsigned shift = 0; shift < 24; shift += 8) {
+                int delta = (int)((actual >> shift) & 255) -
+                    (int)((frame[pos] >> shift) & 255);
+                assert(delta >= -1 && delta <= 1);
+            }
+        }
+    }
 }
 static void layout(void) {
     fixture(); hud.count=3;
@@ -127,7 +184,7 @@ static void layout(void) {
     assert(guarded[10]==0xFFFFFFFF); assert(guarded[10+7]==0);
 }
 int main(void) {
-    extraction_and_fallback(); alpha_and_world_sprites(); layout();
+    extraction_and_fallback(); alpha_and_world_sprites(); blend_target_variants(); layout();
     puts("native HUD extraction, fallback, sprite preservation, alpha, layout and clipping passed");
     return 0;
 }
