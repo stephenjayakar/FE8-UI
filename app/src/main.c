@@ -18,6 +18,7 @@
 #include "frame_scheduler.h"
 #include "host_audio.h"
 #include "host_cursor.h"
+#include "native_hud_host.h"
 #include "host_settings.h"
 #include "host_video.h"
 #include "macos_library.h"
@@ -63,6 +64,8 @@ struct fe8_options {
     int perf_stats;
     int mute;
     int open_inventory;
+    int native_ui;
+    int hud_scale;
 };
 
 typedef struct Fe8PerfStats {
@@ -98,13 +101,14 @@ static void usage(const char *program) {
         "       [--auto-continue] [--seek-large-map]\n"
         "       [--state-out MAP_STATE.ss] [--quick-state QUICK_STATE.ss]\n"
         "       [--realtime] [--perf-stats] [--mute] [--inventory]\n"
-        "       [--no-extensions]\n", program);
+        "       [--no-extensions] [--native-ui] [--hud-scale 80..200]\n", program);
 }
 
 static int parse_options(int argc, char **argv, struct fe8_options *options) {
     int i;
     memset(options, 0, sizeof(*options));
     options->extensions = 1;
+    options->hud_scale = FE8_HUD_DEFAULT_SCALE;
     options->capture_after = 1;
     for (i = 1; i < argc; ++i) {
         const char **destination = NULL;
@@ -122,7 +126,17 @@ static int parse_options(int argc, char **argv, struct fe8_options *options) {
             destination = &options->state_out_path;
         else if (strcmp(argv[i], "--quick-state") == 0)
             destination = &options->quick_state_path;
-        else if (strcmp(argv[i], "--capture-after") == 0) {
+        else if (strcmp(argv[i], "--native-ui") == 0) {
+            options->native_ui = 1;
+            continue;
+        } else if (strcmp(argv[i], "--hud-scale") == 0) {
+            char *end;
+            if (++i >= argc) return 0;
+            long percent = strtol(argv[i], &end, 10);
+            if (!*argv[i] || *end || percent < 80 || percent > 200) return 0;
+            options->hud_scale = (int)percent;
+            continue;
+        } else if (strcmp(argv[i], "--capture-after") == 0) {
             char *end;
             unsigned long frames;
             if (++i >= argc)
@@ -196,6 +210,10 @@ static void update_hotkeys(
 
 static uint8_t core_read8(void *context, uint32_t address) {
     struct mCore *core = context;
+    /* Scroll and blend registers are write-only on the GBA bus. Presentation
+     * reads the public raw register shadow, never open-bus values. */
+    if (address >= UINT32_C(0x04000000) && address < UINT32_C(0x04000400))
+        return core->rawRead8(core, address, -1);
     return core->busRead8(core, address);
 }
 
@@ -207,7 +225,7 @@ static void core_write8(void *context, uint32_t address, uint8_t value) {
 static void map_core_memory(Fe8AddressSpace *space, struct mCore *core) {
     static const uint32_t bases[] = {
         UINT32_C(0x02000000), UINT32_C(0x03000000), UINT32_C(0x05000000),
-        UINT32_C(0x06000000), UINT32_C(0x08000000),
+        UINT32_C(0x06000000), UINT32_C(0x07000000), UINT32_C(0x08000000),
     };
     size_t i;
     fe8_address_space_init(space, core, core_read8);
@@ -596,6 +614,7 @@ int main(int argc, char **argv) {
     struct pan_controller pan = {0};
     mColor *video_buffer = NULL;
     Fe8HostPixel *host_frame = NULL;
+    Fe8HudHost *hud_host = NULL;
     Fe8HostPixel *canvas = NULL;
     Fe8HostPixel *frozen_canvas = NULL;
     size_t frozen_canvas_pixels = 0;
@@ -696,9 +715,12 @@ int main(int argc, char **argv) {
     }
     video_buffer = calloc((size_t)GBA_HEIGHT * video_stride, sizeof(*video_buffer));
     host_frame = malloc((size_t)GBA_WIDTH * GBA_HEIGHT * sizeof(*host_frame));
+    hud_host = calloc(1, sizeof(*hud_host));
     terrain_cache = fe8_terrain_cache_create();
-    if (!video_buffer || !host_frame || !terrain_cache)
+    if (!video_buffer || !host_frame || !terrain_cache || !hud_host)
         goto cleanup;
+    hud_host->enabled = !options.native_ui;
+    hud_host->scale_percent = options.hud_scale;
     core->setVideoBuffer(core, video_buffer, video_stride);
     if (options.save_path && !load_save(core, options.save_path))
         fprintf(stderr, "Warning: unable to load save '%s'\n", options.save_path);
@@ -788,6 +810,8 @@ int main(int argc, char **argv) {
             inventory_ui.desktop_scale = inventory_point_scale(&video);
         if (state_reload_generation != applied_state_reload_generation) {
             applied_state_reload_generation = state_reload_generation;
+            fe8_native_hud_reset(&hud_host->hud);
+            hud_host->overlay.pixels = NULL;
             if (inventory_ui.active)
                 set_inventory_presentation(&video, &canvas, &canvas_width,
                     &canvas_height, &viewport, &gba_x, &gba_y,
@@ -813,8 +837,12 @@ int main(int argc, char **argv) {
                 running = 0;
                 break;
             }
-            fe8_presentation_reset(&presentation);
-            visual_profile_active = 0;
+            /* Geometry changes do not end a validated tactical scene. The
+             * normal per-frame visual gate still rejects unsupported frames. */
+            if (presentation.state != FE8_PRESENTATION_LIVE) {
+                fe8_presentation_reset(&presentation);
+                visual_profile_active = 0;
+            }
             frozen_valid = 0;
             gba_x = (canvas_width - GBA_WIDTH) / 2;
             gba_y = (canvas_height - GBA_HEIGHT) / 2;
@@ -906,6 +934,11 @@ int main(int argc, char **argv) {
             map_state.camera_y = snapshot.camera_y;
             fe8_viewport_clamp_pan(
                 &pan.x, &pan.y, &snapshot, &viewport, gba_x, gba_y);
+            if (pointer_canvas_valid && fe8_hud_host_contains(hud_host, &video,
+                    pointer_canvas_x, pointer_canvas_y)) {
+                if (mouse.active) fe8_mouse_cancel(&mouse);
+                pointer_canvas_valid = pointer_tile_valid = 0;
+            }
             if (settings.mouse_enabled && pointer_canvas_valid && !pan.dragging &&
                     visual_profile_active && snapshot.input_lock == 0 &&
                     !mouse.confirm) {
@@ -966,6 +999,8 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_WINDOWEVENT &&
                     event.window.event == SDL_WINDOWEVENT_LEAVE) {
                 host_pointer_visible = 0;
+                pointer_canvas_valid = pointer_tile_valid = 0;
+                if (mouse.active) fe8_mouse_cancel(&mouse);
                 if (system_cursor_hidden) {
                     SDL_ShowCursor(SDL_ENABLE);
                     system_cursor_hidden = 0;
@@ -985,6 +1020,8 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+            if (!inventory_ui.active && fe8_hud_host_shortcut(hud_host, &settings, &event))
+                continue;
             if (inventory_ui.active && inventory_ui.desktop) {
                 if (event.type == SDL_WINDOWEVENT &&
                         (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
@@ -1085,6 +1122,21 @@ int main(int argc, char **argv) {
                         "Inventory manager unavailable: no active FE8 roster\n");
                 }
                 continue;
+            }
+            /* Fixed information panels are not map tiles. Do not route a
+             * hover/click through them; native action menus still receive A/B. */
+            if (!inventory_ui.active && settings.mouse_enabled && snapshot_valid && snapshot.input_lock == 0 &&
+                    !pan.dragging && (event.type == SDL_MOUSEMOTION ||
+                    (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT))) {
+                int x, y;
+                int ex = event.type == SDL_MOUSEMOTION ? event.motion.x : event.button.x;
+                int ey = event.type == SDL_MOUSEMOTION ? event.motion.y : event.button.y;
+                if (fe8_host_video_event_to_canvas(&video, ex, ey, &x, &y) &&
+                        fe8_hud_host_contains(hud_host, &video, x, y)) {
+                    if (mouse.active) fe8_mouse_cancel(&mouse);
+                    pointer_canvas_valid = pointer_tile_valid = 0;
+                    continue;
+                }
             }
             if (inventory_ui.active) {
                 inventory_ui.desktop_scale = inventory_point_scale(&video);
@@ -1310,8 +1362,12 @@ int main(int argc, char **argv) {
                         running = 0;
                         break;
                     }
-                    fe8_presentation_reset(&presentation);
-                    visual_profile_active = 0;
+                    /* Geometry changes do not end a validated tactical scene. The
+                     * normal per-frame visual gate still rejects unsupported frames. */
+                    if (presentation.state != FE8_PRESENTATION_LIVE) {
+                        fe8_presentation_reset(&presentation);
+                        visual_profile_active = 0;
+                    }
                     frozen_valid = 0;
                     gba_x = (canvas_width - GBA_WIDTH) / 2;
                     gba_y = (canvas_height - GBA_HEIGHT) / 2;
@@ -1731,7 +1787,11 @@ int main(int argc, char **argv) {
          * panned. Outside a validated map, retain the normal centered frame. */
         frame_placement = fe8_presentation_frame_placement(
             extension_active != 0, canvas_width, canvas_height, frame_placement);
-        composite_framebuffer(host_frame, GBA_WIDTH, canvas,
+        const Fe8HostPixel *map_frame = fe8_hud_host_update(hud_host, &video,
+            &render_memory, &snapshot, host_frame,
+            snapshot_valid && visual_profile_active && !inventory_ui.active,
+            frame_placement.x, frame_placement.y);
+        composite_framebuffer(map_frame, GBA_WIDTH, canvas,
             canvas_width, canvas_height, frame_placement.x, frame_placement.y);
         if (inventory_ui.active) {
             int window_x;
@@ -1763,13 +1823,17 @@ int main(int argc, char **argv) {
             SDL_ShowCursor(SDL_ENABLE);
             system_cursor_hidden = 0;
         }
-        if (settings.mouse_enabled && !inventory_ui.active && host_pointer_visible)
-            fe8_host_draw_mouse_cursor(canvas, canvas_width,
-                canvas_width, canvas_height,
-                host_pointer_canvas_x, host_pointer_canvas_y);
+        if (settings.mouse_enabled && !inventory_ui.active && host_pointer_visible) {
+            if (hud_host->overlay.pixels)
+                fe8_hud_host_pointer(hud_host, &video, host_pointer_canvas_x, host_pointer_canvas_y);
+            else
+                fe8_host_draw_mouse_cursor(canvas, canvas_width,
+                    canvas_width, canvas_height,
+                    host_pointer_canvas_x, host_pointer_canvas_y);
+        }
         {
             uint64_t stage_started = SDL_GetPerformanceCounter();
-            int presented = fe8_host_video_present(&video, canvas);
+            int presented = fe8_host_video_present(&video, canvas, &hud_host->overlay);
             perf.presentation += SDL_GetPerformanceCounter() - stage_started;
             ++perf.presented_frames;
             if (!presented) {
@@ -1792,8 +1856,11 @@ int main(int argc, char **argv) {
                      (inventory_ui.active && perf.presented_frames >= options.capture_after))) ||
                  (options.seek_large_map && large_map_ready) ||
                  (options.seek_large_map && frame_count >= 3600))) {
-            if (!save_canvas_bmp(
-                    options.capture_path, canvas, canvas_width, canvas_height))
+            Fe8HostPixel *hud_capture = fe8_hud_host_capture(hud_host, &video, canvas);
+            if (!save_canvas_bmp(options.capture_path,
+                    hud_capture ? hud_capture : canvas,
+                    hud_capture ? hud_host->overlay.width : canvas_width,
+                    hud_capture ? hud_host->overlay.height : canvas_height))
                 fprintf(stderr, "Unable to save capture '%s': %s\n", options.capture_path, SDL_GetError());
             else
                 fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u, sprites=%u)\n",
@@ -1801,6 +1868,7 @@ int main(int argc, char **argv) {
                     snapshot_valid ? snapshot.map_width : 0,
                     snapshot_valid ? snapshot.map_height : 0,
                     rendered_map_sprites);
+            free(hud_capture);
             if (snapshot_valid)
                 fprintf(stderr, "Final FE8 cursor: %u,%u\n", snapshot.cursor_x, snapshot.cursor_y);
             running = 0;
@@ -1836,6 +1904,8 @@ cleanup:
     free(canvas);
     free(frozen_canvas);
     fe8_terrain_cache_destroy(terrain_cache);
+    fe8_hud_host_deinit(hud_host);
+    free(hud_host);
     free(host_frame);
     free(video_buffer);
     return exit_code;

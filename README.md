@@ -14,3 +14,4 @@ This project aims at fixing that. However, it requires small patches per romhack
 * Extended renderer - make sure to enable this in settings
 * Mouse controls - only works when extended renderer is on. Only works for unit movement
 * Inventory editor - Press `I`. This allows you to more easily swap units' stuff
+* Anchored native map HUD - supported unit, objective and terrain panels stay at the window edges, independently of map zoom. `+` / `-` resize the HUD; `0` resets it. Action menus stay beside the selected unit. [Controls, supported layouts and fallback behavior](docs/native-map-hud.md).

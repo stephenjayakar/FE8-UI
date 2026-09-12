@@ -47,6 +47,8 @@ endif()
 
 add_executable(fe8-mgba-sdl
     app/src/main.c
+    app/src/native_hud.c
+    app/src/native_hud_host.c
     app/src/address_space.c
     app/src/fe8_profile.c
     app/src/frame_alignment.c

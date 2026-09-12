@@ -16,6 +16,8 @@ typedef struct Fe8HostVideoGl {
     int shader_initialized;
     int drawable_width;
     int drawable_height;
+    GLuint hud_program, hud_texture, hud_vao;
+    int hud_width, hud_height;
 } Fe8HostVideoGl;
 
 /* A single configurable CRT pass keeps preset changes cheap: switching modes
@@ -227,7 +229,85 @@ int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader mode) {
     return 1;
 }
 
-int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
+/* A final drawable-resolution pass, deliberately outside mGBA's game shader
+ * chain: zoom, CRT curvature and scanline sampling must not shrink the HUD. */
+static GLuint compile_hud_shader(GLenum type, const char *source) {
+    GLuint shader = glCreateShader(type);
+    GLint compiled = GL_FALSE;
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (!compiled) {
+        char log[1024] = {0};
+        glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+        SDL_SetError("Map HUD shader: %s", log);
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+static int draw_hud(Fe8HostVideoGl *backend, const Fe8VideoOverlay *overlay) {
+    if (!overlay || !overlay->pixels) return 1;
+    if (!backend->hud_program) {
+        const char *vs = "#version 150\n"
+            "out vec2 uv; void main() {\n"
+            "vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+            "uv = vec2(p.x, 1.0-p.y); gl_Position = vec4(p*2.0-1.0, 0.0, 1.0); }\n";
+        const char *fs = "#version 150\n"
+            "uniform sampler2D hud; in vec2 uv; out vec4 color;\n"
+            "void main() { color = texture(hud, uv); }\n";
+        GLuint vertex = compile_hud_shader(GL_VERTEX_SHADER, vs);
+        GLuint fragment = compile_hud_shader(GL_FRAGMENT_SHADER, fs);
+        if (!vertex || !fragment) {
+            glDeleteShader(vertex); glDeleteShader(fragment); return 0;
+        }
+        GLuint program = glCreateProgram();
+        glAttachShader(program, vertex); glAttachShader(program, fragment);
+        glLinkProgram(program);
+        glDeleteShader(vertex); glDeleteShader(fragment);
+        GLint linked = GL_FALSE;
+        glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        if (!linked) {
+            glDeleteProgram(program); SDL_SetError("Unable to link map HUD shader"); return 0;
+        }
+        backend->hud_program = program;
+        glGenVertexArrays(1, &backend->hud_vao);
+        glGenTextures(1, &backend->hud_texture);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, backend->drawable_width, backend->drawable_height);
+    glDisable(GL_SCISSOR_TEST);
+    glUseProgram(backend->hud_program);
+    glBindVertexArray(backend->hud_vao);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, backend->hud_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    if (backend->hud_width != overlay->width || backend->hud_height != overlay->height) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, overlay->width, overlay->height,
+            0, GL_RGBA, GL_UNSIGNED_BYTE, overlay->pixels);
+        backend->hud_width = overlay->width; backend->hud_height = overlay->height;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, overlay->width, overlay->height,
+            GL_RGBA, GL_UNSIGNED_BYTE, overlay->pixels);
+    }
+    glUniform1i(glGetUniformLocation(backend->hud_program, "hud"), 0);
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glDisable(GL_BLEND);
+    glBindVertexArray(0);
+    glUseProgram(0);
+    return glGetError() == GL_NO_ERROR;
+}
+
+int fe8_host_video_present(Fe8HostVideo *video, const void *pixels,
+        const Fe8VideoOverlay *overlay) {
     Fe8HostVideoGl *backend = video ? video->backend : NULL;
     if (!backend || !pixels)
         return 0;
@@ -239,6 +319,7 @@ int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
     backend->renderer.d.clear(&backend->renderer.d);
     backend->renderer.d.setImage(&backend->renderer.d, VIDEO_LAYER_IMAGE, pixels);
     backend->renderer.d.drawFrame(&backend->renderer.d);
+    if (!draw_hud(backend, overlay)) return 0;
     SDL_GL_SwapWindow(video->window);
     return glGetError() == GL_NO_ERROR;
 }
@@ -331,6 +412,9 @@ void fe8_host_video_deinit(Fe8HostVideo *video) {
         if (video->window && backend->gl_context)
             SDL_GL_MakeCurrent(video->window, backend->gl_context);
         destroy_shader(backend);
+        if (backend->hud_texture) glDeleteTextures(1, &backend->hud_texture);
+        if (backend->hud_vao) glDeleteVertexArrays(1, &backend->hud_vao);
+        if (backend->hud_program) glDeleteProgram(backend->hud_program);
         if (backend->renderer_initialized)
             backend->renderer.d.deinit(&backend->renderer.d);
         if (backend->gl_context)

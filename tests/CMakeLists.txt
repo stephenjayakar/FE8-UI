@@ -192,3 +192,25 @@ target_link_libraries(test_inventory_pins PRIVATE ${DESKTOP_TEXT_LIBS})
 
 fe8_add_test(inventory_unit_search test_inventory_unit_search.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
 target_link_libraries(test_inventory_unit_search PRIVATE ${DESKTOP_TEXT_LIBS})
+
+fe8_add_test(native_hud test_native_hud.c ../app/src/native_hud.c)
+
+add_executable(test_native_hud_rom test_native_hud_rom.c
+    ../app/src/native_hud.c ../app/src/fe8_profile.c ../app/src/address_space.c)
+target_include_directories(test_native_hud_rom PRIVATE ../app/src)
+target_compile_definitions(test_native_hud_rom PRIVATE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_native_hud_rom PRIVATE mgba)
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME native_hud_archanae COMMAND test_native_hud_rom "${FE8_ARCHANAE_ROM}")
+    set_tests_properties(native_hud_archanae PROPERTIES TIMEOUT 90)
+endif()
+if(FE8_SACRED_ECHOES_ROM)
+    add_test(NAME native_hud_sacred_echoes COMMAND test_native_hud_rom "${FE8_SACRED_ECHOES_ROM}")
+    set_tests_properties(native_hud_sacred_echoes PROPERTIES TIMEOUT 90)
+endif()
+
+fe8_add_test(native_hud_host test_native_hud_host.c
+    ../app/src/native_hud.c ../app/src/native_hud_host.c
+    ../app/src/host_cursor.c ../app/src/host_settings.c)
+target_link_libraries(test_native_hud_host PRIVATE ${FE8_SDL_TARGET})

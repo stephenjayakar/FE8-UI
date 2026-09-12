@@ -8,6 +8,8 @@
 typedef struct Fe8HostVideoSdl {
     SDL_Renderer *renderer;
     SDL_Texture *texture;
+    SDL_Texture *overlay;
+    int overlay_width, overlay_height;
 } Fe8HostVideoSdl;
 
 static int apply_layout(Fe8HostVideo *video, Fe8HostVideoSdl *backend) {
@@ -72,7 +74,8 @@ int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader shader) {
     return 1;
 }
 
-int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
+int fe8_host_video_present(Fe8HostVideo *video, const void *pixels,
+        const Fe8VideoOverlay *overlay) {
     Fe8HostVideoSdl *backend = video ? video->backend : NULL;
     if (!backend)
         return 0;
@@ -82,6 +85,28 @@ int fe8_host_video_present(Fe8HostVideo *video, const void *pixels) {
     SDL_SetRenderDrawColor(backend->renderer, 8, 10, 12, 255);
     SDL_RenderClear(backend->renderer);
     SDL_RenderCopy(backend->renderer, backend->texture, NULL, NULL);
+    if (overlay && overlay->pixels) {
+        if (!backend->overlay || backend->overlay_width != overlay->width ||
+                backend->overlay_height != overlay->height) {
+            SDL_Texture *texture = SDL_CreateTexture(backend->renderer,
+                SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, overlay->width, overlay->height);
+            if (!texture) return 0;
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+            SDL_DestroyTexture(backend->overlay);
+            backend->overlay = texture;
+            backend->overlay_width = overlay->width; backend->overlay_height = overlay->height;
+        }
+        if (SDL_UpdateTexture(backend->overlay, NULL, overlay->pixels, overlay->width * 4) != 0)
+            return 0;
+        /* Draw in physical pixels, then restore the mouse-event transform. */
+        SDL_RenderSetLogicalSize(backend->renderer, 0, 0);
+        SDL_RenderSetViewport(backend->renderer, NULL);
+        SDL_RenderSetScale(backend->renderer, 1, 1);
+        int drawn = SDL_RenderCopy(backend->renderer, backend->overlay, NULL, NULL);
+        int restored = SDL_RenderSetLogicalSize(backend->renderer, video->canvas_width, video->canvas_height);
+        if (drawn != 0 || restored != 0) return 0;
+    }
     SDL_RenderPresent(backend->renderer);
     return 1;
 }
@@ -176,6 +201,7 @@ void fe8_host_video_deinit(Fe8HostVideo *video) {
         return;
     if (backend) {
         SDL_DestroyTexture(backend->texture);
+        SDL_DestroyTexture(backend->overlay);
         SDL_DestroyRenderer(backend->renderer);
         free(backend);
     }
