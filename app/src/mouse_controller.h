@@ -20,7 +20,21 @@ typedef struct Fe8MouseController {
     int retries;
     int blocked_frames;
     int stalled;
+    double scroll_fraction;
+    int scroll_steps;
+    int scroll_direction;
+    int scroll_press_frames;
+    int scroll_release_frames;
+    int scroll_idle_frames;
+    uint32_t scroll_key;
 } Fe8MouseController;
+
+/* Match native A/B routing; keep map zoom independent of menu navigation. */
+int fe8_mouse_native_ui(
+    const Fe8LiveState *snapshot, int snapshot_valid, int map_active);
+/* Positive wheel units select Up, negative units select Down. */
+void fe8_mouse_scroll(Fe8MouseController *mouse, double wheel_delta);
+void fe8_mouse_cancel_scroll(Fe8MouseController *mouse);
 
 void fe8_mouse_set_target(Fe8MouseController *mouse, int x, int y, int confirm);
 void fe8_mouse_cancel(Fe8MouseController *mouse);

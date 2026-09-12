@@ -12,5 +12,5 @@ This project aims at fixing that. However, it requires small patches per romhack
 
 # Features
 * Extended renderer - make sure to enable this in settings
-* Mouse controls - only works when extended renderer is on. Only works for unit movement
+* Mouse controls - point to move the map cursor; left-click confirms (A), right-click goes back (B). Scroll up/down to select native menu options and weapons. On the tactical map, scrolling still zooms; Ctrl+scroll zooms from native menus too. Map pointing requires the extended renderer, but native menu controls do not. Armory keeps its own list scrolling.
 * Inventory editor - Press `I`. This allows you to more easily swap units' stuff

@@ -649,9 +649,9 @@ int main(int argc, char **argv) {
     int pointer_canvas_valid = 0;
     int pointer_canvas_x = 0;
     int pointer_canvas_y = 0;
-    int host_pointer_visible = 0;
     int host_pointer_canvas_x = 0;
     int host_pointer_canvas_y = 0;
+    int host_pointer_visible = 0;
     int system_cursor_hidden = 0;
     int16_t previous_camera_x = 0;
     int16_t previous_camera_y = 0;
@@ -788,6 +788,11 @@ int main(int argc, char **argv) {
             inventory_ui.desktop_scale = inventory_point_scale(&video);
         if (state_reload_generation != applied_state_reload_generation) {
             applied_state_reload_generation = state_reload_generation;
+            fe8_mouse_cancel(&mouse);
+            keyboard_keys = 0;
+            hotkeys_down = 0;
+            pointer_canvas_valid = 0;
+            pointer_tile_valid = 0;
             if (inventory_ui.active)
                 set_inventory_presentation(&video, &canvas, &canvas_width,
                     &canvas_height, &viewport, &gba_x, &gba_y,
@@ -945,7 +950,23 @@ int main(int argc, char **argv) {
         } else if (!large_map_ready) {
             large_map_ready_frames = 0;
         }
+        /* Latch routing for this event batch: zoom invalidates the visual
+         * profile until the next render, but must not turn later wheel events
+         * in the same batch into native menu input. */
+        int native_mouse_ui = fe8_mouse_native_ui(
+            &live_state, live_state_valid, visual_profile_active);
+        if (!settings.mouse_enabled || !native_mouse_ui)
+            fe8_mouse_cancel_scroll(&mouse);
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_WINDOWEVENT &&
+                    event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                fe8_mouse_cancel(&mouse);
+                keyboard_keys = 0;
+                hotkeys_down = 0;
+                pointer_canvas_valid = 0;
+                pointer_tile_valid = 0;
+                pan.dragging = 0;
+            }
             if (event.type == SDL_MOUSEMOTION) {
                 if ((settings.mouse_enabled || inventory_ui.active) &&
                         fe8_host_video_event_to_canvas(
@@ -1285,11 +1306,21 @@ int main(int argc, char **argv) {
                 int old_world_y = 0;
 #if SDL_VERSION_ATLEAST(2, 0, 18)
                 double wheel_delta = event.wheel.preciseY;
+                if (wheel_delta == 0)
+                    wheel_delta = event.wheel.y;
 #else
                 double wheel_delta = event.wheel.y;
 #endif
                 if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
                     wheel_delta = -wheel_delta;
+                if (settings.mouse_enabled && native_mouse_ui &&
+                        !(SDL_GetModState() & KMOD_CTRL)) {
+                    pointer_canvas_valid = 0;
+                    pointer_tile_valid = 0;
+                    fe8_mouse_scroll(&mouse, wheel_delta);
+                    continue;
+                }
+                fe8_mouse_cancel_scroll(&mouse);
                 if (wheel_delta > 1.0)
                     wheel_delta = 1.0;
                 else if (wheel_delta < -1.0)
@@ -1393,6 +1424,7 @@ int main(int argc, char **argv) {
                     fe8_mouse_cancel(&mouse);
                     mouse.pulse_key = UINT32_C(1) << FE8_HOST_A;
                     mouse.press_frames = 2;
+                    mouse.release_frames = 2;
                     fprintf(stderr, "Mouse left-click: A queued for native UI\n");
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP &&
@@ -1482,6 +1514,10 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* A quick-load can happen inside the event batch. Clear its old input
+         * on the next loop before stepping the newly loaded state even once. */
+        if (state_reload_generation != applied_state_reload_generation)
+            continue;
         if (!inventory_ui.active) {
             inventory_history.count=0;
             inventory_ui.undo_count=0;
@@ -1494,6 +1530,11 @@ int main(int argc, char **argv) {
             for (batch_index = 0; batch_index < batch_limit; ++batch_index) {
                 uint64_t stage_started = SDL_GetPerformanceCounter();
                 ++frame_count;
+                /* Drop queued directions as soon as native UI returns to a
+                 * live map, including between fast-forward emulation frames. */
+                if (!settings.mouse_enabled || !fe8_mouse_native_ui(
+                        &live_state, live_state_valid, visual_profile_active))
+                    fe8_mouse_cancel_scroll(&mouse);
                 core->setKeys(core, keyboard_keys |
                     (options.auto_continue && !large_map_ready ?
                         scripted_continue_keys(frame_count) : 0) |
@@ -1699,7 +1740,7 @@ int main(int argc, char **argv) {
             visual_profile_active = 0;
         }
         if (!visual_profile_active) {
-            /* Cancel map travel, but preserve direct A/B pulses in native menus. */
+            /* Cancel map travel, but preserve A/B and wheel pulses in native UI. */
             if (mouse.active)
                 fe8_mouse_cancel(&mouse);
             pan.dragging = 0;
