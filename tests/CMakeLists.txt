@@ -45,6 +45,13 @@ fe8_add_test(host_settings
 # Reuse the SDL target already resolved by the top-level build.
 target_link_libraries(test_host_settings PRIVATE ${FE8_SDL_TARGET})
 
+# Exercise the real converter and core ring without a ROM or audio hardware.
+fe8_add_test(host_audio test_host_audio.c ../app/src/host_audio.c)
+target_compile_definitions(test_host_audio PRIVATE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_host_audio PRIVATE mgba ${FE8_SDL_TARGET})
+set_tests_properties(host_audio PROPERTIES TIMEOUT 60)
+
 fe8_add_test(host_text
     test_host_text.c ../app/src/host_text_bitmap.c)
 

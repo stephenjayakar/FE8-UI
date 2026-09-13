@@ -73,16 +73,19 @@ static int update_core_rate(Fe8HostAudio *audio, unsigned core_rate,
 
 void fe8_host_audio_set_enabled(Fe8HostAudio *audio, int enabled) {
     struct mAudioBuffer *source;
-    if (!audio->device)
+    enabled = enabled != 0;
+    if (!audio->device || audio->enabled == enabled)
         return;
-    audio->enabled = enabled != 0;
-    SDL_PauseAudioDevice(audio->device, audio->enabled ? 0 : 1);
-    if (!audio->enabled) {
-        SDL_ClearQueuedAudio(audio->device);
-        SDL_AudioStreamClear(audio->stream);
-        source = audio->core->getAudioBuffer(audio->core);
-        mAudioBufferClear(source);
-    }
+    /* Muting does not stop the core producing samples. Clear both sides of
+     * the transition so speed-up audio cannot leak into resumed playback. */
+    SDL_PauseAudioDevice(audio->device, 1);
+    SDL_ClearQueuedAudio(audio->device);
+    SDL_AudioStreamClear(audio->stream);
+    source = audio->core->getAudioBuffer(audio->core);
+    mAudioBufferClear(source);
+    audio->enabled = enabled;
+    if (audio->enabled)
+        SDL_PauseAudioDevice(audio->device, 0);
 }
 
 void fe8_host_audio_drain(Fe8HostAudio *audio) {
@@ -92,9 +95,15 @@ void fe8_host_audio_drain(Fe8HostAudio *audio) {
     size_t available;
     int bytes;
     uint32_t queued_limit;
-    if (!audio->device || !audio->enabled)
+    if (!audio->core)
         return;
     source = audio->core->getAudioBuffer(audio->core);
+    if (!audio->device || !audio->enabled) {
+        /* The emulated APU keeps running during speed-up/mute. Discard its
+         * output rather than retaining an old, eventually full PCM buffer. */
+        mAudioBufferClear(source);
+        return;
+    }
     if (!update_core_rate(audio,
             audio->core->audioSampleRate(audio->core), source))
         return;
