@@ -87,6 +87,40 @@ static void fill_canvas(Fe8HostPixel *pixels, size_t stride,
     }
 }
 
+/* The native frame may never show every palette used by the extended map.
+ * Infer a uniform bank offset only when at least two independently confirmed
+ * source banks agree and none disagree. Keep this in a render-only copy: a
+ * custom remap must still be learned from the native frame, and any new
+ * contradiction must withdraw the inferred banks on the next render. */
+static void infer_uniform_palette_mapping(const Fe8PaletteMapping *confirmed,
+    Fe8PaletteMapping *inferred) {
+    unsigned layer;
+    *inferred = *confirmed;
+    for (layer = 0; layer < 2; ++layer) {
+        unsigned source;
+        unsigned count = 0;
+        unsigned offset = 0;
+        for (source = 0; source < 16; ++source) {
+            unsigned candidate;
+            if (!(confirmed->valid_mask[layer] & (UINT16_C(1) << source)))
+                continue;
+            candidate = (confirmed->bank[layer][source] + 16u - source) & 0xF;
+            if (count && candidate != offset)
+                break;
+            offset = candidate;
+            ++count;
+        }
+        if (source != 16 || count < 2)
+            continue;
+        for (source = 0; source < 16; ++source) {
+            if (confirmed->valid_mask[layer] & (UINT16_C(1) << source))
+                continue;
+            inferred->bank[layer][source] = (uint8_t)((source + offset) & 0xF);
+            inferred->valid_mask[layer] |= UINT16_C(1) << source;
+        }
+    }
+}
+
 static bool mapped_bank(const Fe8MapRenderState *state, bool fogged,
     unsigned source_bank, unsigned *destination_bank) {
     unsigned layer = fogged ? 1 : 0;
@@ -171,11 +205,18 @@ bool fe8_render_extended_terrain(
     int last_map_x;
     int last_map_y;
     int map_y;
+    Fe8PaletteMapping inferred_mapping;
+    Fe8MapRenderState inferred_state;
 
     if (!memory || !memory->read8 || !pixels || !fe8_extended_state_is_sane(state) ||
         viewport.width <= 0 || viewport.height <= 0 || stride_pixels < (size_t)viewport.width)
         return false;
 
+    inferred_state = *state;
+    if (state->palette_mapping) {
+        infer_uniform_palette_mapping(state->palette_mapping, &inferred_mapping);
+        inferred_state.palette_mapping = &inferred_mapping;
+    }
     fill_canvas(pixels, stride_pixels, viewport.width, viewport.height,
         UINT32_C(0xFF101418));
     first_map_x = floor_div(state->camera_x - viewport.gba_x, MAP_TILE_SIZE);
@@ -208,24 +249,34 @@ bool fe8_render_extended_terrain(
             Fe8HostPixel *tile = local_tile;
             size_t cache_index = (size_t)map_y * state->map_width + map_x;
             unsigned quadrant;
+            bool confirmed;
+            bool cached;
+            const Fe8MapRenderState *decode_state;
             for (quadrant = 0; quadrant < 4; ++quadrant)
                 entries[quadrant] = read16(memory,
                     state->tileset_config + (uint32_t)(metatile + quadrant) * 2);
-            if (tile_banks_resolved(state, metatile, entries, fogged)) {
-                if (state->tile_cache)
+            confirmed = tile_banks_resolved(state, metatile, entries, fogged);
+            cached = state->tile_cache && state->tile_cache->valid[cache_index] &&
+                state->tile_cache->metatile[cache_index] == metatile &&
+                state->tile_cache->fogged[cache_index] == fogged;
+            decode_state = confirmed ? state : &inferred_state;
+            /* Previously observed pixels outrank a provisional offset. Never
+             * put inferred pixels in the validated cache, even when only one
+             * quadrant needs inference; otherwise a disproved offset sticks. */
+            if (confirmed || (!cached &&
+                    tile_banks_resolved(decode_state, metatile, entries, fogged))) {
+                if (state->tile_cache && confirmed)
                     tile = state->tile_cache->pixels[cache_index];
                 for (quadrant = 0; quadrant < 4; ++quadrant)
-                    draw_subtile_to_tile(memory, state, entries[quadrant], fogged,
+                    draw_subtile_to_tile(memory, decode_state, entries[quadrant], fogged,
                         (int)(quadrant & 1) * SUBTILE_SIZE,
                         (int)(quadrant >> 1) * SUBTILE_SIZE, tile);
-                if (state->tile_cache) {
+                if (state->tile_cache && confirmed) {
                     state->tile_cache->valid[cache_index] = 1;
                     state->tile_cache->metatile[cache_index] = metatile;
                     state->tile_cache->fogged[cache_index] = fogged;
                 }
-            } else if (state->tile_cache && state->tile_cache->valid[cache_index] &&
-                    state->tile_cache->metatile[cache_index] == metatile &&
-                    state->tile_cache->fogged[cache_index] == fogged) {
+            } else if (cached) {
                 tile = state->tile_cache->pixels[cache_index];
             } else {
                 for (quadrant = 0; quadrant < MAP_TILE_SIZE * MAP_TILE_SIZE; ++quadrant)
