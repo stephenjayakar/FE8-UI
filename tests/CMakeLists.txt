@@ -192,3 +192,17 @@ target_link_libraries(test_inventory_pins PRIVATE ${DESKTOP_TEXT_LIBS})
 
 fe8_add_test(inventory_unit_search test_inventory_unit_search.c ${inventory_ui_sources} ${DESKTOP_TEXT_SOURCE})
 target_link_libraries(test_inventory_unit_search PRIVATE ${DESKTOP_TEXT_LIBS})
+
+# Cold-renderer terrain regression with a real native-frame pixel oracle.
+# ROM and optional PPM/state outputs stay local, just like inventory ROM tests.
+add_executable(test_archanae_map_loading test_archanae_map_loading.c
+    ../app/src/address_space.c ../app/src/fe8_profile.c ../app/src/extended_map_renderer.c)
+target_include_directories(test_archanae_map_loading PRIVATE ../app/src)
+target_compile_definitions(test_archanae_map_loading PRIVATE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_archanae_map_loading PRIVATE mgba)
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME archanae_map_loading
+        COMMAND test_archanae_map_loading "${FE8_ARCHANAE_ROM}")
+    set_tests_properties(archanae_map_loading PROPERTIES TIMEOUT 90)
+endif()
