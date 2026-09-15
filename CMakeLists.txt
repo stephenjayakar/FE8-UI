@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(fe8_extended_frontend VERSION 0.0.2 LANGUAGES C)
+project(fe8_extended_frontend VERSION 0.1.0 LANGUAGES C)
 
 option(FE8_BUILD_TESTS "Build frontend unit tests" ON)
 
