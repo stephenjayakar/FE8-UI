@@ -16,6 +16,19 @@ This project aims at fixing that. However, it requires small patches per romhack
 * Inventory editor - Press `I`. This allows you to more easily swap units' stuff
 * Anchored native map HUD - supported unit, objective and terrain panels stay at the window edges, independently of map zoom. `+` / `-` resize the HUD; `0` resets it. Action menus stay beside the selected unit. [Controls, supported layouts and fallback behavior](docs/native-map-hud.md).
 
+Here's what the inventory view looks like:
+![Sacred Echoes Inventory View](/docs/sacred-echoes-inventory.png)
+
+# Installing
+The project is in beta, so for now it's a pretty basic setup. Head over to https://github.com/stephenjayakar/FE8-UI/releases and download the latest version. Right now, we only have builds for Mac ARM and Linux. Please open an issue if you want me to try building for another platform!
+
+1. Install the app how you would for your platform. On Mac, you should drag the `.app` file to Applications
+2. Launch it
+3. Drag in FE8 (Sacred Stones) or your romhack of choice
+4. Setup your controls, enable extended renderer & mouse controls, and go ham!
+
+Mouse controls right now only work in combat.
+
 # Project Credits
 This project heavily leans on
 1. libmgba https://github.com/mgba-emu/mgba

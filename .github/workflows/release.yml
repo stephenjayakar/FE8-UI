@@ -4,6 +4,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Git tag or commit to build
+        default: main
+        required: true
 
 permissions:
   contents: read
@@ -17,6 +22,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.ref }}
+      - name: Read release version
+        run: |
+          version=$(sed -n 's/^project(fe8_extended_frontend VERSION \([^ ]*\) LANGUAGES C)/\1/p' CMakeLists.txt)
+          test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
       - run: git submodule update --init --depth 1 third_party/mgba
       - name: Linux dependencies
         if: runner.os == 'Linux'
@@ -42,19 +54,42 @@ jobs:
           cp "$(brew --prefix sdl2)/LICENSE.txt" "$app/Contents/Resources/ThirdParty/SDL2/"
           install_name_tool -change "$sdl" @executable_path/../Frameworks/libSDL2.dylib "$binary"
           install_name_tool -id @executable_path/../Frameworks/libSDL2.dylib "$app/Contents/Frameworks/libSDL2.dylib"
-          otool -L "$binary" "$app/Contents/Frameworks/libSDL2.dylib" | tee build-release/dependencies.txt
+          # Homebrew may supply sdl2-compat, which loads SDL3 with dlopen.
+          # This dependency is invisible to otool -L; keep it beside the shim.
+          if strings "$app/Contents/Frameworks/libSDL2.dylib" | grep 'sdl2-compat' > /dev/null; then
+            sdl3_prefix=$(brew --prefix sdl3)
+            mkdir -p "$app/Contents/Resources/ThirdParty/SDL3"
+            cp -L "$sdl3_prefix/lib/libSDL3.dylib" "$app/Contents/Frameworks/libSDL3.dylib"
+            cp "$sdl3_prefix/LICENSE.txt" "$app/Contents/Resources/ThirdParty/SDL3/"
+            install_name_tool -id @loader_path/libSDL3.dylib "$app/Contents/Frameworks/libSDL3.dylib"
+          fi
+          otool -L "$binary" "$app/Contents/Frameworks/"*.dylib | tee build-release/dependencies.txt
           ! grep -E '/opt/homebrew|/usr/local/(opt|Cellar)' build-release/dependencies.txt
-          codesign --force --sign - "$app/Contents/Frameworks/libSDL2.dylib"
+          for library in "$app/Contents/Frameworks/"*.dylib; do
+            codesign --force --sign - "$library"
+          done
           codesign --force --sign - "$app"
           codesign --verify --deep --strict "$app"
-          "$binary" --help > build-release/help.txt 2>&1 || test "$?" -eq 1
+          python3 - "$binary" <<'PY'
+          import os, pathlib, subprocess, sys
+          binary = pathlib.Path(sys.argv[1]).resolve()
+          result = subprocess.run([str(binary), "--help"], capture_output=True, text=True,
+                                  timeout=30, env={**os.environ, "DYLD_PRINT_LIBRARIES": "1"})
+          output = result.stdout + result.stderr
+          pathlib.Path("build-release/help.txt").write_text(output)
+          assert result.returncode in (0, 1), output
+          assert "Usage:" in output, output
+          if (binary.parent.parent / "Frameworks/libSDL3.dylib").exists():
+              loaded = [line for line in output.splitlines() if "libSDL3" in line]
+              assert loaded and all("/Contents/Frameworks/libSDL3.dylib" in line for line in loaded), output
+          PY
           grep -q 'Usage:' build-release/help.txt
-          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/FE8-UI-${GITHUB_REF_NAME#v}-macOS-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/FE8-UI-${RELEASE_VERSION}-macOS-arm64.zip"
       - name: Package Linux executable
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          name="FE8-UI-${GITHUB_REF_NAME#v}-Linux-x86_64"
+          name="FE8-UI-${RELEASE_VERSION}-Linux-x86_64"
           mkdir -p "$name/licenses" dist
           cp build-release/fe8-mgba-sdl LICENSE THIRD_PARTY_NOTICES.md "$name/"
           cp third_party/mgba/LICENSE "$name/licenses/mGBA.txt"
