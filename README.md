@@ -35,3 +35,7 @@ This project heavily leans on
 2. FE8 Decomp https://github.com/FireEmblemUniverse/fireemblem8u
 
 And both projects have been imported as reference / submodules.
+
+## AI Disclaimer
+
+The project makes heavy use of AI. FYI if that bothers you.
