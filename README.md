@@ -29,6 +29,16 @@ The project is in beta, so for now it's a pretty basic setup. Head over to https
 
 Mouse controls right now only work in combat.
 
+# Testing / reporting bugs
+Please open GitHub issues! Right now, the way I've tested this project is by doing a run through a game. I beat Archanae on it, but I'm obviously limited by how much time I have. Generally, games need to have a profile for them to work 100%. The games I've tested are:
+* Sacred Stones (vanilla)
+* Sacred Echoes
+* Pokemblem
+* Archanae
+* Cerulean Crescent
+
+Please try out more romhacks and file issues if they don't work well!
+
 # Project Credits
 This project heavily leans on
 1. libmgba https://github.com/mgba-emu/mgba
