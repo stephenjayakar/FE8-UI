@@ -305,3 +305,25 @@ target_link_libraries(bench_voxel PRIVATE mgba)
 if(NOT MSVC)
     target_link_libraries(bench_voxel PRIVATE m)
 endif()
+
+# Cursor movement must not alternate between native and voxel cameras. Exercise
+# HUD slides and native hover-sprite handoffs using each optional local ROM.
+add_executable(test_voxel_interaction_rom test_voxel_interaction_rom.c
+    ../app/src/voxel_renderer.c ../app/src/native_hud.c
+    ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c
+    ../app/src/frame_alignment.c ../app/src/extended_presentation.c
+    ../app/src/mouse_controller.c ../app/src/fe8_profile.c ../app/src/address_space.c)
+target_include_directories(test_voxel_interaction_rom PRIVATE ../app/src)
+target_compile_definitions(test_voxel_interaction_rom PRIVATE $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_voxel_interaction_rom PRIVATE mgba)
+if(NOT MSVC)
+    target_link_libraries(test_voxel_interaction_rom PRIVATE m)
+endif()
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME voxel_interaction_archanae COMMAND test_voxel_interaction_rom "${FE8_ARCHANAE_ROM}")
+    set_tests_properties(voxel_interaction_archanae PROPERTIES TIMEOUT 120)
+endif()
+if(FE8_SACRED_ECHOES_ROM)
+    add_test(NAME voxel_interaction_sacred_echoes COMMAND test_voxel_interaction_rom "${FE8_SACRED_ECHOES_ROM}")
+    set_tests_properties(voxel_interaction_sacred_echoes PROPERTIES TIMEOUT 120)
+endif()

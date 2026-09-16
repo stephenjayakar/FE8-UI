@@ -988,7 +988,12 @@ static int run_game(int argc, char **argv) {
                 if (mouse.active) fe8_mouse_cancel(&mouse);
                 pointer_canvas_valid = pointer_tile_valid = 0;
             }
-            if (settings.mouse_enabled && pointer_canvas_valid && !pan.dragging &&
+            /* Voxel camera operations invalidate pointer targets explicitly.
+             * Do not re-pick a stationary pointer as an animated billboard's
+             * alpha silhouette changes: that can chase the ground behind it
+             * and repeatedly enter/leave native hover. The 2D map still needs
+             * reprojection while its camera follows the game cursor. */
+            if (settings.mouse_enabled && pointer_canvas_valid && !voxel_active && !pan.dragging &&
                     visual_profile_active && snapshot.input_lock == 0 &&
                     !mouse.confirm) {
                 int map_x;
@@ -1536,9 +1541,13 @@ static int run_game(int argc, char **argv) {
                         pan.start_pan_y = pan.y;
                         fe8_mouse_cancel(&mouse);
                     } else {
-                        int map_x;
-                        int map_y;
-                        if (presented_map_tile(voxel, voxel_active, &video, &map_state, viewport,
+                        int map_x = pointer_tile_x;
+                        int map_y = pointer_tile_y;
+                        /* A click at the unchanged pointer confirms the same
+                         * hovered tile, not a newly transparent animation pixel. */
+                        int latched = voxel_active && pointer_canvas_valid && pointer_tile_valid &&
+                            pointer_canvas_x == canvas_x && pointer_canvas_y == canvas_y;
+                        if (latched || presented_map_tile(voxel, voxel_active, &video, &map_state, viewport,
                                 canvas_x, canvas_y, &map_x, &map_y)) {
                             pointer_canvas_valid = 1;
                             pointer_canvas_x = canvas_x;
@@ -1605,10 +1614,12 @@ static int run_game(int argc, char **argv) {
                     pointer_canvas_valid = 1;
                     pointer_canvas_x = canvas_x;
                     pointer_canvas_y = canvas_y;
-                    if (presented_map_tile(voxel, voxel_active, &video, &map_state, viewport,
-                            canvas_x, canvas_y, &map_x, &map_y) &&
-                            (!pointer_tile_valid || map_x != pointer_tile_x ||
-                             map_y != pointer_tile_y)) {
+                    if (!presented_map_tile(voxel, voxel_active, &video, &map_state, viewport,
+                            canvas_x, canvas_y, &map_x, &map_y)) {
+                        pointer_canvas_valid = pointer_tile_valid = 0;
+                        if (mouse.active) fe8_mouse_cancel(&mouse);
+                    } else if (!pointer_tile_valid || map_x != pointer_tile_x ||
+                             map_y != pointer_tile_y) {
                         pointer_tile_valid = 1;
                         pointer_tile_x = map_x;
                         pointer_tile_y = map_y;

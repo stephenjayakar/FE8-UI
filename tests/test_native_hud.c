@@ -66,6 +66,39 @@ static void extraction_and_fallback(void) {
     expect_fallback(); /* stale palette/VRAM must not strip a mismatched frame */
     fixture(); put16(oam,0,0x0100|112); put16(oam,2,184); expect_fallback(); /* affine OBJ */
 }
+/* Native panel motion clips complete rectangles at a screen edge; unlike
+ * malformed/disconnected windows it must not change presentation modes. */
+static void sliding_panels(void) {
+    for (int kind=0;kind<3;++kind) for (int edge=0;edge<2;++edge) {
+        int limit=kind==0?20:kind==1?7:6;
+        for (int span=1;span<=limit;++span) {
+            fixture(); memset(vram+0x6800,0,2048);
+            unsigned bank=kind==0?3:1;
+            int width=kind==2?11:span, height=kind==2?span:6;
+            int left=edge?30-width:0, top=edge?20-height:0;
+            put16(palette,(bank*16+1)*2,0x7C00);
+            for (int y=top;y<top+height;++y) for(int x=left;x<left+width;++x)
+                put16(vram,0x6800+(y*32+x)*2,(bank<<12)|1);
+            for(int y=0;y<160;++y) for(int x=0;x<240;++x)
+                frame[y*240+x]=x>=left*8&&x<(left+width)*8&&
+                    y>=top*8&&y<(top+height)*8?0xFFFF0000:0xFF0000FF;
+            memcpy(original,frame,sizeof frame);
+            assert(extract(true)&&hud.count==1);
+            assert(hud.panels[0].kind==(kind==0?FE8_HUD_UNIT:
+                kind==1?FE8_HUD_TERRAIN:FE8_HUD_OBJECTIVE));
+            assert(!memcmp(frame,original,sizeof frame));
+            for(unsigned q=0;q<240*160;++q) assert(hud.world[q]==0xFF0000FF);
+        }
+    }
+    fixture();memset(vram+0x6800,0,2048);
+    for(unsigned q=0;q<240*160;++q) frame[q]=0xFF0000FF;
+    assert(extract(true)&&hud.count==0); /* fully slid-out, verified empty HUD */
+    assert(!memcmp(hud.world,frame,sizeof frame));
+    for(unsigned q=0;q<240*160;++q) assert(hud.atlas[q]==0);
+    snapshot.input_lock=1;assert(!extract(true)); /* not permission for menus */
+    snapshot.input_lock=0;put16(vram,0x6000+2,1);assert(!extract(true));
+    puts("PASS edge-clipped unit/terrain/objective HUD slides and empty idle HUD; unknown UI still rejected");
+}
 static void alpha_and_world_sprites(void) {
     fixture();
     put16(io,0x50,0x3C42); put16(io,0x52,0x030D);
@@ -184,7 +217,8 @@ static void layout(void) {
     assert(guarded[10]==0xFFFFFFFF); assert(guarded[10+7]==0);
 }
 int main(void) {
-    extraction_and_fallback(); alpha_and_world_sprites(); blend_target_variants(); layout();
+    extraction_and_fallback();
+    sliding_panels(); alpha_and_world_sprites(); blend_target_variants(); layout();
     puts("native HUD extraction, fallback, sprite preservation, alpha, layout and clipping passed");
     return 0;
 }

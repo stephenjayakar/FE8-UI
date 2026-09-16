@@ -4,11 +4,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static uint8_t ewram[0x40000],vram[0x18000],palette[0x400];
+static uint8_t ewram[0x40000],vram[0x18000],palette[0x400],oam[1024],io[1024];
 static uint8_t read8(void *unused,uint32_t a){
     (void)unused;
     if(a>=0x02000000&&a<0x02040000)return ewram[a-0x02000000];
     if(a>=0x06000000&&a<0x06018000)return vram[a-0x06000000];
+    if(a>=0x04000000&&a<0x04000400)return io[a-0x04000000];
+    if(a>=0x07000000&&a<0x07000400)return oam[a-0x07000000];
     if(a>=0x05000000&&a<0x05000400)return palette[a-0x05000000];
     return 0;
 }
@@ -175,5 +177,69 @@ int main(void){
     assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
     assert(fe8_voxel_stats(v).sprites==FE8_MAX_VISIBLE_UNITS);
     puts("PASS all 128 actors in the compatibility sprite path");
+    /* The highlighted ally's SMS hide flag is a native animation handoff,
+     * not an invisible unit. Only matching live OBJ evidence may replace it. */
+    memset(s->terrain,1,36);s->flags=FE8_SNAPSHOT_TERRAIN|FE8_SNAPSHOT_MAP_SPRITES|FE8_SNAPSHOT_UNIT_MAP;
+    s->cursor_x=s->cursor_y=3;s->map_sprite_count=1;s->visible_unit_count=1;
+    s->map_sprites[0]=(Fe8VisibleMapSprite){48,48,0xC000,0x80};
+    s->visible_units[0]=(Fe8VisibleUnit){.unit_id=1,.x=3,.y=3,.map_sprite_handle=0x02005000};
+    s->unit_map[21]=1;wr16(ewram,0x5004,48);wr16(ewram,0x5006,48);
+    wr16(ewram,0x5008,0xC000);ewram[0x500B]=0x80;
+    for(int n=0;n<128;++n)wr16(oam,n*8,0x0200);
+    wr16(io,0,0x1F00);
+    wr16(oam,0,32);wr16(oam,2,0x8028);wr16(oam,4,0xCB80);
+    wr16(palette,0x382,0x7C1F);
+    for(int ty=0;ty<4;++ty)for(int tx=0;tx<4;++tx)
+        memset(vram+0x17000+(ty*32+tx)*32,0x11,32);
+    fe8_voxel_home(v);fe8_voxel_invalidate(v);
+    assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_stats(v).sprites==1&&fe8_voxel_stats(v).hover_sprites==1);
+    assert(fe8_voxel_project(v,3.5f,3.9375f,12,&sx,&sy));
+    assert(fe8_voxel_pick(v,sx,sy,&x,&y)&&x==3&&y==3);
+    uint64_t hovered=digest(fe8_voxel_render_scene(v,&memory,&map,s,640,480),640*480*4);
+    vram[0x17000]=0; /* first native animation pixel pair */
+    assert(digest(fe8_voxel_render_scene(v,&memory,&map,s,640,480),640*480*4)!=hovered);
+    uint64_t unflipped=digest(fe8_voxel_render_scene(v,&memory,&map,s,640,480),640*480*4);
+    wr16(oam,2,0x9028); /* native horizontal flip */
+    assert(digest(fe8_voxel_render_scene(v,&memory,&map,s,640,480),640*480*4)!=unflipped);
+    wr16(oam,2,0xA028); /* native vertical flip */
+    assert(digest(fe8_voxel_render_scene(v,&memory,&map,s,640,480),640*480*4)!=unflipped);
+    wr16(oam,2,0x802A); /* Archanae's idle archer shifts two pixels sideways. */
+    assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_stats(v).hover_sprites==1&&fe8_voxel_stats(v).sprites==1);
+    wr16(oam,2,0x8028);
+    Fe8Snapshot saved=*s;
+    for(unsigned reject=0;reject<12;++reject) {
+        *s=saved;
+        switch(reject) {
+        case 0:s->cursor_x=2;break;
+        case 1:s->visible_unit_count=0;break;
+        case 2:s->visible_units[0].faction=0x80;break;
+        case 3:s->visible_units[0].state=0x200;break; /* fog */
+        case 4:s->visible_units[0].state=4;break; /* dead */
+        case 5:s->visible_units[0].state=1;break; /* hidden */
+        case 6:s->input_lock=1;break;
+        case 7:s->game_state_bits=1;break;
+        case 8:s->phase=0x80;break;
+        case 9:s->unit_map[21]=2;break;
+        case 10:s->visible_units[0].map_sprite_handle=0x08000000;break;
+        case 11:s->flags&=~FE8_SNAPSHOT_UNIT_MAP;break;
+        }
+        assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+        assert(!fe8_voxel_stats(v).hover_sprites&&!fe8_voxel_stats(v).sprites);
+    }
+    *s=saved;
+    for(unsigned bad=0;bad<6;++bad) {
+        wr16(oam,0,bad==0?0x0220:bad==1?0x0120:bad==2?0x0420:32);
+        wr16(oam,2,bad==3?0x8020:0x8028);
+        wr16(oam,4,bad==4?0xDB80:0xCB80);
+        wr16(io,0,bad==5?0x1F40:0x1F00);
+        assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+        assert(!fe8_voxel_stats(v).hover_sprites&&!fe8_voxel_stats(v).sprites);
+    }
+    wr16(io,0,0x1F00);wr16(oam,0,32);wr16(oam,2,0x8028);wr16(oam,4,0xCB80);
+    assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_stats(v).hover_sprites==1&&fe8_voxel_stats(v).sprites==1);
+    puts("PASS highlighted native MU billboard, animation/flip/picking, and rejection of hidden/fog/dead/mismatched actors");
     fe8_voxel_destroy(v);fe8_voxel_destroy(NULL);free(s);return 0;
 }

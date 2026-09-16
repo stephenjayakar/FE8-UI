@@ -7,6 +7,7 @@ typedef struct Fe8VoxelRenderer Fe8VoxelRenderer;
 typedef struct Fe8VoxelStats {
     unsigned terrain_builds, sprite_builds, cached_sprites, columns, sprites;
     unsigned background_builds, reused_frames, ground_refreshes;
+    unsigned hover_sprites; /* Native hovered-unit replacements, not hidden SMS. */
     uint64_t billboard_pixels, output_pixels;
     int render_width, render_height;
 } Fe8VoxelStats;

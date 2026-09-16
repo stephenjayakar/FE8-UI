@@ -131,14 +131,19 @@ static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
         Fe8HudKind kind;
         if (snapshot->input_lock == 0) {
             bool edge = left == 0 || right == 29;
-            if (bank == 3 && edge && width >= 10 && width <= 20 &&
+            /* Native idle HUD windows slide across the screen edges as the
+             * cursor moves. Their visible BG1 rectangle is temporarily narrower
+             * (unit/terrain) or shorter (objective); it is still real HUD, not a
+             * scene change. Accept only these edge-clipped shapes. Every UI
+             * pixel must still pass the PPU/frame oracle below. */
+            if (bank == 3 && edge && width >= 1 && width <= 20 &&
                     (height == 6 || height == 8) && (top == 0 || bottom == 19))
                 kind = FE8_HUD_UNIT;
-            else if (bank == 1 && edge && width == 7 && height == 6 &&
+            else if (bank == 1 && edge && width >= 1 && width <= 7 && height == 6 &&
                     (top == 0 || bottom == 19))
                 kind = FE8_HUD_TERRAIN;
             else if (bank == 1 && edge && width == 11 &&
-                    (height == 4 || height == 6) && (top == 0 || bottom == 19))
+                    height >= 1 && height <= 6 && (top == 0 || bottom == 19))
                 kind = FE8_HUD_OBJECTIVE;
             else return false;
         } else if (snapshot->input_lock == 1 && snapshot->active_unit_address &&
@@ -156,7 +161,9 @@ static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
         }
         hud->panels[hud->count++] = (Fe8HudPanel){kind, source, {0}};
     }
-    return hud->count != 0 && (snapshot->input_lock == 0 || hud->count == 1);
+    /* A cursor-driven slide can have one frame with no windows at all.
+     * The extraction loop still rejects any BG0/1 pixel outside a panel. */
+    return snapshot->input_lock == 0 || hud->count == 1;
 }
 
 static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
@@ -166,7 +173,7 @@ static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
     bool hand = false;
     memset(world, 0, W * H * sizeof(*world));
     memset(ui, 0, W * H * sizeof(*ui));
-    if (!(ppu->control & 0x1000)) return hud->panels[0].kind != FE8_HUD_ACTION;
+    if (!(ppu->control & 0x1000)) return !hud->count || hud->panels[0].kind != FE8_HUD_ACTION;
     for (int n = 127; n >= 0; --n) {
         uint16_t a0 = read16(ppu->memory, OAM + n * 8);
         uint16_t a1 = read16(ppu->memory, OAM + n * 8 + 2);
@@ -222,7 +229,7 @@ static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
                 if (!(target[pos] & PRESENT) || RANK(sample) <= RANK(target[pos])) target[pos] = sample;
             }
     }
-    return hud->panels[0].kind != FE8_HUD_ACTION || hand;
+    return !hud->count || hud->panels[0].kind != FE8_HUD_ACTION || hand;
 }
 
 bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
@@ -304,8 +311,8 @@ bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
     }
     /* Reject stale VRAM, scanline effects, unsupported sprites and custom
      * layouts. A false positive must never remove authoritative game pixels. */
-    if (checked < 64 || matched * 100 < checked * 98) goto fallback;
-    if (hud->panels[0].kind != FE8_HUD_ACTION) hud->menu_latched = false;
+    if (hud->count && (checked < 64 || matched * 100 < checked * 98)) goto fallback;
+    if (!hud->count || hud->panels[0].kind != FE8_HUD_ACTION) hud->menu_latched = false;
     return true;
 fallback:
     fe8_native_hud_reset(hud);

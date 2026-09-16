@@ -460,7 +460,69 @@ static uint32_t gba_color(unsigned c) {
     unsigned r=c&31,g=(c>>5)&31,b=(c>>10)&31;
     return 0xFF000000u | ((r<<3)|(r>>2)) | ((g<<3)|(g>>2))<<8 | ((b<<3)|(b>>2))<<16;
 }
-static SpriteImage *sprite_image(Fe8VoxelRenderer *v,const Fe8MemoryView *m,unsigned oam2,unsigned config) {
+/* FE8 replaces a hovered ally's standing SMS with a 32x32 MU (moving-unit)
+ * OBJ even before selection. Its standing hide bit does NOT hide the unit.
+ * Recover only a live native OBJ belonging to the visible cursor occupant;
+ * never clear hide flags globally or resurrect dead/fog-hidden/event actors.
+ * Matching the standing OBJ too covers the one-frame SMS -> MU upload handoff.
+ * This is read-only and deliberately does not extend into selected-unit travel. */
+static bool hover_sprite(const Fe8MemoryView *m, const Fe8Snapshot *s,
+        Fe8VisibleMapSprite *actor, unsigned *flips) {
+    if (!(actor->config & 0x80) || s->input_lock || s->phase ||
+            s->combat_panel_active || (s->game_state_bits & 3) ||
+            s->cursor_x >= s->map_width || s->cursor_y >= s->map_height ||
+            actor->x_display != s->cursor_x * 16 ||
+            actor->y_display != s->cursor_y * 16 ||
+            !(s->flags & FE8_SNAPSHOT_UNIT_MAP)) return false;
+    const Fe8VisibleUnit *unit = NULL;
+    for (unsigned i = 0; i < s->visible_unit_count; ++i) {
+        const Fe8VisibleUnit *u = &s->visible_units[i];
+        /* US_HIDDEN, UNSELECTABLE, DEAD, NOT_DEPLOYED, RESCUED, FOG_HIDDEN. */
+        if (u->faction || (u->state & 0x22Fu) || u->x != s->cursor_x ||
+                u->y != s->cursor_y || !u->unit_id ||
+                s->unit_map[u->y * s->map_width + u->x] != u->unit_id)
+            continue;
+        uint32_t a = u->map_sprite_handle;
+        if (a < 0x02000000 || a > 0x0203FFF4 ||
+                (int16_t)rd16(m,a+4) != actor->x_display ||
+                (int16_t)rd16(m,a+6) != actor->y_display ||
+                rd16(m,a+8) != actor->oam2 ||
+                m->read8(m->context,a+11) != actor->config) continue;
+        unit = u;
+        break;
+    }
+    if (!unit || !(rd16(m,0x04000000) & 0x1000) ||
+            (rd16(m,0x04000000) & 0x0040)) return false; /* 2D OBJ layout */
+    int cx = unit->x * 16 + 8 - s->camera_x;
+    int bottom = unit->y * 16 + 16 - s->camera_y;
+    for (unsigned i = 0; i < 128; ++i) {
+        uint32_t a = 0x07000000 + i * 8;
+        unsigned a0 = rd16(m,a), a1 = rd16(m,a+2), a2 = rd16(m,a+4);
+        /* No affine, hidden, mosaic, 8bpp, blend or OBJ-window substitutes. */
+        if ((a0 & 0x3F00) || ((a2 >> 10) & 3) != 2 ||
+                (a2 >> 12) != (actor->oam2 >> 12)) continue;
+        int w, h, config;
+        unsigned shape = a0 >> 14, size = a1 >> 14;
+        if (shape == 0 && size == 1) { w = h = 16; config = 0; }
+        else if (shape == 2 && size == 2) { w = 16; h = 32; config = 1; }
+        else if (shape == 0 && size == 2) { w = h = 32; config = 2; }
+        else continue;
+        int x = a1 & 511, y = a0 & 255;
+        if (x >= 256) x -= 512;
+        if (y >= 160) y -= 256;
+        /* Idle MU scripts can nudge their OBJ a few pixels (e.g. Archanae's
+         * archer). Keep the search within this occupant's tile, never match
+         * an adjacent unit, and keep the billboard's foot on its logical tile. */
+        if (abs(x + w/2 - cx) > 4 || abs(y + h - bottom) > 4 ||
+                x + w <= 0 || x >= 240 || y + h <= 0 || y >= 160) continue;
+        actor->oam2 = (uint16_t)a2;
+        actor->config = (uint8_t)config;
+        *flips = a1 & 0x3000;
+        return true;
+    }
+    return false;
+}
+static SpriteImage *sprite_image(Fe8VoxelRenderer *v,const Fe8MemoryView *m,unsigned oam2,unsigned config,unsigned flips) {
     int w,h;
     if(config&0x80)return NULL; /* FE8 SMS hide flag; never reveal hidden actors. */
     switch(config&15){case 0:case 3:w=h=16;break;case 1:case 4:w=16;h=32;break;case 2:case 5:w=h=32;break;default:return NULL;}
@@ -472,8 +534,10 @@ static SpriteImage *sprite_image(Fe8VoxelRenderer *v,const Fe8MemoryView *m,unsi
     for(int y=0;y<h;++y)for(int x=0;x<w;x+=2){
         unsigned tile=((oam2&1023)+(y/8)*32+x/8)&1023;
         unsigned packed=m->read8(m->context,0x06010000+tile*32+(y%8)*4+(x%8)/2);
-        colors[y*w+x]=palette[packed&15];
-        colors[y*w+x+1]=palette[packed>>4];
+        int dy=(flips&0x2000)?h-1-y:y;
+        int dx=(flips&0x1000)?w-1-x:x;
+        colors[dy*w+dx]=palette[packed&15];
+        colors[dy*w+dx+((flips&0x1000)?-1:1)]=palette[packed>>4];
     }
     hash=byteshash(hash,colors,(size_t)w*h*sizeof(*colors));
     SpriteImage *mesh=&v->sprites[0];
@@ -600,7 +664,7 @@ const Fe8HostPixel *fe8_voxel_render_scene(Fe8VoxelRenderer *v,const Fe8MemoryVi
        s->map_sprite_count>FE8_MAX_MAP_SPRITES||s->visible_unit_count>FE8_MAX_VISIBLE_UNITS)return NULL;
     if(!resize(v,width,height,s->map_width*16,s->map_height*16))return NULL;
     width=v->width; height=v->height;
-    ++v->ticks;v->stats.sprites=0;
+    ++v->ticks;v->stats.sprites=0;v->stats.hover_sprites=0;
     v->cy=cosf(v->yaw);v->sy=sinf(v->yaw);v->cp=cosf(v->pitch);v->sp=sinf(v->pitch);
     v->target_x=v->mw*.5f+v->pan_x;v->target_z=v->mh*.5f+v->pan_z;
     float projected_w=v->mw*fabsf(v->cy)+v->mh*fabsf(v->sy);
@@ -654,7 +718,9 @@ const Fe8HostPixel *fe8_voxel_render_scene(Fe8VoxelRenderer *v,const Fe8MemoryVi
         scene_hash=byteshash(scene_hash,s->range,(size_t)s->map_width*s->map_height);
     }
     for(unsigned i=0;i<count;++i){
-        images[i]=sprite_image(v,m,actors[i].oam2,actors[i].config);
+        unsigned flips=0;
+        if(hover_sprite(m,s,&actors[i],&flips))++v->stats.hover_sprites;
+        images[i]=sprite_image(v,m,actors[i].oam2,actors[i].config,flips);
         scene_hash=byteshash(scene_hash,&actors[i].x_display,sizeof(actors[i].x_display));
         scene_hash=byteshash(scene_hash,&actors[i].y_display,sizeof(actors[i].y_display));
         uint64_t image_hash=images[i]?images[i]->hash:0;
