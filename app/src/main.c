@@ -1956,7 +1956,9 @@ static int run_game(int argc, char **argv) {
         }
         if (!voxel_active) voxel_drag = 0;
         if (was_voxel_active != voxel_active) {
-            if (mouse.active) fe8_mouse_cancel(&mouse);
+            /* Screen coordinates belong to the previous projection. A queued
+             * mouse path already owns a validated world-tile target, however;
+             * preserve it so cursor animation/native fallback cannot eat A. */
             pointer_canvas_valid = pointer_tile_valid = 0;
             fprintf(stderr,"Voxel scene: %s\n",voxel_active ? "live/generated" : "native fallback");
         }
