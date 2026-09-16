@@ -1,0 +1,60 @@
+name: Validate and publish voxel prototype
+on:
+  push:
+    branches: [voxel-live-staging-20260916]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore verified source patch onto clean main parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, gzip, hashlib
+          from pathlib import Path
+          data = ''.join(Path('.voxel-upload/part' + str(i)).read_text() for i in range(3))
+          patch = gzip.decompress(base64.b64decode(data, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '1a0dc78419256d1ad614d3f968ce8063caf6ff7e5ac0a84642f74a2b952bc133'
+          Path('/tmp/voxel-live.patch').write_bytes(patch)
+          PY
+          git checkout --detach 2bad68b87529257d36795fae25b963566d00a8cf
+          git apply --check /tmp/voxel-live.patch
+          git apply --index /tmp/voxel-live.patch
+          git diff --cached --check
+          git diff --cached --stat
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential cmake ninja-build pkg-config libsdl2-dev libfreetype-dev fonts-dejavu-core zlib1g-dev
+          git submodule update --init --depth 1 third_party/mgba
+      - name: Build and test the actual feature tree
+        env:
+          BUILD_JOBS: 2
+          BUILD_TYPE: RelWithDebInfo
+        run: bash scripts/build-linux-workspace.sh
+      - name: Publish only the feature source, not staging transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 2bad68b87529257d36795fae25b963566d00a8cf
+          if git ls-remote --exit-code --heads origin refs/heads/voxel-live; then
+            echo 'Ref already exists; refusing to replace it.' >&2
+            exit 1
+          fi
+          git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'Add opt-in native voxel generation from live FE8 terrain and sprites'
+          git push origin HEAD:refs/heads/voxel-live
+          git rev-parse HEAD
+      - name: Upload Linux prototype executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxel-live-linux
+          path: build/fe8-mgba-sdl
+          if-no-files-found: error
+          retention-days: 7
