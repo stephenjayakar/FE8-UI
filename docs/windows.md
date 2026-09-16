@@ -1,8 +1,9 @@
 # Windows builds
 
 The Windows x64 version uses the SDL2 game window and FreeType inventory UI.
-The native macOS game library, settings menus, and OpenGL shader presets are
-macOS-only. Supply a ROM path when launching on Windows.
+Double-click the executable to open the Windows ROM library. Native Windows
+menus provide settings, save states, and Armory access. OpenGL shader presets
+(including CRT) remain available only on macOS.
 
 ## Build from a Mac with GitHub Actions
 
@@ -57,7 +58,40 @@ DLLs. First builds require network access and take longer than rebuilds.
 
 ## Run
 
-In PowerShell, from the extracted package directory:
+Extract the entire release ZIP, then double-click `bin/fe8-mgba-sdl.exe`.
+The **ROM Library** opens without command-line arguments:
+
+- Use **Add ROM...** or drop `.gba` files into the library.
+- Select a game and choose **Play**, or double-click its row.
+- **Resume State** loads that game's last quick save.
+- **Remove entry** removes only the library reference; it does not delete files.
+- **Save folder** opens that game's storage directory.
+
+The library remembers imported paths and stays open while a game runs. Games
+open in separate windows. Avoid running the same ROM in multiple windows at
+once, since they share save files.
+
+The game menu bar provides:
+
+- **File**: Open ROM, ROM Library, Close game.
+- **State**: Quick save/load and Save state as/Load state.
+- **Settings**: Audio, VSync, extended rendering, mouse controls, fast-forward
+  speed, zoom sensitivity, and keyboard/hotkey bindings.
+- **Armory**: opens inventory when a supported live FE8 roster is available.
+
+Settings persist for future launches. Changes made in a game apply to that game
+immediately; library settings apply to games launched afterward. Windows uses
+the SDL renderer and does not currently offer CRT shader presets.
+
+Library launches store each ROM's saves under
+`%APPDATA%\FE8 Extended Frontend\<ROM SHA-1>\`: `cartridge.sav`,
+`quick-state.ss`, and `startup.log`. Identical ROMs share their storage even
+when renamed; different ROMs have separate storage. A same-name `.sav` beside
+the ROM is imported on first launch if an isolated cartridge save does not
+already exist. Startup failures display an error instead of silently closing.
+
+Direct command-line launch is still available. In PowerShell, from the
+extracted package directory:
 
 ```powershell
 ./bin/fe8-mgba-sdl.exe --rom 'C:/Games/fireemblem8.gba' --save 'C:/Games/fireemblem8.sav' --quick-state 'C:/Games/fireemblem8.ss'

@@ -20,7 +20,7 @@ Here's what the inventory view looks like:
 ![Sacred Echoes Inventory View](/docs/sacred-echoes-inventory.png)
 
 # Installing
-The project is in beta. Download the latest version from [Releases](https://github.com/stephenjayakar/FE8-UI/releases). Builds are available for Mac ARM, Linux x86-64, and Windows x64. Windows uses command-line ROM loading; see the [Windows launch instructions](docs/windows.md#run).
+The project is in beta. Download the latest version from [Releases](https://github.com/stephenjayakar/FE8-UI/releases). Builds are available for Mac ARM, Linux x86-64, and Windows x64. Windows includes a ROM library and native game menus; see the [Windows launch instructions](docs/windows.md#run).
 
 1. Install the app how you would for your platform. On Mac, you should drag the `.app` file to Applications
 2. Launch it

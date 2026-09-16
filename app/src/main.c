@@ -30,6 +30,10 @@
 #include "inventory_history.h"
 #include "inventory_effective_stats.h"
 #include "viewport_controller.h"
+#ifdef _WIN32
+#include "windows_launcher.h"
+#include "windows_desktop.h"
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -587,7 +591,7 @@ static void undo_inventory_change(Fe8StatEvaluator *evaluator, struct mCore *cor
     ui->undo_count=history->count;
 }
 
-int main(int argc, char **argv) {
+static int run_game(int argc, char **argv) {
     struct fe8_options options;
     struct mCore *core = NULL;
     const Fe8Profile *profile = fe8u_profile();
@@ -770,6 +774,9 @@ int main(int argc, char **argv) {
     }
     fe8_macos_install_settings_menu(&settings, core,
         host_save_state, host_load_state, options.quick_state_path);
+#ifdef _WIN32
+    fe8_windows_attach_menu(video.window);
+#endif
     if (fe8_host_audio_init(&audio, core)) {
         audio_initialized = 1;
         fe8_host_audio_set_enabled(&audio, settings.audio_enabled);
@@ -1909,4 +1916,12 @@ cleanup:
     free(host_frame);
     free(video_buffer);
     return exit_code;
+}
+
+int main(int argc, char **argv) {
+#ifdef _WIN32
+    return fe8_windows_launch(argc, argv, run_game);
+#else
+    return run_game(argc, argv);
+#endif
 }

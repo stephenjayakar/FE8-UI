@@ -22,6 +22,15 @@ function(fe8_add_test name)
     add_test(NAME ${name} COMMAND test_${name})
 endfunction()
 
+if(WIN32)
+    fe8_add_test(windows_launcher test_windows_launcher.c ../app/src/windows_launcher.c)
+    target_link_libraries(test_windows_launcher PRIVATE mgba ${FE8_SDL_TARGET} comdlg32)
+    fe8_add_test(windows_desktop test_windows_desktop.c
+        ../app/src/windows_settings.c ../app/src/windows_launcher.c ../app/src/host_settings.c)
+    target_link_libraries(test_windows_desktop PRIVATE mgba ${FE8_SDL_TARGET} comdlg32 comctl32)
+    set_tests_properties(windows_desktop PROPERTIES TIMEOUT 20)
+endif()
+
 fe8_add_test(address_space
     test_address_space.c ../app/src/address_space.c)
 target_link_libraries(test_address_space PRIVATE mgba)

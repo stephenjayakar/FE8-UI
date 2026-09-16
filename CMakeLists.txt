@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(fe8_extended_frontend VERSION 0.2.0 LANGUAGES C)
+project(fe8_extended_frontend VERSION 0.2.1 LANGUAGES C)
 
 option(FE8_BUILD_TESTS "Build frontend unit tests" ON)
 
@@ -122,8 +122,13 @@ else()
     target_link_libraries(fe8-mgba-sdl PRIVATE fe8_desktop_text)
     target_sources(fe8-mgba-sdl PRIVATE
         app/src/host_video_sdl.c
-        app/src/macos_library_stub.c
-        app/src/macos_settings_stub.c)
+        app/src/macos_library_stub.c)
+    if(WIN32)
+        target_sources(fe8-mgba-sdl PRIVATE app/src/windows_settings.c app/src/windows_library.c)
+        target_link_libraries(fe8-mgba-sdl PRIVATE comctl32)
+    else()
+        target_sources(fe8-mgba-sdl PRIVATE app/src/macos_settings_stub.c)
+    endif()
 endif()
 target_compile_features(fe8-mgba-sdl PRIVATE c_std_11)
 target_include_directories(fe8-mgba-sdl PRIVATE app/src)
@@ -154,6 +159,8 @@ else()
 endif()
 
 if(WIN32)
+    target_sources(fe8-mgba-sdl PRIVATE app/src/windows_launcher.c)
+    target_link_libraries(fe8-mgba-sdl PRIVATE comdlg32)
     install(FILES LICENSE THIRD_PARTY_NOTICES.md docs/windows.md DESTINATION .)
     install(FILES third_party/mgba/LICENSE DESTINATION licenses/mgba)
     install(FILES docs/mgba-source.md DESTINATION licenses/mgba)
