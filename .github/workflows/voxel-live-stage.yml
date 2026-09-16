@@ -42,6 +42,14 @@ jobs:
               assert hashlib.sha256(text.encode()).hexdigest() == after, name
               path.parent.mkdir(parents=True, exist_ok=True)
               path.write_text(text)
+          path = Path('tests/test_macos_settings.m')
+          text = path.read_text()
+          old = '        /* This reproduces the dependency that made library letter binding fail. */\n        assert(SDL_GetScancodeFromKey(SDLK_v)==SDL_SCANCODE_UNKNOWN);'
+          new = '        /* Older SDL builds leave this keymap empty; newer ones supply a\n         * default. Binding must work before video initialization in either case. */\n        printf("Pre-init SDL letter lookup: %d\\n", SDL_GetScancodeFromKey(SDLK_v));'
+          assert text.count(old) == 1
+          text = text.replace(old, new)
+          assert hashlib.sha256(text.encode()).hexdigest() == '6fd714a5c56f809aa987834553489079bced7694fda35b8203574279251aade0'
+          path.write_text(text)
           subprocess.run(['git', 'add', '--', *edits], check=True)
           PY
           git diff --cached --check
