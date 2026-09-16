@@ -43,6 +43,7 @@ typedef struct Fe8HostShaderConfig {
     float saturation;
 } Fe8HostShaderConfig;
 
+/* Frontend actions below are user-bindable independently of GBA buttons. */
 enum Fe8HostHotkey {
     FE8_HOST_HOTKEY_SPEED_UP = 0,
     FE8_HOST_HOTKEY_QUICK_SAVE,
