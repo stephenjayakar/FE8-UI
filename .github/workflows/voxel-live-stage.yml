@@ -48,8 +48,19 @@ jobs:
           assert source.count(old) == 1
           source = source.replace(old, '')
           path.write_text(source)
+
+          path = Path('tests/test_host_settings.c')
+          source = path.read_text()
+          old = '''    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F6);\n    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));\n'''
+          new = '''    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F6);\n    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL] == SDL_SCANCODE_F7);\n    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));\n    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL));\n'''
+          assert source.count(old) == 1
+          source = source.replace(old, new)
+          old = '''    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));\n'''
+          new = '''    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==\n        ((UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS) |\n         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL)));\n    assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_VOXEL),\n        "Voxel Renderer") == 0);\n'''
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new))
           PY
-          git add app/src/host_settings.h app/src/host_settings.c app/src/main.c
+          git add app/src/host_settings.h app/src/host_settings.c app/src/main.c tests/test_host_settings.c
           git diff --cached --check
           grep -q 'FE8_HOST_HOTKEY_TOGGLE_VOXEL' app/src/host_settings.h
           grep -q '"Voxel Renderer"' app/src/host_settings.c
