@@ -12,59 +12,45 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Add bindable voxel renderer hotkey
+      - name: Fix macOS voxel hotkey binding and dispatch
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach efb95ce22043a0d89c26e22d2463d4796efc527a
+          git checkout --detach 9627dc4ff66cbeef70e0f09ce4a056c2668deae5
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('app/src/host_settings.h')
+          path = Path('app/src/macos_settings.m')
           source = path.read_text()
-          old = '''    FE8_HOST_HOTKEY_QUICK_LOAD,\n    FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS,\n    FE8_HOST_HOTKEY_COUNT\n'''
-          new = '''    FE8_HOST_HOTKEY_QUICK_LOAD,\n    FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS,\n    FE8_HOST_HOTKEY_TOGGLE_VOXEL,\n    FE8_HOST_HOTKEY_COUNT\n'''
-          assert source.count(old) == 1
-          path.write_text(source.replace(old, new))
 
-          path = Path('app/src/host_settings.c')
-          source = path.read_text()
-          old = '''        SDL_SCANCODE_F8,\n        SDL_SCANCODE_F6,\n    };'''
-          new = '''        SDL_SCANCODE_F8,\n        SDL_SCANCODE_F6,\n        SDL_SCANCODE_F7,\n    };'''
+          old = '''            } else if (scancode != SDL_SCANCODE_UNKNOWN &&\n                    tag >= FE8_HOTKEY_TAG_BASE &&\n                    tag < FE8_HOTKEY_TAG_BASE + FE8_HOST_HOTKEY_COUNT) {\n                enum Fe8HostHotkey hotkey =\n                    (enum Fe8HostHotkey)(tag - FE8_HOTKEY_TAG_BASE);\n                self.settings->hotkeys[hotkey] = scancode;\n                ++self.settings->revision;\n                [NSUserDefaults.standardUserDefaults setInteger:scancode\n                    forKey:hotkeyBindingKey(hotkey)];\n                [self stopListening];\n            }\n'''
+          new = '''            } else if (scancode != SDL_SCANCODE_UNKNOWN &&\n                    tag >= FE8_HOTKEY_TAG_BASE &&\n                    tag < FE8_HOTKEY_TAG_BASE + FE8_HOST_HOTKEY_COUNT) {\n                enum Fe8HostHotkey hotkey =\n                    (enum Fe8HostHotkey)(tag - FE8_HOTKEY_TAG_BASE);\n                /* Frontend hotkeys are actions, not GBA buttons. Let one key\n                 * own one action so an older saved binding cannot silently\n                 * consume a newer one earlier in the event loop. */\n                for (int other = 0; other < FE8_HOST_HOTKEY_COUNT; ++other) {\n                    if (other == hotkey || self.settings->hotkeys[other] != scancode)\n                        continue;\n                    self.settings->hotkeys[other] = SDL_SCANCODE_UNKNOWN;\n                    [NSUserDefaults.standardUserDefaults setInteger:SDL_SCANCODE_UNKNOWN\n                        forKey:hotkeyBindingKey((enum Fe8HostHotkey)other)];\n                }\n                self.settings->hotkeys[hotkey] = scancode;\n                ++self.settings->revision;\n                [NSUserDefaults.standardUserDefaults setInteger:scancode\n                    forKey:hotkeyBindingKey(hotkey)];\n                [self stopListening];\n                for (NSButton *button in self.bindingButtons)\n                    button.title = [self titleForBindingTag:button.tag];\n            }\n'''
           assert source.count(old) == 1
           source = source.replace(old, new)
-          old = '''        "Speed Up", "Quick Save", "Quick Load", "Extended Renderer"\n    };'''
-          new = '''        "Speed Up", "Quick Save", "Quick Load", "Extended Renderer",\n        "Voxel Renderer"\n    };'''
+
+          old = '''    NSTextField *hotkeyHeading = [NSTextField labelWithString:@"Hotkeys"];\n    hotkeyHeading.frame = NSMakeRect(24, 140, 380, 24);\n    hotkeyHeading.font = [NSFont boldSystemFontOfSize:13];\n    [content addSubview:hotkeyHeading];\n    for (i = 0; i < FE8_HOST_HOTKEY_COUNT; ++i) {\n        CGFloat y = 108 - i * 29;\n'''
+          new = '''    NSTextField *hotkeyHeading = [NSTextField labelWithString:@"Hotkeys"];\n    hotkeyHeading.frame = NSMakeRect(24, 150, 380, 24);\n    hotkeyHeading.font = [NSFont boldSystemFontOfSize:13];\n    [content addSubview:hotkeyHeading];\n    for (i = 0; i < FE8_HOST_HOTKEY_COUNT; ++i) {\n        /* Five rows fit fully inside the fixed settings window. The previous\n         * 29-point spacing put the Voxel Renderer button at y=-8. */\n        CGFloat y = 118 - i * 27;\n'''
           assert source.count(old) == 1
-          path.write_text(source.replace(old, new))
+          source = source.replace(old, new)
+          path.write_text(source)
 
           path = Path('app/src/main.c')
           source = path.read_text()
-          marker = '''            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&\n                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &\n                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS))) {\n                if (event.type == SDL_KEYDOWN && !event.key.repeat) {\n                    fe8_macos_toggle_extensions(&settings);\n                    fe8_presentation_reset(&presentation);\n                    frozen_valid = 0;\n                    visual_profile_active = 0;\n                    fe8_mouse_cancel(&mouse);\n                    pan.dragging = 0;\n                    pointer_canvas_valid = 0;\n                    pointer_tile_valid = 0;\n                    fprintf(stderr, "Extended renderer: %s\\n",\n                        settings.extensions_enabled ? "on" : "off");\n                }\n                continue;\n            }\n'''
-          addition = marker + '''            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&\n                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &\n                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL))) {\n                if (event.type == SDL_KEYDOWN && !event.key.repeat) {\n                    options.voxel = !options.voxel;\n                    fe8_mouse_cancel(&mouse);\n                    pointer_canvas_valid = pointer_tile_valid = 0;\n                    voxel_active = voxel_drag = 0;\n                    pan.dragging = 0;\n                    fprintf(stderr,\n                        "Voxel presentation: %s (read-only runtime geometry)\\n",\n                        options.voxel ? "enabled" : "disabled");\n                }\n                continue;\n            }\n'''
-          assert source.count(marker) == 1
-          source = source.replace(marker, addition)
-          old = '''                if (key == SDLK_F7) {\n                    options.voxel = !options.voxel;\n                    fe8_mouse_cancel(&mouse); pointer_canvas_valid = pointer_tile_valid = 0;\n                    voxel_active = voxel_drag = 0; pan.dragging = 0;\n                    fprintf(stderr, "Voxel presentation: %s (read-only runtime geometry)\\n", options.voxel ? "enabled" : "disabled");\n                    continue;\n                }\n'''
-          assert source.count(old) == 1
-          source = source.replace(old, '')
-          path.write_text(source)
-
-          path = Path('tests/test_host_settings.c')
-          source = path.read_text()
-          old = '''    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F6);\n    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));\n'''
-          new = '''    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F6);\n    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL] == SDL_SCANCODE_F7);\n    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));\n    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL));\n'''
+          old = '''            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&\n                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &\n                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS))) {\n                if (event.type == SDL_KEYDOWN && !event.key.repeat) {\n                    fe8_macos_toggle_extensions(&settings);\n                    fe8_presentation_reset(&presentation);\n                    frozen_valid = 0;\n                    visual_profile_active = 0;\n                    fe8_mouse_cancel(&mouse);\n                    pan.dragging = 0;\n                    pointer_canvas_valid = 0;\n                    pointer_tile_valid = 0;\n                    fprintf(stderr, "Extended renderer: %s\\n",\n                        settings.extensions_enabled ? "on" : "off");\n                }\n                continue;\n            }\n            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&\n                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &\n                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL))) {\n                if (event.type == SDL_KEYDOWN && !event.key.repeat) {\n                    options.voxel = !options.voxel;\n                    fe8_mouse_cancel(&mouse);\n                    pointer_canvas_valid = pointer_tile_valid = 0;\n                    voxel_active = voxel_drag = 0;\n                    pan.dragging = 0;\n                    fprintf(stderr,\n                        "Voxel presentation: %s (read-only runtime geometry)\\n",\n                        options.voxel ? "enabled" : "disabled");\n                }\n                continue;\n            }\n'''
+          new = '''            /* Voxel gets first claim on an accidental duplicate binding. This\n             * matters for upgrades where F7 may already be stored for another\n             * action; rebinding in Settings will remove the duplicate. */\n            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&\n                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &\n                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL))) {\n                if (event.type == SDL_KEYDOWN && !event.key.repeat) {\n                    options.voxel = !options.voxel;\n                    fe8_mouse_cancel(&mouse);\n                    pointer_canvas_valid = pointer_tile_valid = 0;\n                    voxel_active = voxel_drag = 0;\n                    pan.dragging = 0;\n                    fprintf(stderr,\n                        "Voxel presentation: %s (read-only runtime geometry)\\n",\n                        options.voxel ? "enabled" : "disabled");\n                }\n                continue;\n            }\n            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&\n                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &\n                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS))) {\n                if (event.type == SDL_KEYDOWN && !event.key.repeat) {\n                    fe8_macos_toggle_extensions(&settings);\n                    fe8_presentation_reset(&presentation);\n                    frozen_valid = 0;\n                    visual_profile_active = 0;\n                    fe8_mouse_cancel(&mouse);\n                    pan.dragging = 0;\n                    pointer_canvas_valid = 0;\n                    pointer_tile_valid = 0;\n                    fprintf(stderr, "Extended renderer: %s\\n",\n                        settings.extensions_enabled ? "on" : "off");\n                }\n                continue;\n            }\n'''
           assert source.count(old) == 1
           source = source.replace(old, new)
-          old = '''    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==\n        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));\n'''
-          new = '''    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==\n        ((UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS) |\n         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL)));\n    assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_VOXEL),\n        "Voxel Renderer") == 0);\n'''
+
+          old = '''                    fe8_host_text_draw(&text,24,h-29,w-48,20,\n                        "F7  original view     [ ]  orbit     Scroll  zoom     Shift-drag  pan     C  focus     Home  reset",\n                        12,UINT32_C(0xFFC1B8A9),FE8_HOST_TEXT_REGULAR,0);\n'''
+          new = '''                    char voxel_controls[256];\n                    const char *voxel_key = SDL_GetScancodeName(\n                        settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL]);\n                    snprintf(voxel_controls, sizeof(voxel_controls),\n                        "%s  original view     [ ]  orbit     Scroll  zoom     Shift-drag  pan     C  focus     Home  reset",\n                        voxel_key && *voxel_key ? voxel_key : "Voxel hotkey");\n                    fe8_host_text_draw(&text,24,h-29,w-48,20, voxel_controls,\n                        12,UINT32_C(0xFFC1B8A9),FE8_HOST_TEXT_REGULAR,0);\n'''
           assert source.count(old) == 1
-          path.write_text(source.replace(old, new))
+          source = source.replace(old, new)
+          path.write_text(source)
           PY
-          git add app/src/host_settings.h app/src/host_settings.c app/src/main.c tests/test_host_settings.c
+          git add app/src/macos_settings.m app/src/main.c
           git diff --cached --check
-          grep -q 'FE8_HOST_HOTKEY_TOGGLE_VOXEL' app/src/host_settings.h
-          grep -q '"Voxel Renderer"' app/src/host_settings.c
-          grep -q 'FE8_HOST_HOTKEY_TOGGLE_VOXEL' app/src/main.c
+          grep -q 'CGFloat y = 118 - i \* 27' app/src/macos_settings.m
+          grep -q 'Voxel gets first claim' app/src/main.c
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -75,12 +61,12 @@ jobs:
           BUILD_JOBS: 2
           BUILD_TYPE: RelWithDebInfo
         run: bash scripts/build-linux-workspace.sh
-      - name: Publish bindable voxel hotkey
+      - name: Publish macOS voxel hotkey fixes
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = efb95ce22043a0d89c26e22d2463d4796efc527a
-          git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'Make voxel renderer toggle a bindable hotkey'
+          test "$(git rev-parse HEAD)" = 9627dc4ff66cbeef70e0f09ce4a056c2668deae5
+          git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'Fix macOS voxel hotkey rebinding and duplicate dispatch'
           git push origin HEAD:refs/heads/voxel-live
           git rev-parse HEAD
       - name: Upload Linux prototype executable
