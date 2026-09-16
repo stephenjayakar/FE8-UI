@@ -21,10 +21,12 @@ Here's what the inventory view looks like:
 
 ## Experimental voxel view
 
-Press **F7** on a supported tactical map, or launch with `--voxel`, for a native
-voxel presentation generated from the running ROM. Units use live sprite pixels;
-buildings and foliage are inferred from terrain. Selection, movement and other
-unsupported scenes retain the original renderer. [Controls, scope and validation](docs/voxel-renderer.md).
+Use the **Voxel Renderer** hotkey under **Settings → Settings… → Hotkeys** on a
+supported tactical map, or launch with `--voxel`, for a native voxel presentation
+generated from the running ROM. The default binding is F7, and it can be rebound
+to an ordinary key such as V. Units use live sprite pixels; buildings and foliage
+are inferred from terrain. Selection, movement and other unsupported scenes retain
+the original renderer. [Controls, scope and validation](docs/voxel-renderer.md).
 
 # Installing
 The project is in beta. Download the latest version from [Releases](https://github.com/stephenjayakar/FE8-UI/releases). Builds are available for Mac ARM, Linux x86-64, and Windows x64. Windows includes a ROM library and native game menus; see the [Windows launch instructions](docs/windows.md#run).
