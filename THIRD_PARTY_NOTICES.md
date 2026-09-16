@@ -19,6 +19,10 @@ The frontend links against SDL2 and zlib supplied by the build environment.
 SDL2 uses the zlib license. zlib uses the zlib license. See the corresponding
 installed packages or upstream projects for their complete notices.
 
+The Windows package statically links SDL2, zlib, and FreeType. Their full
+notices are included under `licenses/` in that package. The Windows text
+renderer uses the machine's installed fonts; it does not redistribute them.
+
 ## mGBA TV Mode and Scanlines shaders
 
 The macOS video presets include adapted copies of mGBA's `TV Mode` and

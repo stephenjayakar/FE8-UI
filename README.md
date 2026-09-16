@@ -20,7 +20,7 @@ Here's what the inventory view looks like:
 ![Sacred Echoes Inventory View](/docs/sacred-echoes-inventory.png)
 
 # Installing
-The project is in beta, so for now it's a pretty basic setup. Head over to https://github.com/stephenjayakar/FE8-UI/releases and download the latest version. Right now, we only have builds for Mac ARM and Linux. Please open an issue if you want me to try building for another platform!
+The project is in beta. Download the latest version from [Releases](https://github.com/stephenjayakar/FE8-UI/releases). Builds are available for Mac ARM, Linux x86-64, and Windows x64. Windows uses command-line ROM loading; see the [Windows launch instructions](docs/windows.md#run).
 
 1. Install the app how you would for your platform. On Mac, you should drag the `.app` file to Applications
 2. Launch it
@@ -28,6 +28,12 @@ The project is in beta, so for now it's a pretty basic setup. Head over to https
 4. Setup your controls, enable extended renderer & mouse controls, and go ham!
 
 Mouse controls right now only work in combat.
+
+# Building for Windows
+
+Windows x64 build support is available through PowerShell and GitHub Actions.
+You can trigger the Windows build from a Mac and download the resulting ZIP.
+See [Windows build instructions](docs/windows.md) for setup and launch commands.
 
 # Testing / reporting bugs
 Please open GitHub issues! Right now, the way I've tested this project is by doing a run through a game. I beat Archanae on it, but I'm obviously limited by how much time I have. Generally, games need to have a profile for them to work 100%. The games I've tested are:

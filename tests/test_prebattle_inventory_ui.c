@@ -22,9 +22,10 @@ static void set_item(Fe8ItemInfo *info, uint8_t id, const char *name,
 
 int main(void) {
     Fe8InventoryUi ui;
-    Fe8InventorySnapshot snapshot;
+    /* The full roster and framebuffer exceed Windows' default 1 MiB stack. */
+    static Fe8InventorySnapshot snapshot;
     Fe8InventoryListEntry entry;
-    uint32_t pixels[480 * 320];
+    static uint32_t pixels[480 * 320];
     int index;
     memset(&snapshot, 0, sizeof(snapshot));
     snapshot.unit_count = 2;

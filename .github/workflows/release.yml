@@ -99,8 +99,45 @@ jobs:
           grep -q 'Usage:' build-release/help.txt
           printf '%s\n' 'Built for Ubuntu 24.04 x86-64 (glibc 2.39 or newer).' 'Install runtime dependencies: sudo apt install libsdl2-2.0-0 libfreetype6 fonts-dejavu-core zlib1g' 'Run: ./fe8-mgba-sdl --rom /path/to/game.gba' 'A graphical desktop and your own ROM are required.' > "$name/README.txt"
           tar -czf "dist/$name.tar.gz" "$name"
+      - name: Package source with pinned mGBA
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/FE8-UI-${RELEASE_VERSION}-source-with-mgba"
+          mkdir -p "$source/third_party/mgba" dist
+          git archive HEAD | tar -x -C "$source"
+          git -C third_party/mgba archive HEAD -- . ':!cinema' | tar -x -C "$source/third_party/mgba"
+          tar -C "$RUNNER_TEMP" -czf "dist/FE8-UI-${RELEASE_VERSION}-source-with-mgba.tar.gz" "$(basename "$source")"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.ref }}
+      - name: Build and test Windows executable
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -VcpkgRoot $env:VCPKG_INSTALLATION_ROOT
+      - name: Check startup and name release package
+        shell: pwsh
+        run: |
+          $output = & ./build-windows/dist/bin/fe8-mgba-sdl.exe --help 2>&1
+          $status = $LASTEXITCODE
+          if ($status -notin @(0, 1) -or "$output" -notmatch 'Usage:') {
+            throw "Command-line startup failed (exit $status)"
+          }
+          $version = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'version-string'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build-windows/fe8-ui-windows-x64.zip "dist/FE8-UI-$version-Windows-x64.zip"
+          $global:LASTEXITCODE = 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-Windows
           path: dist/*
           if-no-files-found: error

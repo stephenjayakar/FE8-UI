@@ -56,7 +56,10 @@ static void lifecycle(void) {
     assert(ui.pinned_count==3);
     assert(click(&ui,FE8_INVENTORY_HIT_VIEW_ITEMS,0));assert(ui.pinned_count==3);
     assert(click(&ui,FE8_INVENTORY_HIT_VIEW_UNITS,0));assert(ui.pinned_count==3);
-    Fe8InventoryUnit tmp=snapshot.units[1];snapshot.units[1]=snapshot.units[5];snapshot.units[5]=tmp;
+    /* Build the reordered roster from the immutable fixture, then verify it. */
+    snapshot.units[1]=original.units[5];snapshot.units[5]=original.units[1];
+    assert(snapshot.units[5].character_id==original.units[1].character_id);
+    assert(snapshot.units[1].character_id==original.units[5].character_id);
     fe8_inventory_ui_rebuild(&ui,&snapshot);
     assert(fe8_inventory_unit_pinned(&ui,&snapshot.units[5]));
     assert(!fe8_inventory_unit_pinned(&ui,&snapshot.units[1]));

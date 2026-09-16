@@ -1,5 +1,11 @@
-set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# Test programs use ordinary console main() functions, including tests which
+# include SDL.h indirectly through host_settings.h.
+if(WIN32)
+    add_compile_definitions(SDL_MAIN_HANDLED)
+endif()
 
 # These tests use the C assert() macro as their test oracle. Release and
 # RelWithDebInfo normally define NDEBUG, which would otherwise compile every

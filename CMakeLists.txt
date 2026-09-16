@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(fe8_extended_frontend VERSION 0.1.0 LANGUAGES C)
+project(fe8_extended_frontend VERSION 0.2.0 LANGUAGES C)
 
 option(FE8_BUILD_TESTS "Build frontend unit tests" ON)
 
@@ -32,6 +32,10 @@ endif()
 # payload. EXCLUDE_FROM_ALL keeps its install rules out of this project.
 add_subdirectory("${FE8_MGBA_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/mgba" EXCLUDE_FROM_ALL)
 include(cmake/MgbaStateCompatibility.cmake)
+# All static-core consumers need BUILD_STATIC on MSVC to avoid DLL imports.
+# The feature definitions also determine the public mCore struct layout.
+target_compile_definitions(mgba INTERFACE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
 
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
@@ -147,6 +151,21 @@ if(APPLE)
 else()
     install(TARGETS fe8-mgba-sdl
         RUNTIME DESTINATION bin)
+endif()
+
+if(WIN32)
+    install(FILES LICENSE THIRD_PARTY_NOTICES.md docs/windows.md DESTINATION .)
+    install(FILES third_party/mgba/LICENSE DESTINATION licenses/mgba)
+    install(FILES docs/mgba-source.md DESTINATION licenses/mgba)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/mgba-compat/unlicensed.c"
+        DESTINATION licenses/mgba/modified-source/src/gba/cart)
+    if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+        foreach(_dependency IN ITEMS sdl2 zlib freetype)
+            install(FILES
+                "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${_dependency}/copyright"
+                DESTINATION "licenses/${_dependency}")
+        endforeach()
+    endif()
 endif()
 
 if(FE8_BUILD_TESTS)

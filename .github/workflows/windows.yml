@@ -1,0 +1,39 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build, test, and stage Windows executable
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -VcpkgRoot $env:VCPKG_INSTALLATION_ROOT
+
+      - name: Smoke-test command-line startup
+        shell: pwsh
+        run: |
+          $output = & ./build-windows/dist/bin/fe8-mgba-sdl.exe --help 2>&1
+          $status = $LASTEXITCODE
+          $output | Write-Output
+          if ($status -notin @(0, 1) -or "$output" -notmatch 'Usage:') {
+            throw "Command-line startup failed (exit $status)"
+          }
+          $global:LASTEXITCODE = 0
+
+      - name: Upload portable Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe8-ui-windows-x64
+          path: build-windows/dist/
+          if-no-files-found: error
+          retention-days: 14
