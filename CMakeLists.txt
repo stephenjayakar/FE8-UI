@@ -50,6 +50,7 @@ else()
 endif()
 
 add_executable(fe8-mgba-sdl
+    app/src/voxel_renderer.c
     app/src/main.c
     app/src/native_hud.c
     app/src/native_hud_host.c

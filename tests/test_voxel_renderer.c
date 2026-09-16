@@ -1,0 +1,74 @@
+#include "voxel_renderer.h"
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static uint8_t ewram[0x40000],vram[0x18000],palette[0x400];
+static uint8_t read8(void *unused,uint32_t a){
+    (void)unused;
+    if(a>=0x02000000&&a<0x02040000)return ewram[a-0x02000000];
+    if(a>=0x06000000&&a<0x06018000)return vram[a-0x06000000];
+    if(a>=0x05000000&&a<0x05000400)return palette[a-0x05000000];
+    return 0;
+}
+static void wr16(uint8_t *p,unsigned a,unsigned v){p[a]=(uint8_t)v;p[a+1]=(uint8_t)(v>>8);}
+static void wr32(uint8_t *p,unsigned a,uint32_t v){wr16(p,a,v);wr16(p,a+2,v>>16);}
+static uint64_t digest(const void *data,size_t n){const uint8_t *p=data;uint64_t h=1;while(n--)h=(h^*p++)*UINT64_C(1099511628211);return h;}
+int main(void){
+    Fe8MemoryView memory={NULL,read8};
+    Fe8MapRenderState map={.map_width=6,.map_height=6,.base_tile_rows=0x02000100,
+        .tileset_config=0x02001000,.tile_graphics=0x06008000,.palette=0x05000000};
+    Fe8Snapshot *s=calloc(1,sizeof(*s));assert(s);s->map_width=s->map_height=6;s->flags=FE8_SNAPSHOT_TERRAIN|FE8_SNAPSHOT_MAP_SPRITES;
+    memset(s->terrain,1,36);s->terrain[7]=5;s->terrain[9]=12;s->terrain[10]=0x2E;
+    for(int y=0;y<6;++y){wr32(ewram,0x100+y*4,0x02000200+y*12);for(int x=0;x<6;++x)wr16(ewram,0x200+(y*6+x)*2,0);}
+    for(int i=0;i<4;++i)wr16(ewram,0x1000+i*2,1);
+    memset(vram+0x8020,0x11,32);wr16(palette,2,0x17A8);
+    Fe8VoxelRenderer *v=fe8_voxel_create();assert(v);
+    assert(!fe8_voxel_render(NULL,&memory,&map,s,640,480));
+    assert(!fe8_voxel_render(v,NULL,&map,s,640,480));
+    assert(!fe8_voxel_render(v,&memory,&map,s,4097,480));
+    assert(!fe8_voxel_render(v,&memory,&map,s,640,2161));
+    assert(!fe8_voxel_render(v,&memory,&map,s,-1,480));
+    s->map_sprite_count=100;assert(!fe8_voxel_render(v,&memory,&map,s,640,480));s->map_sprite_count=0;
+    puts("PASS invalid renderer, memory, dimensions and sprite count");
+    uint64_t ram=digest(ewram,sizeof(ewram)),vr=digest(vram,sizeof(vram)),pal=digest(palette,sizeof(palette));
+    uint32_t *pixels=fe8_voxel_render(v,&memory,&map,s,640,480);assert(pixels);uint64_t a=digest(pixels,640*480*4);
+    assert(fe8_voxel_stats(v).terrain_builds==1);
+    for(int i=0;i<4;++i){assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(digest(pixels,640*480*4)==a);}
+    assert(fe8_voxel_stats(v).terrain_builds==1);
+    assert(ram==digest(ewram,sizeof(ewram))&&vr==digest(vram,sizeof(vram))&&pal==digest(palette,sizeof(palette)));
+    puts("PASS deterministic cache reuse and read-only memory");
+    for(int i=0;i<6;++i){
+        fe8_voxel_camera(v,.15f,1);assert(fe8_voxel_render(v,&memory,&map,s,640,480));
+        for(int y=0;y<6;++y)for(int x=0;x<6;++x){float sx,sy;int xx,yy;assert(fe8_voxel_project(v,x+.5f,y+.5f,0,&sx,&sy));assert(fe8_voxel_pick(v,sx,sy,&xx,&yy)&&xx==x&&yy==y);}
+    }
+    puts("PASS all 36 ground tiles round-trip at six yaw angles");
+    unsigned builds=fe8_voxel_stats(v).terrain_builds;wr16(palette,2,0x33B4);
+    assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).terrain_builds==builds+1);
+    s->terrain[7]=1;assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).terrain_builds==builds+2);
+    puts("PASS palette and terrain changes regenerate geometry");
+    /* A synthetic sprite exists solely in native OBJ VRAM. Alpha index zero
+       must remain absent; changing native pixels must invalidate its mesh. */
+    wr16(palette,0x202,0x7C00);
+    for(int ty=0;ty<2;++ty)for(int tx=0;tx<2;++tx)memset(vram+0x10000+(ty*32+tx)*32,0x11,32);
+    s->map_sprite_count=1;s->map_sprites[0]=(Fe8VisibleMapSprite){48,48,0,0};
+    fe8_voxel_home(v);assert(fe8_voxel_render(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_stats(v).sprites==1&&fe8_voxel_stats(v).sprite_builds==1);
+    assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).sprite_builds==1);
+    wr16(palette,0x202,0x001F);assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).sprite_builds==2);
+    float sx,sy;int x,y;assert(fe8_voxel_project(v,3.5f,3.8f,10,&sx,&sy));
+    assert(fe8_voxel_pick(v,sx,sy,&x,&y)&&x==3&&y==3);
+    puts("PASS sprite cache invalidation and raised-unit picking");
+    s->map_sprites[0].config=0x80;assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).sprites==0);
+    s->map_sprites[0].config=0;
+    memset(vram+0x10000,0,0x8000);assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).sprites==0);
+    s->map_sprites[0].config=7;assert(fe8_voxel_render(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).sprites==0);
+    puts("PASS native hidden flag, transparency and unsupported sprite layouts");
+    fe8_voxel_camera(v,NAN,1);fe8_voxel_camera(v,0,-1);fe8_voxel_pan(v,INFINITY,0);
+    assert(fe8_voxel_render(v,&memory,&map,s,800,600));
+    fe8_voxel_invalidate(v);assert(!fe8_voxel_pick(v,100,100,&x,&y));assert(fe8_voxel_render(v,&memory,&map,s,640,480));
+    assert(!fe8_voxel_pick(v,NAN,20,&x,&y)&&!fe8_voxel_pick(v,-1,20,&x,&y));
+    puts("PASS resize, invalid camera input and state invalidation");
+    fe8_voxel_destroy(v);fe8_voxel_destroy(NULL);free(s);return 0;
+}

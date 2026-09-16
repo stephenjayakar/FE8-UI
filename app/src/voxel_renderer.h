@@ -1,0 +1,29 @@
+#ifndef FE8_VOXEL_RENDERER_H
+#define FE8_VOXEL_RENDERER_H
+#include "extended_map_renderer.h"
+#include "fe8_profile.h"
+
+typedef struct Fe8VoxelRenderer Fe8VoxelRenderer;
+typedef struct Fe8VoxelStats {
+    unsigned terrain_builds, sprite_builds, cached_sprites, columns, sprites;
+} Fe8VoxelStats;
+
+/* Entirely presentational: read8 is the only emulator capability accepted. */
+Fe8VoxelRenderer *fe8_voxel_create(void);
+void fe8_voxel_destroy(Fe8VoxelRenderer *view);
+void fe8_voxel_invalidate(Fe8VoxelRenderer *view);
+void fe8_voxel_camera(Fe8VoxelRenderer *view, float yaw_delta, float zoom_factor);
+void fe8_voxel_pan(Fe8VoxelRenderer *view, float screen_dx, float screen_dy);
+void fe8_voxel_focus(Fe8VoxelRenderer *view, float map_x, float map_y);
+void fe8_voxel_home(Fe8VoxelRenderer *view);
+/* Returns NULL on invalid data/allocation failure; caller retains native view.
+ * Returned RGBA pixels are owned by view and valid until the next render. */
+Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *view,
+    const Fe8MemoryView *memory, const Fe8MapRenderState *map,
+    const Fe8Snapshot *snapshot, int width, int height);
+bool fe8_voxel_pick(const Fe8VoxelRenderer *view, float screen_x, float screen_y,
+    int *tile_x, int *tile_y);
+bool fe8_voxel_project(const Fe8VoxelRenderer *view, float map_x, float map_y,
+    float height, float *screen_x, float *screen_y);
+Fe8VoxelStats fe8_voxel_stats(const Fe8VoxelRenderer *view);
+#endif

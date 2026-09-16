@@ -244,3 +244,31 @@ if(FE8_ARCHANAE_ROM)
         COMMAND test_archanae_map_loading "${FE8_ARCHANAE_ROM}")
     set_tests_properties(archanae_map_loading PROPERTIES TIMEOUT 90)
 endif()
+
+# Runtime geometry contract; real assets are read only from a user's local ROM.
+add_executable(test_voxel_rom test_voxel_rom.c
+    ../app/src/voxel_renderer.c ../app/src/extended_map_renderer.c
+    ../app/src/extended_unit_renderer.c ../app/src/fe8_profile.c ../app/src/address_space.c)
+target_include_directories(test_voxel_rom PRIVATE ../app/src)
+target_compile_definitions(test_voxel_rom PRIVATE $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_voxel_rom PRIVATE mgba)
+if(MSVC)
+    target_compile_options(test_voxel_rom PRIVATE /UNDEBUG)
+else()
+    target_compile_options(test_voxel_rom PRIVATE -UNDEBUG)
+    target_link_libraries(test_voxel_rom PRIVATE m)
+endif()
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME voxel_archanae COMMAND test_voxel_rom "${FE8_ARCHANAE_ROM}")
+    set_tests_properties(voxel_archanae PROPERTIES TIMEOUT 90)
+endif()
+if(FE8_SACRED_ECHOES_ROM)
+    add_test(NAME voxel_sacred_echoes COMMAND test_voxel_rom "${FE8_SACRED_ECHOES_ROM}")
+    set_tests_properties(voxel_sacred_echoes PROPERTIES TIMEOUT 90)
+endif()
+
+fe8_add_test(voxel_renderer test_voxel_renderer.c
+    ../app/src/voxel_renderer.c ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c)
+if(NOT MSVC)
+    target_link_libraries(test_voxel_renderer PRIVATE m)
+endif()
