@@ -115,6 +115,7 @@ void fe8_host_settings_init(Fe8HostSettings *settings) {
         SDL_SCANCODE_F5,
         SDL_SCANCODE_F8,
         SDL_SCANCODE_F6,
+        SDL_SCANCODE_F7,
     };
     memset(settings, 0, sizeof(*settings));
     memcpy(settings->bindings, defaults, sizeof(defaults));
@@ -178,7 +179,8 @@ const char *fe8_host_button_name(enum Fe8HostButton button) {
 
 const char *fe8_host_hotkey_name(enum Fe8HostHotkey hotkey) {
     static const char *names[FE8_HOST_HOTKEY_COUNT] = {
-        "Speed Up", "Quick Save", "Quick Load", "Extended Renderer"
+        "Speed Up", "Quick Save", "Quick Load", "Extended Renderer",
+        "Voxel Renderer"
     };
     return hotkey >= 0 && hotkey < FE8_HOST_HOTKEY_COUNT ? names[hotkey] : "Unknown";
 }

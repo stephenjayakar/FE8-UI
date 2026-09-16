@@ -1131,6 +1131,21 @@ static int run_game(int argc, char **argv) {
                 }
                 continue;
             }
+            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &
+                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL))) {
+                if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+                    options.voxel = !options.voxel;
+                    fe8_mouse_cancel(&mouse);
+                    pointer_canvas_valid = pointer_tile_valid = 0;
+                    voxel_active = voxel_drag = 0;
+                    pan.dragging = 0;
+                    fprintf(stderr,
+                        "Voxel presentation: %s (read-only runtime geometry)\n",
+                        options.voxel ? "enabled" : "disabled");
+                }
+                continue;
+            }
             if (event.type == SDL_KEYDOWN && !event.key.repeat &&
                     event.key.keysym.scancode == SDL_SCANCODE_I) {
                 if (inventory_ui.active) {
@@ -1373,13 +1388,6 @@ static int run_game(int argc, char **argv) {
                     !fe8_host_key_for_scancode(&settings, event.key.keysym.scancode) &&
                     !fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode)) {
                 SDL_Keycode key = event.key.keysym.sym;
-                if (key == SDLK_F7) {
-                    options.voxel = !options.voxel;
-                    fe8_mouse_cancel(&mouse); pointer_canvas_valid = pointer_tile_valid = 0;
-                    voxel_active = voxel_drag = 0; pan.dragging = 0;
-                    fprintf(stderr, "Voxel presentation: %s (read-only runtime geometry)\n", options.voxel ? "enabled" : "disabled");
-                    continue;
-                }
                 if (voxel_active && (key == SDLK_LEFTBRACKET || key == SDLK_RIGHTBRACKET || key == SDLK_HOME || key == SDLK_c)) {
                     if (key == SDLK_HOME) fe8_voxel_home(voxel);
                     else if (key == SDLK_c) fe8_voxel_focus(voxel,snapshot.cursor_x+.5f,snapshot.cursor_y+.5f);

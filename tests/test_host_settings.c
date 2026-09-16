@@ -102,15 +102,21 @@ int main(void) {
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_SAVE] == SDL_SCANCODE_F5);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_LOAD] == SDL_SCANCODE_F8);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F6);
+    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL] == SDL_SCANCODE_F7);
     assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) ==
         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==
+        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL));
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_F6) == 0);
     assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS),
         "Extended Renderer") == 0);
     settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] = SDL_SCANCODE_F7;
     assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) == 0);
     assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==
-        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));
+        ((UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS) |
+         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL)));
+    assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_VOXEL),
+        "Voxel Renderer") == 0);
     {
         Fe8HostSettings expected = settings;
         expected.extensions_enabled = 0;
