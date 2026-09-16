@@ -163,11 +163,23 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
                     tag < FE8_HOTKEY_TAG_BASE + FE8_HOST_HOTKEY_COUNT) {
                 enum Fe8HostHotkey hotkey =
                     (enum Fe8HostHotkey)(tag - FE8_HOTKEY_TAG_BASE);
+                /* Frontend hotkeys are actions, not GBA buttons. Let one key
+                 * own one action so an older saved binding cannot silently
+                 * consume a newer one earlier in the event loop. */
+                for (int other = 0; other < FE8_HOST_HOTKEY_COUNT; ++other) {
+                    if (other == hotkey || self.settings->hotkeys[other] != scancode)
+                        continue;
+                    self.settings->hotkeys[other] = SDL_SCANCODE_UNKNOWN;
+                    [NSUserDefaults.standardUserDefaults setInteger:SDL_SCANCODE_UNKNOWN
+                        forKey:hotkeyBindingKey((enum Fe8HostHotkey)other)];
+                }
                 self.settings->hotkeys[hotkey] = scancode;
                 ++self.settings->revision;
                 [NSUserDefaults.standardUserDefaults setInteger:scancode
                     forKey:hotkeyBindingKey(hotkey)];
                 [self stopListening];
+                for (NSButton *button in self.bindingButtons)
+                    button.title = [self titleForBindingTag:button.tag];
             }
             return nil;
         }];
@@ -356,11 +368,13 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     }
 
     NSTextField *hotkeyHeading = [NSTextField labelWithString:@"Hotkeys"];
-    hotkeyHeading.frame = NSMakeRect(24, 140, 380, 24);
+    hotkeyHeading.frame = NSMakeRect(24, 150, 380, 24);
     hotkeyHeading.font = [NSFont boldSystemFontOfSize:13];
     [content addSubview:hotkeyHeading];
     for (i = 0; i < FE8_HOST_HOTKEY_COUNT; ++i) {
-        CGFloat y = 108 - i * 29;
+        /* Five rows fit fully inside the fixed settings window. The previous
+         * 29-point spacing put the Voxel Renderer button at y=-8. */
+        CGFloat y = 118 - i * 27;
         NSInteger tag = FE8_HOTKEY_TAG_BASE + i;
         NSTextField *label = [NSTextField labelWithString:[NSString stringWithUTF8String:
             fe8_host_hotkey_name((enum Fe8HostHotkey)i)]];

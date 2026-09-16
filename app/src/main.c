@@ -1114,6 +1114,24 @@ static int run_game(int argc, char **argv) {
                     continue;
                 }
             }
+            /* Voxel gets first claim on an accidental duplicate binding. This
+             * matters for upgrades where F7 may already be stored for another
+             * action; rebinding in Settings will remove the duplicate. */
+            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &
+                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL))) {
+                if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+                    options.voxel = !options.voxel;
+                    fe8_mouse_cancel(&mouse);
+                    pointer_canvas_valid = pointer_tile_valid = 0;
+                    voxel_active = voxel_drag = 0;
+                    pan.dragging = 0;
+                    fprintf(stderr,
+                        "Voxel presentation: %s (read-only runtime geometry)\n",
+                        options.voxel ? "enabled" : "disabled");
+                }
+                continue;
+            }
             if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
                     (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &
                         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS))) {
@@ -1128,21 +1146,6 @@ static int run_game(int argc, char **argv) {
                     pointer_tile_valid = 0;
                     fprintf(stderr, "Extended renderer: %s\n",
                         settings.extensions_enabled ? "on" : "off");
-                }
-                continue;
-            }
-            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
-                    (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &
-                        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL))) {
-                if (event.type == SDL_KEYDOWN && !event.key.repeat) {
-                    options.voxel = !options.voxel;
-                    fe8_mouse_cancel(&mouse);
-                    pointer_canvas_valid = pointer_tile_valid = 0;
-                    voxel_active = voxel_drag = 0;
-                    pan.dragging = 0;
-                    fprintf(stderr,
-                        "Voxel presentation: %s (read-only runtime geometry)\n",
-                        options.voxel ? "enabled" : "disabled");
                 }
                 continue;
             }
@@ -1955,8 +1958,13 @@ static int run_game(int argc, char **argv) {
                 if (fe8_host_text_begin(&text,image,w,w,h)) {
                     fe8_host_text_draw(&text,24,h-50,w-48,22,
                         "VOXEL / LIVE ROM",14,UINT32_C(0xFFE0F2EA),FE8_HOST_TEXT_SEMIBOLD,0);
-                    fe8_host_text_draw(&text,24,h-29,w-48,20,
-                        "F7  original view     [ ]  orbit     Scroll  zoom     Shift-drag  pan     C  focus     Home  reset",
+                    char voxel_controls[256];
+                    const char *voxel_key = SDL_GetScancodeName(
+                        settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL]);
+                    snprintf(voxel_controls, sizeof(voxel_controls),
+                        "%s  original view     [ ]  orbit     Scroll  zoom     Shift-drag  pan     C  focus     Home  reset",
+                        voxel_key && *voxel_key ? voxel_key : "Voxel hotkey");
+                    fe8_host_text_draw(&text,24,h-29,w-48,20, voxel_controls,
                         12,UINT32_C(0xFFC1B8A9),FE8_HOST_TEXT_REGULAR,0);
                     fe8_host_text_end(&text);
                 }
