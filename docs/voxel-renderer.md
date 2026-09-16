@@ -107,39 +107,45 @@ Terrain generation is invalidated by map dimensions, chapter, metatiles,
 terrain/fog data, tile graphics, palettes and learned palette mapping. A
 128-entry, content-verified LRU cache stores sprite columns. Repeated identical
 frames reuse the static terrain/depth backdrop. ROM changes destroy the view;
-state loads invalidate it. Output is bounded to 4096 x 2160; larger drawables
-currently fall back to the original renderer rather than allocate unbounded
-buffers. Rendering is CPU-based and synchronous; cold rebuilds can hitch.
+state loads invalidate it. The software scene is bounded independently of output
+size, as described above. Rendering is CPU-based and synchronous; cold rebuilds
+can hitch.
 
 ## Validation
 
-Validated locally with the supplied Archanae and Sacred Echoes ROMs on Linux
-using the actual SDL frontend. Both were booted into tactical maps; screenshots
-were captured from the live application at 1440 x 900. F7, orbit, zoom, native
-selection/cancel, restoration and game-directional input were exercised through
-X11 events, not a simulated HTML scene.
+The activation/Retina fix was built and tested on Linux and native macOS before
+publishing functional commit `892ae54434e20dd13c7aaf83ebc13adca98715b1`.
 
-The configured test suite passed **44/44 tests**, including both real-ROM voxel
-contracts and the ROM-independent renderer test. AddressSanitizer and
-UndefinedBehaviorSanitizer passed the renderer test. The real-ROM contract
-compares serialized emulator state byte-for-byte before and after rendering and
-camera/cache operations; it also checks native sprite/cache use, all visible
-tiles at four camera orientations, invalid dimensions and regeneration. The
-synthetic contract covers six orientations, raised-unit picking, transparency,
-palette changes, cache reuse, resize and invalid camera inputs.
+- **45/45 local Linux tests passed**, including the supplied Archanae and Sacred
+  Echoes ROMs. The renderer test also passed AddressSanitizer and
+  UndefinedBehaviorSanitizer, including the high-resolution allocation cases.
+- **37/37 native macOS tests passed**, including real AppKit binding-button/key
+  events before SDL video initialization and through the SDL event loop.
+  The test checks V binding, saved preferences, conflict removal, cancellation,
+  menu/checkbox state, and Library Play/Resume arguments. Preference storage is
+  isolated from the user's settings. Native Settings screenshots were captured.
+- The actual Linux application reproduced the old native-only fallback at
+  **5120×2880**. The patched application rendered Archanae voxels at that size
+  and Sacred Echoes at **3456×2234**. Actual keyboard events also checked voxel
+  off/on, the disabled-Extended-Renderer status, restoration, quick-state loading,
+  and normal application exit.
 
-Measured renderer-only CPU time in this workspace, 1440 x 960, frozen emulator
-state, 30 identical warm frames:
+The real-ROM contract compares serialized emulator state byte-for-byte before
+and after rendering and camera/cache operations; it also checks sprite/cache
+use, visible tiles at four camera orientations, and regeneration. The synthetic
+contract covers six orientations, raised-unit picking, transparency, palette
+changes, cache reuse, resize, high-DPI picking/panning, and invalid camera inputs.
 
-| ROM | First render | Warm mean | Live standing sprites |
-| --- | ---: | ---: | ---: |
-| Archanae | 41.09 ms | 3.18 ms | 21 |
-| Sacred Echoes | 46.07 ms | 2.22 ms | 12 |
+Letter-to-scancode lookup before SDL video initialization varies with SDL
+version: the older Linux SDK returned Unknown, while the macOS CI version had a
+default map. Binding now uses Cocoa's physical virtual-key positions directly
+rather than depending on either behavior.
 
-These are not whole-application frame-rate measurements or a 60 fps guarantee.
-Animation, terrain changes, camera movement and display upload have additional
-cost. macOS and Windows use the shared C/overlay implementation but were not
-runtime-tested here.
+These checks are not a whole-application frame-rate measurement or a 60 fps
+guarantee. Animation, terrain changes, camera movement and display upload add
+cost. **The ROM gameplay captures are Linux captures.** macOS validation covers
+the native application build, the renderer contracts, and actual Settings UI;
+end-to-end macOS ROM gameplay and Windows runtime validation remain separate.
 
 To reproduce with your own local ROMs:
 
