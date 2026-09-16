@@ -1,6 +1,6 @@
-/* Runtime voxel relief for FE8. No model files, network, ROM mutation, or
- * replacement game state. Sprite alpha supplies silhouettes; terrain supplies
- * semantic hints for elevation. Inferred depth is NOT original game geometry. */
+/* Runtime voxel terrain and camera-facing sprite billboards for FE8.
+ * No model files, network, ROM mutation, or replacement game state.
+ * Inferred terrain depth is NOT original game geometry. */
 #include "voxel_renderer.h"
 #include "extended_unit_renderer.h"
 #include <float.h>
@@ -13,27 +13,28 @@
 enum { MAX_OUTPUT_PIXELS = 8192 * 4320, SCENE_WIDTH = 1920, SCENE_HEIGHT = 1080,
        SPRITE_CACHE = 128, MAX_SPRITE_PIXELS = 32 * 32 };
 typedef struct Point { float x, y, z; } Point;
-typedef struct SpriteMesh {
+typedef struct SpriteImage {
     uint64_t hash, age;
     uint32_t colors[MAX_SPRITE_PIXELS];
-    uint8_t depth[MAX_SPRITE_PIXELS];
-    int width, height;
-} SpriteMesh;
+    int width, height, bottom;
+} SpriteImage;
 struct Fe8VoxelRenderer {
-    Fe8HostPixel *pixels, *backdrop, *terrain, *output;
+    Fe8HostPixel *pixels, *backdrop, *terrain, *ground, *output;
     size_t output_capacity;
     int output_width, output_height;
     const char *error;
     float *depth, *backdepth;
     uint16_t *unit_hits, drawing_unit;
+    uint32_t *ground_hits;
+    bool drawing_background;
     uint8_t *heights, *shadow;
     size_t capacity, terrain_capacity;
     int width, height, mw, mh;
     float yaw, pitch, zoom, pan_x, pan_z, target_x, target_z, scale;
     float cy, sy, cp, sp;
-    uint64_t terrain_hash, ticks;
+    uint64_t terrain_hash, object_hash, scene_hash, ticks;
     bool dirty, ready;
-    SpriteMesh *sprites;
+    SpriteImage *sprites;
     Fe8VoxelStats stats;
 };
 static float clampf(float a, float lo, float hi) { return a < lo ? lo : a > hi ? hi : a; }
@@ -92,7 +93,10 @@ static void triangle(Fe8VoxelRenderer *v,Point a,Point b,Point c,uint32_t color)
             if(u<-.00001f||w<-.00001f||u+w>1.00001f)continue;
             float d=a.z+u*(b.z-a.z)+w*(c.z-a.z);
             size_t i=(size_t)y*v->width+x;
-            if(d>=v->depth[i]){v->depth[i]=d;v->pixels[i]=color;v->unit_hits[i]=v->drawing_unit;}
+            if(d>=v->depth[i]){
+                v->depth[i]=d;v->pixels[i]=color;v->unit_hits[i]=v->drawing_unit;
+                if(v->drawing_background)v->ground_hits[i]=0;
+            }
         }
     }
 }
@@ -129,27 +133,21 @@ static bool resize(Fe8VoxelRenderer *v,int w,int h,int mw,int mh) {
     w = (int)(w * scale); h = (int)(h * scale);
     if (w < 1) w = 1;
     if (h < 1) h = 1;
-    if (w != output_w || h != output_h) {
-        size_t count = (size_t)output_w * output_h;
-        if (count > v->output_capacity) {
-            Fe8HostPixel *output = realloc(v->output, count * sizeof(*output));
-            if (!output) { v->error = "unable to allocate voxel output"; return false; }
-            v->output = output; v->output_capacity = count;
-        }
-    }
     v->error = "unable to allocate voxel scene";
     size_t n=(size_t)w*h,tn=(size_t)mw*mh;
     if(n>v->capacity){
         uint32_t *p=malloc(n*4),*b=malloc(n*4);float *d=malloc(n*sizeof(float)),*bd=malloc(n*sizeof(float));
         uint16_t *hits=calloc(n,sizeof(*hits));
-        if(!p||!b||!d||!bd||!hits){free(p);free(b);free(d);free(bd);free(hits);return false;}
-        free(v->pixels);free(v->backdrop);free(v->depth);free(v->backdepth);free(v->unit_hits);
-        v->pixels=p;v->backdrop=b;v->depth=d;v->backdepth=bd;v->unit_hits=hits;v->capacity=n;
+        uint32_t *ground_hits=calloc(n,sizeof(*ground_hits));
+        if(!p||!b||!d||!bd||!hits||!ground_hits){free(p);free(b);free(d);free(bd);free(hits);free(ground_hits);return false;}
+        free(v->pixels);free(v->backdrop);free(v->depth);free(v->backdepth);free(v->unit_hits);free(v->ground_hits);
+        v->pixels=p;v->backdrop=b;v->depth=d;v->backdepth=bd;v->unit_hits=hits;v->ground_hits=ground_hits;v->capacity=n;
     }
     if(tn>v->terrain_capacity){
-        uint32_t *t=malloc(tn*4);uint8_t *he=malloc(tn),*sh=malloc(tn);
-        if(!t||!he||!sh){free(t);free(he);free(sh);return false;}
-        free(v->terrain);free(v->heights);free(v->shadow);v->terrain=t;v->heights=he;v->shadow=sh;v->terrain_capacity=tn;
+        uint32_t *t=malloc(tn*4),*g=malloc(tn*4);uint8_t *he=malloc(tn),*sh=malloc(tn);
+        if(!t||!g||!he||!sh){free(t);free(g);free(he);free(sh);return false;}
+        free(v->terrain);free(v->ground);free(v->heights);free(v->shadow);
+        v->terrain=t;v->ground=g;v->heights=he;v->shadow=sh;v->terrain_capacity=tn;
     }
     if(v->width!=w||v->height!=h)v->dirty=true;
     if(v->mw!=mw||v->mh!=mh){v->terrain_hash=0;v->pan_x=v->pan_z=0;v->dirty=true;}
@@ -179,6 +177,33 @@ static uint64_t map_hash(const Fe8MemoryView *m,const Fe8MapRenderState *map,con
         h=byteshash(h,map->palette_mapping->valid_mask,sizeof(map->palette_mapping->valid_mask));
     }
     return h?h:1;
+}
+/* Animated water/plains must not rasterize every tree and castle again.
+ * Hash all object material footprints, including entire inferred rectangles,
+ * so any geometry/material/terrain/fog change still invalidates scenery. */
+static uint64_t object_hash(const Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
+    uint8_t covered[FE8_MAX_MAP_CELLS]={0};
+    size_t cells=(size_t)s->map_width*s->map_height;
+    uint64_t hash=byteshash(UINT64_C(14695981039346656037),s->terrain,cells);
+    hash=byteshash(hash,&s->chapter,sizeof(s->chapter));
+    hash=byteshash(hash,&v->mw,sizeof(v->mw));
+    hash=byteshash(hash,&v->mh,sizeof(v->mh));
+    if(s->flags&FE8_SNAPSHOT_FOG)hash=byteshash(hash,s->fog,cells);
+    for(int z=0;z<s->map_height;++z)for(int x=0;x<s->map_width;++x){
+        if(covered[z*s->map_width+x])continue;
+        unsigned t=s->terrain[z*s->map_width+x];
+        if(roof(t)){
+            int x1=x,z1=z;
+            while(x1+1<s->map_width&&s->terrain[z*s->map_width+x1+1]==t)++x1;
+            while(z1+1<s->map_height&&s->terrain[(z1+1)*s->map_width+x]==t)++z1;
+            for(int j=z;j<=z1;++j)for(int i=x;i<=x1;++i)covered[j*s->map_width+i]=1;
+        }else if(structure(t)||canopy(t)||t==0x0A||t==0x1D||t==0x20||t==0x21||
+                t==0x39||t==0x33||t==0x13||t==0x14)covered[z*s->map_width+x]=1;
+    }
+    for(int z=0;z<v->mh;++z)for(int x=0;x<s->map_width;++x)
+        if(covered[(z/16)*s->map_width+x])
+            hash=byteshash(hash,v->terrain+(size_t)z*v->mw+x*16,16*sizeof(*v->terrain));
+    return hash?hash:1;
 }
 static void terrain_heights(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
     int w=v->mw,h=v->mh;size_t n=(size_t)w*h;
@@ -380,8 +405,23 @@ static uint32_t substrate(const Fe8VoxelRenderer *v,const Fe8Snapshot *s,int x,i
     }
     return 0xFF83A98A;
 }
+/* Cache substrate searches, shadow filtering and material tint at map-pixel
+ * resolution. Camera motion only samples this atlas, never repeats the search
+ * once per output pixel. Invalidated with exactly the same ROM inputs. */
+static void prepare_ground(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
+    for(int z=0;z<v->mh;++z)for(int x=0;x<v->mw;++x){
+        size_t i=(size_t)z*v->mw+x;
+        uint32_t c=v->heights[i]?substrate(v,s,x,z):v->terrain[i];
+        float sh=shadow_at(v,x,z);
+        c=tint(c,sh*1.01f,sh*1.015f,sh*.98f);
+        if(watery(s->terrain[(z/16)*s->map_width+x/16]))c=mix(c,0xFFAF9374,.12f);
+        v->ground[i]=c;
+    }
+}
 static void background(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
     int w=v->width,h=v->height;
+    v->drawing_background=true;
+    memset(v->ground_hits,0,(size_t)w*h*sizeof(*v->ground_hits));
     for(int y=0;y<h;++y)for(int x=0;x<w;++x){
         float nx=(x-w*.5f)/w,ny=(y-h*.45f)/h;
         uint32_t c=mix(0xFF302A23,0xFF15120F,clampf(nx*nx+ny*ny,0,1));
@@ -394,16 +434,8 @@ static void background(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
         float wx,wz;unproject(v,x+.5f,y+.5f,&wx,&wz);
         if(wx<0||wz<0||wx>=v->mw||wz>=v->mh)continue;
         int ix=(int)wx,iz=(int)wz;size_t ti=(size_t)iz*v->mw+ix,i=(size_t)y*w+x;
-        uint32_t c=v->terrain[ti];unsigned t=s->terrain[(iz/16)*s->map_width+ix/16];
-        if(v->heights[ti]){
-            /* Remove the flat duplicate below lifted objects. The inferred
-             * substrate is visible only around their base, not a second roof. */
-            c=substrate(v,s,ix,iz);
-        }
-        float sh=shadow_at(v,ix,iz);
-        c=tint(c,sh*1.01f,sh*1.015f,sh*.98f);
-        if(watery(t))c=mix(c,0xFFAF9374,.12f);
-        v->pixels[i]=c;v->depth[i]=project(v,wx,0,wz).z;
+        v->pixels[i]=v->ground[ti];v->depth[i]=project(v,wx,0,wz).z;
+        v->ground_hits[i]=(uint32_t)(ti+1);
     }
     /* Heightfield surface only: internal faces are never emitted. */
     for(int z=0;z<v->mh;++z)for(int x=0;x<v->mw;++x){
@@ -421,46 +453,42 @@ static void background(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
     }
     map_objects(v,s);
     memcpy(v->backdrop,v->pixels,(size_t)w*h*4);memcpy(v->backdepth,v->depth,(size_t)w*h*sizeof(float));
-    v->dirty=false;
+    v->dirty=false;v->drawing_background=false;
+    ++v->stats.background_builds;
 }
 static uint32_t gba_color(unsigned c) {
     unsigned r=c&31,g=(c>>5)&31,b=(c>>10)&31;
     return 0xFF000000u | ((r<<3)|(r>>2)) | ((g<<3)|(g>>2))<<8 | ((b<<3)|(b>>2))<<16;
 }
-static SpriteMesh *sprite_mesh(Fe8VoxelRenderer *v,const Fe8MemoryView *m,unsigned oam2,unsigned config) {
+static SpriteImage *sprite_image(Fe8VoxelRenderer *v,const Fe8MemoryView *m,unsigned oam2,unsigned config) {
     int w,h;
     if(config&0x80)return NULL; /* FE8 SMS hide flag; never reveal hidden actors. */
     switch(config&15){case 0:case 3:w=h=16;break;case 1:case 4:w=16;h=32;break;case 2:case 5:w=h=32;break;default:return NULL;}
     uint32_t colors[MAX_SPRITE_PIXELS]={0};
     uint64_t hash=UINT64_C(14695981039346656037);hash=bytehash(hash,w);hash=bytehash(hash,h);
-    for(int y=0;y<h;++y)for(int x=0;x<w;++x){
+    uint32_t palette[16]={0};
+    for(unsigned i=1;i<16;++i)
+        palette[i]=gba_color(rd16(m,0x05000200+((oam2>>12)*16+i)*2));
+    for(int y=0;y<h;++y)for(int x=0;x<w;x+=2){
         unsigned tile=((oam2&1023)+(y/8)*32+x/8)&1023;
         unsigned packed=m->read8(m->context,0x06010000+tile*32+(y%8)*4+(x%8)/2);
-        unsigned index=x&1?packed>>4:packed&15;
-        uint32_t c=index?gba_color(rd16(m,0x05000200+((oam2>>12)*16+index)*2)):0;
-        colors[y*w+x]=c;hash=bytehash(hash,c);
+        colors[y*w+x]=palette[packed&15];
+        colors[y*w+x+1]=palette[packed>>4];
     }
-    SpriteMesh *mesh=&v->sprites[0];
+    hash=byteshash(hash,colors,(size_t)w*h*sizeof(*colors));
+    SpriteImage *mesh=&v->sprites[0];
     for(unsigned i=0;i<SPRITE_CACHE;++i){
-        SpriteMesh *p=&v->sprites[i];
+        SpriteImage *p=&v->sprites[i];
         if(p->hash==hash&&p->width==w&&p->height==h&&!memcmp(p->colors,colors,(size_t)w*h*4)){
             p->age=v->ticks;++v->stats.cached_sprites;return p;
         }
         if(p->age<mesh->age)mesh=p;
     }
     mesh->hash=hash;mesh->width=w;mesh->height=h;mesh->age=v->ticks;
-    memcpy(mesh->colors,colors,(size_t)w*h*4);memset(mesh->depth,0,sizeof(mesh->depth));
-    /* Alpha-distance rounded extrusion. Thin weapons remain thin; connected
-     * torsos gain volume. Rebuilt only when native animation/palette changes. */
-    for(int y=0;y<h;++y)for(int x=0;x<w;++x){
-        if(!colors[y*w+x])continue;
-        int distance=1;
-        for(int d=1;d<=4;++d){
-            if(x-d<0||x+d>=w||y-d<0||y+d>=h||!colors[y*w+x-d]||!colors[y*w+x+d]||!colors[(y-d)*w+x]||!colors[(y+d)*w+x])break;
-            ++distance;
-        }
-        mesh->depth[y*w+x]=(uint8_t)(1+distance);
-    }
+    memcpy(mesh->colors,colors,(size_t)w*h*sizeof(*colors));
+    mesh->bottom=-1;
+    for(int y=h-1;y>=0&&mesh->bottom<0;--y)
+        for(int x=0;x<w;++x)if(colors[y*w+x]){mesh->bottom=y;break;}
     ++v->stats.sprite_builds;return mesh;
 }
 static void unit_shadow(Fe8VoxelRenderer *v,float wx,float wz,float radius) {
@@ -475,24 +503,43 @@ static void unit_shadow(Fe8VoxelRenderer *v,float wx,float wz,float radius) {
         float shade=1-(1-dist)*.32f;v->pixels[i]=tint(v->pixels[i],shade,shade,shade);
     }
 }
-static void draw_sprite(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const Fe8VisibleMapSprite *s) {
-    SpriteMesh *mesh=sprite_mesh(v,m,s->oam2,s->config);if(!mesh)return;
-    int w=mesh->width,h=mesh->height;
-    float left=s->x_display+(w==32?-8:0),foot=s->y_display+15.f;
-    int bottom=h-1;bool any=false;
-    while(bottom>=0){for(int x=0;x<w;++x)if(mesh->colors[bottom*w+x]){any=true;break;}if(any)break;--bottom;}
-    if(!any)return;
+/* View-aligned, alpha-tested billboard: one flat sprite, no extruded pixel
+ * boxes. The original palette is unlit. Its foot stays fixed on the map and
+ * its image stays upright/front-facing through orbit and zoom. A constant
+ * view-space depth is the depth of this camera-facing plane; terrain and
+ * other units still occlude it. Transparent texels never write depth or hits. */
+static void draw_sprite(Fe8VoxelRenderer *v,SpriteImage *sprite,const Fe8VisibleMapSprite *s) {
+    if(!sprite||sprite->bottom<0)return;
+    int w=sprite->width,bottom=sprite->bottom;
+    float wx=s->x_display+8.f,wz=s->y_display+15.f;
+    unit_shadow(v,wx,wz,w*.37f);
+    Point foot=project(v,wx,.1f,wz);
+    float left=foot.x-w*.5f*v->scale,top=foot.y-(bottom+1)*v->scale;
+    int x0=(int)ceilf(left-.5f),x1=(int)ceilf(left+w*v->scale-.5f);
+    int y0=(int)ceilf(top-.5f),y1=(int)ceilf(foot.y-.5f);
+    if(x0<0)x0=0;
+    if(y0<0)y0=0;
+    if(x1>v->width)x1=v->width;
+    if(y1>v->height)y1=v->height;
     int tx=s->x_display/16,tz=s->y_display/16;
-    v->drawing_unit=(tx>=0&&tz>=0&&tx<v->mw/16&&tz<v->mh/16)?(uint16_t)(1+tz*(v->mw/16)+tx):0;
-    unit_shadow(v,left+w*.5f,foot,w*.37f);
-    /* Zero-alpha palette entry stays absent. Original pixels retain their
-     * front colors; exposed tops and sides receive directional lighting. */
-    for(int y=0;y<=bottom;++y)for(int x=0;x<w;++x){
-        uint32_t c=mesh->colors[y*w+x];if(!c)continue;
-        float d=mesh->depth[y*w+x];
-        box(v,left+x,(float)(bottom-y),foot-d*.5f,1,1,d,c);
+    uint16_t hit=(tx>=0&&tz>=0&&tx<v->mw/16&&tz<v->mh/16)?
+        (uint16_t)(1+tz*(v->mw/16)+tx):0;
+    float inverse=1.f/v->scale;
+    for(int y=y0;y<y1;++y){
+        int sy=(int)((y+.5f-top)*inverse);
+        if(sy<0||sy>bottom)continue;
+        for(int x=x0;x<x1;++x){
+            int sx=(int)((x+.5f-left)*inverse);
+            if(sx<0||sx>=w)continue;
+            uint32_t color=sprite->colors[sy*w+sx];
+            if(!color)continue;
+            size_t i=(size_t)y*v->width+x;
+            if(foot.z>=v->depth[i]){
+                v->pixels[i]=color;v->depth[i]=foot.z;v->unit_hits[i]=hit;
+                ++v->stats.billboard_pixels;
+            }
+        }
     }
-    v->drawing_unit=0;
     ++v->stats.sprites;
 }
 static void range_and_cursor(Fe8VoxelRenderer *v,const Fe8Snapshot *s,bool cursor) {
@@ -523,8 +570,8 @@ Fe8VoxelRenderer *fe8_voxel_create(void) {
 }
 void fe8_voxel_destroy(Fe8VoxelRenderer *v) {
     if(!v)return;
-    free(v->pixels);free(v->backdrop);free(v->depth);free(v->backdepth);free(v->unit_hits);
-    free(v->terrain);free(v->heights);free(v->shadow);free(v->sprites);free(v->output);free(v);
+    free(v->pixels);free(v->backdrop);free(v->depth);free(v->backdepth);free(v->unit_hits);free(v->ground_hits);
+    free(v->terrain);free(v->ground);free(v->heights);free(v->shadow);free(v->sprites);free(v->output);free(v);
 }
 void fe8_voxel_invalidate(Fe8VoxelRenderer *v){if(v){v->terrain_hash=0;v->dirty=true;v->ready=false;memset(v->sprites,0,SPRITE_CACHE*sizeof(*v->sprites));}}
 void fe8_voxel_camera(Fe8VoxelRenderer *v,float yaw_delta,float zoom_factor){
@@ -545,7 +592,7 @@ void fe8_voxel_focus(Fe8VoxelRenderer *v,float x,float z){
     v->pan_z=clampf(z*16-v->mh*.5f,-v->mh*.5f,v->mh*.5f);v->dirty=true;
 }
 void fe8_voxel_home(Fe8VoxelRenderer *v){if(v){v->pan_x=v->pan_z=0;v->zoom=1;v->yaw=-.32f;v->dirty=true;}}
-Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const Fe8MapRenderState *map,
+const Fe8HostPixel *fe8_voxel_render_scene(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const Fe8MapRenderState *map,
         const Fe8Snapshot *s,int width,int height){
     if(v){v->ready=false;v->error="invalid or unavailable map data";}
     if(!v||!m||!m->read8||!map||!s||!fe8_extended_state_is_sane(map)||
@@ -567,24 +614,82 @@ Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const 
             v->error="terrain is not ready for voxel generation";
             return NULL;
         }
-        terrain_heights(v,s);v->terrain_hash=hash;v->dirty=true;++v->stats.terrain_builds;
+        uint64_t objects=object_hash(v,s);
+        if(objects!=v->object_hash){terrain_heights(v,s);v->object_hash=objects;v->dirty=true;}
+        prepare_ground(v,s);
+        if(!v->dirty){
+            /* Scenery pixels/depth are unchanged. Refresh only visible flat
+             * ground from its cached projection, then redraw live actors. */
+            for(size_t i=0,n=(size_t)width*height;i<n;++i)
+                if(v->ground_hits[i])v->backdrop[i]=v->ground[v->ground_hits[i]-1];
+            ++v->stats.ground_refreshes;
+        }
+        v->terrain_hash=hash;++v->stats.terrain_builds;
     }
+    /* Inspect current ROM pixels every frame, but retain the completed scene
+     * while animation, positions, cursor and camera are unchanged. No stale
+     * frame reuse across state invalidation, palette changes, or resize. */
+    Fe8VisibleMapSprite actors[FE8_MAX_VISIBLE_UNITS];
+    SpriteImage *images[FE8_MAX_VISIBLE_UNITS];
+    unsigned count=0;
+    if(s->flags&FE8_SNAPSHOT_MAP_SPRITES){
+        count=s->map_sprite_count;
+        memcpy(actors,s->map_sprites,count*sizeof(*actors));
+    }else{
+        for(unsigned i=0;i<s->visible_unit_count&&count<FE8_MAX_VISIBLE_UNITS;++i){
+            const Fe8VisibleUnit *u=&s->visible_units[i];uint32_t a=u->map_sprite_handle;
+            if(a<0x02000000||a>0x0203FFF4)continue;
+            actors[count++]=(Fe8VisibleMapSprite){(int16_t)(u->x*16),(int16_t)(u->y*16),
+                rd16(m,a+8),m->read8(m->context,a+11)};
+        }
+    }
+    uint64_t scene_hash=byteshash(hash,&count,sizeof(count));
+    scene_hash=byteshash(scene_hash,&s->cursor_x,sizeof(s->cursor_x));
+    scene_hash=byteshash(scene_hash,&s->cursor_y,sizeof(s->cursor_y));
+    bool range=fe8_extended_move_range_is_active(s);
+    scene_hash=bytehash(scene_hash,range);
+    if(range){
+        scene_hash=byteshash(scene_hash,&s->flags,sizeof(s->flags));
+        scene_hash=byteshash(scene_hash,s->movement,(size_t)s->map_width*s->map_height);
+        scene_hash=byteshash(scene_hash,s->range,(size_t)s->map_width*s->map_height);
+    }
+    for(unsigned i=0;i<count;++i){
+        images[i]=sprite_image(v,m,actors[i].oam2,actors[i].config);
+        scene_hash=byteshash(scene_hash,&actors[i].x_display,sizeof(actors[i].x_display));
+        scene_hash=byteshash(scene_hash,&actors[i].y_display,sizeof(actors[i].y_display));
+        uint64_t image_hash=images[i]?images[i]->hash:0;
+        scene_hash=byteshash(scene_hash,&image_hash,sizeof(image_hash));
+        if(images[i]&&images[i]->bottom>=0)++v->stats.sprites;
+    }
+    if(!v->dirty&&v->scene_hash==scene_hash){
+        v->ready=true;++v->stats.reused_frames;return v->pixels;
+    }
+    v->stats.sprites=0;
     memset(v->unit_hits,0,(size_t)width*height*sizeof(*v->unit_hits));
     if(v->dirty)background(v,s);
     else{memcpy(v->pixels,v->backdrop,(size_t)width*height*4);memcpy(v->depth,v->backdepth,(size_t)width*height*sizeof(float));}
     range_and_cursor(v,s,false);
-    if(s->flags&FE8_SNAPSHOT_MAP_SPRITES){
-        for(unsigned i=0;i<s->map_sprite_count;++i)draw_sprite(v,m,&s->map_sprites[i]);
-    }else{
-        for(unsigned i=0;i<s->visible_unit_count;++i){
-            const Fe8VisibleUnit *u=&s->visible_units[i];uint32_t a=u->map_sprite_handle;
-            if(a<0x02000000||a>0x0203FFF4)continue;
-            Fe8VisibleMapSprite sprite={(int16_t)(u->x*16),(int16_t)(u->y*16),rd16(m,a+8),m->read8(m->context,a+11)};
-            draw_sprite(v,m,&sprite);
-        }
-    }
+    for(unsigned i=0;i<count;++i)draw_sprite(v,images[i],&actors[i]);
+    v->scene_hash=scene_hash;
     range_and_cursor(v,s,true);v->ready=true;
-    if (width == v->output_width && height == v->output_height) return v->pixels;
+    return v->pixels;
+}
+
+/* Capture/compatibility path only. Interactive presentation sends the small
+ * scene to the GPU and draws the native-resolution HUD as a separate layer. */
+Fe8HostPixel *fe8_voxel_capture(Fe8VoxelRenderer *v) {
+    if(!v||!v->ready)return NULL;
+    int width=v->width,height=v->height;
+    size_t count=(size_t)v->output_width*v->output_height;
+    if(count>v->output_capacity){
+        Fe8HostPixel *output=realloc(v->output,count*sizeof(*output));
+        if(!output){v->error="unable to allocate voxel capture";return NULL;}
+        v->output=output;v->output_capacity=count;
+    }
+    v->stats.output_pixels+=count;
+    if(width==v->output_width&&height==v->output_height){
+        memcpy(v->output,v->pixels,count*sizeof(*v->output));return v->output;
+    }
     /* Nearest-neighbour scale preserves voxel edges. Reuse repeated rows to
      * avoid another full rasterization at Retina backing-store resolution. */
     int columns[16384];
@@ -599,6 +704,10 @@ Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const 
         previous=sy;
     }
     return v->output;
+}
+Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,
+        const Fe8MapRenderState *map,const Fe8Snapshot *s,int w,int h) {
+    return fe8_voxel_render_scene(v,m,map,s,w,h)?fe8_voxel_capture(v):NULL;
 }
 bool fe8_voxel_pick(const Fe8VoxelRenderer *v,float sx,float sy,int *x,int *z){
     if(!v||!v->ready||!x||!z||!isfinite(sx)||!isfinite(sy)||sx<0||sy<0||

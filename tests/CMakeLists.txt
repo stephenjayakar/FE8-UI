@@ -281,3 +281,27 @@ if(APPLE)
         "-framework Cocoa" "-framework Carbon" "-framework UniformTypeIdentifiers")
     set_tests_properties(macos_settings PROPERTIES TIMEOUT 30)
 endif()
+
+# Actual platform presenter, read back immediately before swap/present.
+fe8_add_test(video_scene test_video_scene.c ../app/src/native_hud.c
+    ../app/src/display_scaling.c ../app/src/pointer_mapping.c ../app/src/host_settings.c)
+target_link_libraries(test_video_scene PRIVATE ${FE8_SDL_TARGET} mgba)
+set_tests_properties(video_scene PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+if(APPLE)
+    target_sources(test_video_scene PRIVATE ${FE8_MGBA_SOURCE_DIR}/src/platform/opengl/gles2.c)
+    target_include_directories(test_video_scene PRIVATE ${FE8_MGBA_SOURCE_DIR}/src/platform/opengl)
+    target_compile_definitions(test_video_scene PRIVATE BUILD_GLES3 GL_SILENCE_DEPRECATION)
+    target_link_libraries(test_video_scene PRIVATE "-framework OpenGL")
+endif()
+
+# Not a CTest test: explicitly supplied ROM/state and output dimensions only.
+add_executable(bench_voxel bench_voxel.c ../app/src/voxel_renderer.c
+    ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c
+    ../app/src/address_space.c ../app/src/fe8_profile.c)
+target_include_directories(bench_voxel PRIVATE ../app/src)
+target_compile_definitions(bench_voxel PRIVATE FE8_BENCH_SCENE
+    $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(bench_voxel PRIVATE mgba)
+if(NOT MSVC)
+    target_link_libraries(bench_voxel PRIVATE m)
+endif()

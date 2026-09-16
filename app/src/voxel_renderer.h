@@ -6,6 +6,8 @@
 typedef struct Fe8VoxelRenderer Fe8VoxelRenderer;
 typedef struct Fe8VoxelStats {
     unsigned terrain_builds, sprite_builds, cached_sprites, columns, sprites;
+    unsigned background_builds, reused_frames, ground_refreshes;
+    uint64_t billboard_pixels, output_pixels;
     int render_width, render_height;
 } Fe8VoxelStats;
 
@@ -21,6 +23,15 @@ void fe8_voxel_home(Fe8VoxelRenderer *view);
  * Returned RGBA pixels are width*height, owned by view until the next render.
  * The scene is bounded to 1920x1080 and upscaled when needed; project/pick/pan
  * always accept/return drawable coordinates, including on Retina displays. */
+/* Interactive path: returns a bounded scene, NOT a drawable-sized buffer.
+ * Use stats.render_width/render_height for its dimensions. GPU presentation
+ * stretches it to the drawable. Picking and panning remain drawable-based.
+ * No full-resolution CPU buffer is allocated, scaled, or copied here. */
+const Fe8HostPixel *fe8_voxel_render_scene(Fe8VoxelRenderer *view,
+    const Fe8MemoryView *memory, const Fe8MapRenderState *map,
+    const Fe8Snapshot *snapshot, int drawable_width, int drawable_height);
+/* Expand the last scene for an explicit screenshot. Owned by view. */
+Fe8HostPixel *fe8_voxel_capture(Fe8VoxelRenderer *view);
 Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *view,
     const Fe8MemoryView *memory, const Fe8MapRenderState *map,
     const Fe8Snapshot *snapshot, int width, int height);

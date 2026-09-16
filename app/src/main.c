@@ -85,6 +85,7 @@ typedef struct Fe8PerfStats {
     uint64_t alignment;
     uint64_t units;
     uint64_t presentation;
+    uint64_t voxel;
     uint64_t emulated_frames;
     uint64_t presented_frames;
 } Fe8PerfStats;
@@ -277,11 +278,12 @@ static void print_perf_stats(const Fe8PerfStats *stats, uint64_t frequency) {
     double seconds = (double)(SDL_GetPerformanceCounter() - stats->started) / frequency;
     fprintf(stderr,
         "Performance: emulation=%.2fms snapshot=%.2fms terrain=%.2fms "
-        "alignment=%.2fms units=%.2fms upload/swap=%.2fms "
+        "alignment=%.2fms units=%.2fms voxel=%.2fms upload/swap=%.2fms "
         "effective=%.2ffps presentation=%.2ffps\n",
         ticks_ms(stats->emulation, frequency), ticks_ms(stats->snapshot, frequency),
         ticks_ms(stats->terrain, frequency), ticks_ms(stats->alignment, frequency),
-        ticks_ms(stats->units, frequency), ticks_ms(stats->presentation, frequency),
+        ticks_ms(stats->units, frequency), ticks_ms(stats->voxel, frequency),
+        ticks_ms(stats->presentation, frequency),
         seconds > 0 ? stats->emulated_frames / seconds : 0.0,
         seconds > 0 ? stats->presented_frames / seconds : 0.0);
 }
@@ -1954,17 +1956,25 @@ static int run_game(int argc, char **argv) {
         if (voxel_scene == FE8_VOXEL_READY) {
             if (!voxel) voxel = fe8_voxel_create();
             int w = video.scaling.drawable_width, h = video.scaling.drawable_height;
-            Fe8HostPixel *image = fe8_voxel_render(voxel, &render_memory, &map_state, &snapshot, w, h);
+            uint64_t voxel_started = SDL_GetPerformanceCounter();
+            const Fe8HostPixel *image = fe8_voxel_render_scene(voxel, &render_memory,
+                &map_state, &snapshot, w, h);
+            perf.voxel += SDL_GetPerformanceCounter() - voxel_started;
             if (!image) voxel_status = fe8_voxel_error(voxel);
             if (image) {
                 voxel_active = 1;
-                voxel_overlay = (Fe8VideoOverlay){image, w, h};
-                for (size_t i=0;i<(size_t)w*h;++i)
-                    image[i]=fe8_native_hud_over(hud_host->pixels[i],image[i]);
+                Fe8VoxelStats voxel_stats = fe8_voxel_stats(voxel);
+                voxel_overlay = (Fe8VideoOverlay){image, voxel_stats.render_width,
+                    voxel_stats.render_height};
+                /* Only the small footer is drawn on the CPU. Keep the native
+                 * HUD in its separate drawable-resolution plane. */
+                int footer_width = w < 850 ? w : 850;
+                for (int y=h-62; y<h-6; ++y) for (int x=14; x<footer_width-14; ++x)
+                    if (y>=0) hud_host->pixels[(size_t)y*w+x]=UINT32_C(0xFF24231E);
                 Fe8HostTextCanvas text;
-                if (fe8_host_text_begin(&text,image,w,w,h)) {
+                if (fe8_host_text_begin(&text,hud_host->pixels,w,w,h)) {
                     fe8_host_text_draw(&text,24,h-50,w-48,22,
-                        "VOXEL / LIVE ROM",14,UINT32_C(0xFFE0F2EA),FE8_HOST_TEXT_SEMIBOLD,0);
+                        "VOXEL TERRAIN / LIVE SPRITES",14,UINT32_C(0xFFE0F2EA),FE8_HOST_TEXT_SEMIBOLD,0);
                     char voxel_controls[256];
                     const char *voxel_key = SDL_GetScancodeName(
                         settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL]);
@@ -1995,8 +2005,9 @@ static int run_game(int argc, char **argv) {
         }
         {
             uint64_t stage_started = SDL_GetPerformanceCounter();
-            int presented = fe8_host_video_present(&video, canvas,
-                voxel_active ? &voxel_overlay : &hud_host->overlay);
+            int presented = voxel_active ?
+                fe8_host_video_present_scene(&video, &voxel_overlay, &hud_host->overlay) :
+                fe8_host_video_present(&video, canvas, &hud_host->overlay);
             perf.presentation += SDL_GetPerformanceCounter() - stage_started;
             ++perf.presented_frames;
             if (!presented) {
@@ -2020,15 +2031,21 @@ static int run_game(int argc, char **argv) {
                  (options.seek_large_map && large_map_ready) ||
                  (options.seek_large_map && frame_count >= 3600))) {
             Fe8HostPixel *hud_capture = voxel_active ? NULL : fe8_hud_host_capture(hud_host, &video, canvas);
+            Fe8HostPixel *voxel_capture = voxel_active ? fe8_voxel_capture(voxel) : NULL;
+            if (voxel_capture) {
+                size_t count=(size_t)video.scaling.drawable_width*video.scaling.drawable_height;
+                for (size_t i=0; i<count; ++i)
+                    voxel_capture[i]=fe8_native_hud_over(hud_host->pixels[i],voxel_capture[i]);
+            }
             if (voxel_active) {
                 Fe8VoxelStats vs = fe8_voxel_stats(voxel);
                 fprintf(stderr, "Voxel capture: live sprites=%u columns=%u terrain-builds=%u sprite-builds=%u cache-hits=%u\n",
                     vs.sprites,vs.columns,vs.terrain_builds,vs.sprite_builds,vs.cached_sprites);
             }
             if (!save_canvas_bmp(options.capture_path,
-                    voxel_active ? (Fe8HostPixel *)voxel_overlay.pixels : hud_capture ? hud_capture : canvas,
-                    voxel_active ? voxel_overlay.width : hud_capture ? hud_host->overlay.width : canvas_width,
-                    voxel_active ? voxel_overlay.height : hud_capture ? hud_host->overlay.height : canvas_height))
+                    voxel_capture ? voxel_capture : hud_capture ? hud_capture : canvas,
+                    voxel_capture ? video.scaling.drawable_width : hud_capture ? hud_host->overlay.width : canvas_width,
+                    voxel_capture ? video.scaling.drawable_height : hud_capture ? hud_host->overlay.height : canvas_height))
                 fprintf(stderr, "Unable to save capture '%s': %s\n", options.capture_path, SDL_GetError());
             else
                 fprintf(stderr, "Saved capture: %s (extended=%s, map=%ux%u, sprites=%u)\n",
