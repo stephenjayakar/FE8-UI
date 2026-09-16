@@ -129,6 +129,22 @@ int main(void) {
         assert(memcmp(&settings, &expected, sizeof(settings)) == 0);
         fe8_host_toggle_extensions(NULL);
     }
+    settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL] = SDL_SCANCODE_V;
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_V) ==
+        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL));
+    settings.hotkeys[FE8_HOST_HOTKEY_QUICK_SAVE] = SDL_SCANCODE_UNKNOWN;
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_UNKNOWN) == 0);
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_NUM_SCANCODES) == 0);
+    assert(fe8_host_key_for_scancode(NULL, SDL_SCANCODE_V) == 0);
+    assert(!settings.voxel_enabled);
+    {
+        unsigned revision = settings.revision;
+        fe8_host_toggle_voxel(&settings);
+        assert(settings.voxel_enabled && settings.revision == revision + 1);
+        fe8_host_toggle_voxel(&settings);
+        assert(!settings.voxel_enabled && settings.revision == revision + 2);
+        fe8_host_toggle_voxel(NULL);
+    }
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_Z) ==
         (UINT32_C(1) << FE8_HOST_A));
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_RIGHT) ==

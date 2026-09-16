@@ -27,8 +27,8 @@ int main(void){
     Fe8VoxelRenderer *v=fe8_voxel_create();assert(v);
     assert(!fe8_voxel_render(NULL,&memory,&map,s,640,480));
     assert(!fe8_voxel_render(v,NULL,&map,s,640,480));
-    assert(!fe8_voxel_render(v,&memory,&map,s,4097,480));
-    assert(!fe8_voxel_render(v,&memory,&map,s,640,2161));
+    assert(!fe8_voxel_render(v,&memory,&map,s,16385,480));
+    assert(!fe8_voxel_render(v,&memory,&map,s,640,16385));
     assert(!fe8_voxel_render(v,&memory,&map,s,-1,480));
     s->map_sprite_count=100;assert(!fe8_voxel_render(v,&memory,&map,s,640,480));s->map_sprite_count=0;
     puts("PASS invalid renderer, memory, dimensions and sprite count");
@@ -70,5 +70,32 @@ int main(void){
     fe8_voxel_invalidate(v);assert(!fe8_voxel_pick(v,100,100,&x,&y));assert(fe8_voxel_render(v,&memory,&map,s,640,480));
     assert(!fe8_voxel_pick(v,NAN,20,&x,&y)&&!fe8_voxel_pick(v,-1,20,&x,&y));
     puts("PASS resize, invalid camera input and state invalidation");
+    s->map_sprite_count = 0;
+    const int sizes[][2] = {{3024,1964}, {3456,2234}, {5120,2880}, {2880,5120}};
+    for (unsigned n=0; n<sizeof(sizes)/sizeof(sizes[0]); ++n) {
+        const int w=sizes[n][0], h=sizes[n][1];
+        fe8_voxel_home(v);
+        uint32_t *output=fe8_voxel_render(v,&memory,&map,s,w,h);
+        assert(output && !fe8_voxel_error(v));
+        Fe8VoxelStats stats=fe8_voxel_stats(v);
+        assert(stats.render_width<=1920 && stats.render_height<=1080);
+        assert(output[0]>>24 && output[(size_t)w*h-1]>>24);
+        for (int ty=0; ty<6; ++ty) for (int tx=0; tx<6; ++tx) {
+            assert(fe8_voxel_project(v,tx+.5f,ty+.5f,0,&sx,&sy));
+            assert(fe8_voxel_pick(v,sx,sy,&x,&y) && x==tx && y==ty);
+        }
+        /* Panning accepts drawable pixels, not the smaller scene coordinates. */
+        float before_x,before_y;
+        assert(fe8_voxel_project(v,3.5f,3.5f,0,&before_x,&before_y));
+        fe8_voxel_pan(v,20,15);
+        assert(fe8_voxel_render(v,&memory,&map,s,w,h));
+        assert(fe8_voxel_project(v,3.5f,3.5f,0,&sx,&sy));
+        assert(fabsf(sx-before_x-20)<.02f && fabsf(sy-before_y-15)<.02f);
+        assert(!fe8_voxel_pick(v,(float)w,0,&x,&y));
+    }
+    assert(!fe8_voxel_render(v,&memory,&map,s,16384,16384));
+    assert(fe8_voxel_error(v) && !fe8_voxel_pick(v,10,10,&x,&y));
+    assert(fe8_voxel_render(v,&memory,&map,s,640,480));
+    puts("PASS Retina, 5K, portrait output, scaled picking/panning, and failure recovery");
     fe8_voxel_destroy(v);fe8_voxel_destroy(NULL);free(s);return 0;
 }

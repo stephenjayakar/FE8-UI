@@ -272,3 +272,12 @@ fe8_add_test(voxel_renderer test_voxel_renderer.c
 if(NOT MSVC)
     target_link_libraries(test_voxel_renderer PRIVATE m)
 endif()
+
+fe8_add_test(voxel_presentation test_voxel_presentation.c)
+if(APPLE)
+    # Exercise the actual Cocoa controls before SDL video exists, as in Library.
+    fe8_add_test(macos_settings test_macos_settings.m ../app/src/host_settings.c)
+    target_link_libraries(test_macos_settings PRIVATE ${FE8_SDL_TARGET}
+        "-framework Cocoa" "-framework Carbon" "-framework UniformTypeIdentifiers")
+    set_tests_properties(macos_settings PROPERTIES TIMEOUT 30)
+endif()

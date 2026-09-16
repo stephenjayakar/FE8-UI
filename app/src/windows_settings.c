@@ -50,6 +50,7 @@ void fe8_macos_load_settings(Fe8HostSettings *s) {
     s->audio_enabled = preference(L"Audio", s->audio_enabled, 0, 1);
     s->vsync_enabled = preference(L"VSync", s->vsync_enabled, 0, 1);
     s->extensions_enabled = preference(L"Extended", s->extensions_enabled, 0, 1);
+    s->voxel_enabled = preference(L"Voxel", s->voxel_enabled, 0, 1);
     s->mouse_enabled = preference(L"Mouse", s->mouse_enabled, 0, 1);
     s->speedup_rate = preference(L"Speed", s->speedup_rate, 0, FE8_HOST_SPEEDUP_COUNT - 1);
     s->zoom_sensitivity = preference(L"Zoom", 50, 50, 300) / 10000.0;
@@ -64,6 +65,12 @@ void fe8_macos_load_settings(Fe8HostSettings *s) {
     }
     ++s->revision;
 }
+void fe8_macos_toggle_voxel(Fe8HostSettings *s) {
+    if (!s) return;
+    fe8_host_toggle_voxel(s);
+    store(L"Voxel", s->voxel_enabled);
+}
+
 void fe8_macos_toggle_extensions(Fe8HostSettings *s) {
     fe8_host_toggle_extensions(s);
     store(L"Extended", s->extensions_enabled);

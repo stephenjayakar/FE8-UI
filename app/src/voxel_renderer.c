@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { MAX_PIXELS = 4096 * 2160,
+/* Bound the expensive software scene, not the display. Retina/5K/6K output
+ * still receives full-size RGBA pixels and a full-resolution native HUD. */
+enum { MAX_OUTPUT_PIXELS = 8192 * 4320, SCENE_WIDTH = 1920, SCENE_HEIGHT = 1080,
        SPRITE_CACHE = 128, MAX_SPRITE_PIXELS = 32 * 32 };
 typedef struct Point { float x, y, z; } Point;
 typedef struct SpriteMesh {
@@ -18,7 +20,10 @@ typedef struct SpriteMesh {
     int width, height;
 } SpriteMesh;
 struct Fe8VoxelRenderer {
-    Fe8HostPixel *pixels, *backdrop, *terrain;
+    Fe8HostPixel *pixels, *backdrop, *terrain, *output;
+    size_t output_capacity;
+    int output_width, output_height;
+    const char *error;
     float *depth, *backdepth;
     uint16_t *unit_hits, drawing_unit;
     uint8_t *heights, *shadow;
@@ -114,7 +119,25 @@ static bool structure(unsigned t) {
 static bool canopy(unsigned t) { return t==0x0C||t==0x0D; }
 static bool watery(unsigned t){ return t==0x10||t==0x15||t==0x16||t==0x3C; }
 static bool resize(Fe8VoxelRenderer *v,int w,int h,int mw,int mh) {
-    if(w<1||h<1||w>4096||h>2160||(size_t)w*h>MAX_PIXELS||mw<1||mh<1||mw>1024||mh>1024)return false;
+    if(w<1||h<1||w>16384||h>16384||(size_t)w*h>MAX_OUTPUT_PIXELS||
+            mw<1||mh<1||mw>1024||mh>1024) {
+        v->error = "unsupported viewport or map dimensions";
+        return false;
+    }
+    const int output_w = w, output_h = h;
+    double scale = fmin(1.0, fmin((double)SCENE_WIDTH / w, (double)SCENE_HEIGHT / h));
+    w = (int)(w * scale); h = (int)(h * scale);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (w != output_w || h != output_h) {
+        size_t count = (size_t)output_w * output_h;
+        if (count > v->output_capacity) {
+            Fe8HostPixel *output = realloc(v->output, count * sizeof(*output));
+            if (!output) { v->error = "unable to allocate voxel output"; return false; }
+            v->output = output; v->output_capacity = count;
+        }
+    }
+    v->error = "unable to allocate voxel scene";
     size_t n=(size_t)w*h,tn=(size_t)mw*mh;
     if(n>v->capacity){
         uint32_t *p=malloc(n*4),*b=malloc(n*4);float *d=malloc(n*sizeof(float)),*bd=malloc(n*sizeof(float));
@@ -130,7 +153,11 @@ static bool resize(Fe8VoxelRenderer *v,int w,int h,int mw,int mh) {
     }
     if(v->width!=w||v->height!=h)v->dirty=true;
     if(v->mw!=mw||v->mh!=mh){v->terrain_hash=0;v->pan_x=v->pan_z=0;v->dirty=true;}
-    v->width=w;v->height=h;v->mw=mw;v->mh=mh;return true;
+    v->width=w;v->height=h;v->mw=mw;v->mh=mh;
+    v->output_width=output_w;v->output_height=output_h;
+    v->stats.render_width=w;v->stats.render_height=h;
+    v->error=NULL;
+    return true;
 }
 static uint64_t map_hash(const Fe8MemoryView *m,const Fe8MapRenderState *map,const Fe8Snapshot *s) {
     uint64_t h=UINT64_C(14695981039346656037);
@@ -497,7 +524,7 @@ Fe8VoxelRenderer *fe8_voxel_create(void) {
 void fe8_voxel_destroy(Fe8VoxelRenderer *v) {
     if(!v)return;
     free(v->pixels);free(v->backdrop);free(v->depth);free(v->backdepth);free(v->unit_hits);
-    free(v->terrain);free(v->heights);free(v->shadow);free(v->sprites);free(v);
+    free(v->terrain);free(v->heights);free(v->shadow);free(v->sprites);free(v->output);free(v);
 }
 void fe8_voxel_invalidate(Fe8VoxelRenderer *v){if(v){v->terrain_hash=0;v->dirty=true;v->ready=false;memset(v->sprites,0,SPRITE_CACHE*sizeof(*v->sprites));}}
 void fe8_voxel_camera(Fe8VoxelRenderer *v,float yaw_delta,float zoom_factor){
@@ -506,6 +533,8 @@ void fe8_voxel_camera(Fe8VoxelRenderer *v,float yaw_delta,float zoom_factor){
 }
 void fe8_voxel_pan(Fe8VoxelRenderer *v,float dx,float dy){
     if(!v||!v->ready||!isfinite(dx)||!isfinite(dy))return;
+    dx *= (float)v->width / v->output_width;
+    dy *= (float)v->height / v->output_height;
     float x=dx/v->scale,z=dy/(v->scale*v->sp);
     v->pan_x=clampf(v->pan_x-v->cy*x-v->sy*z,-v->mw*.5f,v->mw*.5f);
     v->pan_z=clampf(v->pan_z+v->sy*x-v->cy*z,-v->mh*.5f,v->mh*.5f);v->dirty=true;
@@ -518,11 +547,12 @@ void fe8_voxel_focus(Fe8VoxelRenderer *v,float x,float z){
 void fe8_voxel_home(Fe8VoxelRenderer *v){if(v){v->pan_x=v->pan_z=0;v->zoom=1;v->yaw=-.32f;v->dirty=true;}}
 Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const Fe8MapRenderState *map,
         const Fe8Snapshot *s,int width,int height){
-    if(v)v->ready=false;
+    if(v){v->ready=false;v->error="invalid or unavailable map data";}
     if(!v||!m||!m->read8||!map||!s||!fe8_extended_state_is_sane(map)||
        !(s->flags&FE8_SNAPSHOT_TERRAIN)||s->map_width!=map->map_width||s->map_height!=map->map_height||
        s->map_sprite_count>FE8_MAX_MAP_SPRITES||s->visible_unit_count>FE8_MAX_VISIBLE_UNITS)return NULL;
     if(!resize(v,width,height,s->map_width*16,s->map_height*16))return NULL;
+    width=v->width; height=v->height;
     ++v->ticks;v->stats.sprites=0;
     v->cy=cosf(v->yaw);v->sy=sinf(v->yaw);v->cp=cosf(v->pitch);v->sp=sinf(v->pitch);
     v->target_x=v->mw*.5f+v->pan_x;v->target_z=v->mh*.5f+v->pan_z;
@@ -533,7 +563,10 @@ Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const 
     if(hash!=v->terrain_hash){
         Fe8MapRenderState full=*map;full.camera_x=full.camera_y=0;
         Fe8ExtendedViewport vp={v->mw,v->mh,0,0};
-        if(!fe8_render_extended_terrain(m,&full,vp,v->terrain,v->mw))return NULL;
+        if(!fe8_render_extended_terrain(m,&full,vp,v->terrain,v->mw)) {
+            v->error="terrain is not ready for voxel generation";
+            return NULL;
+        }
         terrain_heights(v,s);v->terrain_hash=hash;v->dirty=true;++v->stats.terrain_builds;
     }
     memset(v->unit_hits,0,(size_t)width*height*sizeof(*v->unit_hits));
@@ -550,10 +583,29 @@ Fe8HostPixel *fe8_voxel_render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const 
             draw_sprite(v,m,&sprite);
         }
     }
-    range_and_cursor(v,s,true);v->ready=true;return v->pixels;
+    range_and_cursor(v,s,true);v->ready=true;
+    if (width == v->output_width && height == v->output_height) return v->pixels;
+    /* Nearest-neighbour scale preserves voxel edges. Reuse repeated rows to
+     * avoid another full rasterization at Retina backing-store resolution. */
+    int columns[16384];
+    for (int x=0; x<v->output_width; ++x)
+        columns[x]=(int)((int64_t)x*width/v->output_width);
+    int previous=-1;
+    for (int y=0; y<v->output_height; ++y) {
+        int sy=(int)((int64_t)y*height/v->output_height);
+        Fe8HostPixel *row=v->output+(size_t)y*v->output_width;
+        if (sy==previous) memcpy(row,row-v->output_width,(size_t)v->output_width*sizeof(*row));
+        else for (int x=0; x<v->output_width; ++x) row[x]=v->pixels[(size_t)sy*width+columns[x]];
+        previous=sy;
+    }
+    return v->output;
 }
 bool fe8_voxel_pick(const Fe8VoxelRenderer *v,float sx,float sy,int *x,int *z){
-    if(!v||!v->ready||!x||!z||!isfinite(sx)||!isfinite(sy)||sx<0||sy<0||sx>=v->width||sy>=v->height)return false;
+    if(!v||!v->ready||!x||!z||!isfinite(sx)||!isfinite(sy)||sx<0||sy<0||
+            sx>=v->output_width||sy>=v->output_height)return false;
+    sx *= (float)v->width/v->output_width;
+    sy *= (float)v->height/v->output_height;
+    if (sx>=v->width || sy>=v->height) return false;
     unsigned hit=v->unit_hits[(size_t)(int)sy*v->width+(int)sx];
     if(hit){--hit;*x=(int)hit%(v->mw/16);*z=(int)hit/(v->mw/16);return true;}
     float wx,wz;unproject(v,sx,sy,&wx,&wz);
@@ -562,6 +614,13 @@ bool fe8_voxel_pick(const Fe8VoxelRenderer *v,float sx,float sy,int *x,int *z){
 }
 bool fe8_voxel_project(const Fe8VoxelRenderer *v,float x,float z,float height,float *sx,float *sy){
     if(!v||!v->ready||!sx||!sy||!isfinite(x)||!isfinite(z)||!isfinite(height))return false;
-    Point p=project(v,x*16,height,z*16);*sx=p.x;*sy=p.y;return true;
+    Point p=project(v,x*16,height,z*16);
+    *sx=p.x*v->output_width/v->width;
+    *sy=p.y*v->output_height/v->height;
+    return true;
 }
 Fe8VoxelStats fe8_voxel_stats(const Fe8VoxelRenderer *v){return v?v->stats:(Fe8VoxelStats){0};}
+
+const char *fe8_voxel_error(const Fe8VoxelRenderer *v) {
+    return v ? v->error : "unable to create voxel renderer";
+}

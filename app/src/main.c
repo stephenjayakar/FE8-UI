@@ -23,6 +23,7 @@
 #include "host_video.h"
 #include "host_text.h"
 #include "voxel_renderer.h"
+#include "voxel_presentation.h"
 #include "macos_library.h"
 #include "macos_settings.h"
 #include "mouse_controller.h"
@@ -713,15 +714,17 @@ static int run_game(int argc, char **argv) {
     int exit_code = EXIT_FAILURE;
     struct mStandardLogger logger = {0};
     Fe8PerfStats perf = {0};
+    char voxel_last_title[256] = {0};
 
-    if (argc == 1)
-        return fe8_macos_run_library(argv[0]);
+    if (argc == 1 || (argc == 2 && !strcmp(argv[1], "--voxel")))
+        return fe8_macos_run_library(argv[0], argc == 2);
     if (!parse_options(argc, argv, &options)) {
         usage(argv[0]);
         return EXIT_FAILURE;
     }
     fe8_host_settings_init(&settings);
     fe8_macos_load_settings(&settings);
+    if (options.voxel) settings.voxel_enabled = 1;
     if (options.mute)
         settings.audio_enabled = 0;
     fe8_inventory_ui_init(&inventory_ui);
@@ -908,6 +911,7 @@ static int run_game(int argc, char **argv) {
         if (settings.revision != settings_revision) {
             keyboard_keys = 0;
             hotkeys_down = 0;
+            voxel_active = voxel_drag = 0;
             fe8_mouse_cancel(&mouse);
             pan.dragging = 0;
             pointer_canvas_valid = 0;
@@ -1121,14 +1125,14 @@ static int run_game(int argc, char **argv) {
                     (fe8_host_hotkey_for_scancode(&settings, event.key.keysym.scancode) &
                         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL))) {
                 if (event.type == SDL_KEYDOWN && !event.key.repeat) {
-                    options.voxel = !options.voxel;
+                    fe8_macos_toggle_voxel(&settings);
                     fe8_mouse_cancel(&mouse);
                     pointer_canvas_valid = pointer_tile_valid = 0;
                     voxel_active = voxel_drag = 0;
                     pan.dragging = 0;
                     fprintf(stderr,
                         "Voxel presentation: %s (read-only runtime geometry)\n",
-                        options.voxel ? "enabled" : "disabled");
+                        settings.voxel_enabled ? "enabled" : "disabled");
                 }
                 continue;
             }
@@ -1940,15 +1944,18 @@ static int run_game(int argc, char **argv) {
         int was_voxel_active = voxel_active;
         voxel_active = 0;
         voxel_overlay.pixels = NULL;
-        if (options.voxel && snapshot_valid && visual_profile_active &&
-                !inventory_ui.active && snapshot.input_lock == 0 &&
-                !snapshot.combat_panel_active && !(snapshot.game_state_bits & 1) &&
-                hud_host->overlay.pixels &&
+        Fe8VoxelScene voxel_scene = fe8_voxel_scene(settings.voxel_enabled, family_match,
+            settings.extensions_enabled, snapshot_valid ? &snapshot : NULL,
+            visual_profile_active, inventory_ui.active,
+            hud_host->overlay.pixels &&
                 hud_host->overlay.width == video.scaling.drawable_width &&
-                hud_host->overlay.height == video.scaling.drawable_height) {
+                hud_host->overlay.height == video.scaling.drawable_height);
+        const char *voxel_status = fe8_voxel_scene_label(voxel_scene);
+        if (voxel_scene == FE8_VOXEL_READY) {
             if (!voxel) voxel = fe8_voxel_create();
             int w = video.scaling.drawable_width, h = video.scaling.drawable_height;
             Fe8HostPixel *image = fe8_voxel_render(voxel, &render_memory, &map_state, &snapshot, w, h);
+            if (!image) voxel_status = fe8_voxel_error(voxel);
             if (image) {
                 voxel_active = 1;
                 voxel_overlay = (Fe8VideoOverlay){image, w, h};
@@ -1969,6 +1976,14 @@ static int run_game(int argc, char **argv) {
                     fe8_host_text_end(&text);
                 }
             }
+        }
+        char voxel_title[256];
+        snprintf(voxel_title, sizeof(voxel_title), "FE8 Extended Frontend | Voxels: %s", voxel_status);
+        if (strcmp(voxel_title, voxel_last_title)) {
+            SDL_SetWindowTitle(video.window, voxel_title);
+            snprintf(voxel_last_title, sizeof(voxel_last_title), "%s", voxel_title);
+            fprintf(stderr, "Voxels: %s (drawable %dx%d)\n", voxel_status,
+                video.scaling.drawable_width, video.scaling.drawable_height);
         }
         if (!voxel_active) voxel_drag = 0;
         if (was_voxel_active != voxel_active) {

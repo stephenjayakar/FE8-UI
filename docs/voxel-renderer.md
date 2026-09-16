@@ -7,10 +7,27 @@ API keys, or external inference services.
 
 ## Run
 
-Build normally, launch a supported ROM, enable the extended renderer, and press
-**F7** on an idle tactical map. On keyboards that reserve function keys, use
-**Fn-F7**. The toggle is session-local and defaults off. Custom game/hotkey
-bindings take priority over the prototype shortcuts.
+Build normally. On macOS, **Settings → Voxel Renderer** toggles the mode
+without a shortcut; the Settings window also has **Enable voxel renderer**.
+Under **Settings → Settings… → Hotkeys**, click **Voxel Renderer**, then press
+**V** (or another key). **F7** is the default binding. Letter capture works in
+the library before SDL video is initialized and in the running game. Bindings
+are refreshed when returning from the separate library process. macOS remembers
+the enabled mode and binding for subsequent launches; the portable Linux frontend
+keeps these session-local.
+
+Keep **Extended Renderer** enabled and return to an idle tactical map. The game
+window title distinguishes **Voxels: live** from an enabled mode waiting for a
+supported map/HUD, native selection/menu/combat, or a generation/allocation error.
+Safety checks remain in place; enabling voxels does not hide unsupported UI.
+
+On macOS the library startup flag is forwarded to Play and Resume:
+
+```sh
+sh build.sh && open build/fe8-mgba-sdl.app --args --voxel
+```
+
+Quit any older library/game processes before rebuilding and reopening.
 
 Command-line launch also accepts:
 
@@ -23,7 +40,7 @@ On macOS, the executable is inside
 
 | Control | Action |
 | --- | --- |
-| F7 | Toggle voxel/original presentation |
+| Configured Voxel Renderer hotkey (F7 by default) | Toggle voxel/original presentation |
 | [ / ] | Orbit left/right |
 | Mouse wheel | Zoom (bounded) |
 | Shift + left drag | Pan the presentation camera |
@@ -33,8 +50,12 @@ On macOS, the executable is inside
 
 The map cursor uses the inverse of the rendered camera. Clicking the raised
 pixels of a unit selects its owning tile rather than the tile behind its head.
-Screen-to-drawable conversion uses the existing high-DPI scaling path. Geometry
-is rendered into the same full-resolution overlay backend as the native HUD;
+Screen-to-drawable conversion uses the existing high-DPI scaling path. The software scene
+is bounded to 1920×1080 and scaled to the drawable; native HUD and text remain at
+full drawable resolution. Retina/5K/6K displays no longer trip a 2160-pixel-height
+rejection, and picking/panning continue to use drawable coordinates. Output
+allocation is capped at 8192×4320 pixels (landscape or portrait), with either
+dimension at most 16384. Geometry uses the same overlay backend as the native HUD;
 there is no second window or browser bridge.
 
 ## What is generated on the fly
@@ -136,3 +157,17 @@ ctest --test-dir build --output-on-failure
 No ROMs, saves, decoded textures, or screenshots containing ROM assets are
 included in the source branch. Screenshots shared in the conversation are
 validation artifacts, not bundled game assets.
+
+## Activation regression coverage
+
+`test_macos_settings` exercises the actual AppKit binding button and key event
+monitor both before SDL initialization (Library) and through `SDL_PollEvent`
+(Game). It checks V capture, persistence in an isolated preferences suite,
+Escape cancellation, conflict removal, binding refresh, checkbox/menu state,
+scrollable control bounds, and Play/Resume argument construction. Passing an
+output directory saves native Settings screenshots; no ROM is needed.
+
+`test_voxel_renderer` covers Retina-sized, 5K, and portrait output, full-sized
+buffers, bounded scene buffers, scaled picking/panning, and recovery from rejected
+allocations. `test_voxel_presentation` checks all fallback states and restoration.
+Real-ROM tests and captures remain local; ROMs and saves are never uploaded.

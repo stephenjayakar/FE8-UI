@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <Carbon/Carbon.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "macos_settings.h"
@@ -6,6 +7,7 @@
 static NSString *const kAudioKey = @"FE8AudioEnabled";
 static NSString *const kVSyncKey = @"FE8VSyncEnabled";
 static NSString *const kExtensionsKey = @"FE8ExtensionsEnabled";
+static NSString *const kVoxelKey = @"FE8VoxelEnabled";
 static NSString *const kMouseKey = @"FE8MouseEnabled";
 static NSString *const kShaderKey = @"FE8ShaderMode";
 static NSString *const kZoomSensitivityKey = @"FE8ZoomSensitivity";
@@ -46,48 +48,54 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         default: return SDL_SCANCODE_UNKNOWN;
         }
     }
-    NSString *characters = event.charactersIgnoringModifiers;
-    if (!characters.length)
-        return SDL_SCANCODE_UNKNOWN;
-    unichar character = [characters characterAtIndex:0];
-    switch (character) {
-    case NSUpArrowFunctionKey: return SDL_SCANCODE_UP;
-    case NSDownArrowFunctionKey: return SDL_SCANCODE_DOWN;
-    case NSLeftArrowFunctionKey: return SDL_SCANCODE_LEFT;
-    case NSRightArrowFunctionKey: return SDL_SCANCODE_RIGHT;
-    case NSHomeFunctionKey: return SDL_SCANCODE_HOME;
-    case NSEndFunctionKey: return SDL_SCANCODE_END;
-    case NSPageUpFunctionKey: return SDL_SCANCODE_PAGEUP;
-    case NSPageDownFunctionKey: return SDL_SCANCODE_PAGEDOWN;
-    case NSInsertFunctionKey: return SDL_SCANCODE_INSERT;
-    case NSDeleteFunctionKey: return SDL_SCANCODE_DELETE;
-    case NSF1FunctionKey: return SDL_SCANCODE_F1;
-    case NSF2FunctionKey: return SDL_SCANCODE_F2;
-    case NSF3FunctionKey: return SDL_SCANCODE_F3;
-    case NSF4FunctionKey: return SDL_SCANCODE_F4;
-    case NSF5FunctionKey: return SDL_SCANCODE_F5;
-    case NSF6FunctionKey: return SDL_SCANCODE_F6;
-    case NSF7FunctionKey: return SDL_SCANCODE_F7;
-    case NSF8FunctionKey: return SDL_SCANCODE_F8;
-    case NSF9FunctionKey: return SDL_SCANCODE_F9;
-    case NSF10FunctionKey: return SDL_SCANCODE_F10;
-    case NSF11FunctionKey: return SDL_SCANCODE_F11;
-    case NSF12FunctionKey: return SDL_SCANCODE_F12;
-    case NSDeleteCharacter: return SDL_SCANCODE_BACKSPACE;
-    case NSCarriageReturnCharacter:
-    case NSEnterCharacter: return SDL_SCANCODE_RETURN;
-    case NSTabCharacter:
-    case NSBackTabCharacter: return SDL_SCANCODE_TAB;
-    case ' ': return SDL_SCANCODE_SPACE;
-    default:
-        break;
-    }
-    if (character < 128) {
-        if (character >= 'A' && character <= 'Z')
-            character = (unichar)(character - 'A' + 'a');
-        return SDL_GetScancodeFromKey((SDL_Keycode)character);
-    }
-    return SDL_SCANCODE_UNKNOWN;
+    /* Bind physical keys, just like SDL_Keysym.scancode in the game. The
+     * library has no SDL video subsystem or initialized keymap; converting
+     * characters with SDL_GetScancodeFromKey silently rejected letters there.
+     * Cocoa virtual key positions also avoid layout/Shift-dependent bindings. */
+    if (event.type != NSEventTypeKeyDown) return SDL_SCANCODE_UNKNOWN;
+    unsigned code = event.keyCode;
+    if ((code == 10 || code == 50) && KBGetLayoutType(LMGetKbdType()) == kKeyboardISO)
+        code = code == 10 ? 50 : 10;
+    static const SDL_Scancode keys[128] = {
+        [0] = SDL_SCANCODE_A, [1] = SDL_SCANCODE_S, [2] = SDL_SCANCODE_D,
+        [3] = SDL_SCANCODE_F, [4] = SDL_SCANCODE_H, [5] = SDL_SCANCODE_G,
+        [6] = SDL_SCANCODE_Z, [7] = SDL_SCANCODE_X, [8] = SDL_SCANCODE_C,
+        [9] = SDL_SCANCODE_V, [10] = SDL_SCANCODE_NONUSBACKSLASH, [11] = SDL_SCANCODE_B,
+        [12] = SDL_SCANCODE_Q, [13] = SDL_SCANCODE_W, [14] = SDL_SCANCODE_E,
+        [15] = SDL_SCANCODE_R, [16] = SDL_SCANCODE_Y, [17] = SDL_SCANCODE_T,
+        [18] = SDL_SCANCODE_1, [19] = SDL_SCANCODE_2, [20] = SDL_SCANCODE_3,
+        [21] = SDL_SCANCODE_4, [22] = SDL_SCANCODE_6, [23] = SDL_SCANCODE_5,
+        [24] = SDL_SCANCODE_EQUALS, [25] = SDL_SCANCODE_9, [26] = SDL_SCANCODE_7,
+        [27] = SDL_SCANCODE_MINUS, [28] = SDL_SCANCODE_8, [29] = SDL_SCANCODE_0,
+        [30] = SDL_SCANCODE_RIGHTBRACKET, [31] = SDL_SCANCODE_O, [32] = SDL_SCANCODE_U,
+        [33] = SDL_SCANCODE_LEFTBRACKET, [34] = SDL_SCANCODE_I, [35] = SDL_SCANCODE_P,
+        [36] = SDL_SCANCODE_RETURN, [37] = SDL_SCANCODE_L, [38] = SDL_SCANCODE_J,
+        [39] = SDL_SCANCODE_APOSTROPHE, [40] = SDL_SCANCODE_K, [41] = SDL_SCANCODE_SEMICOLON,
+        [42] = SDL_SCANCODE_BACKSLASH, [43] = SDL_SCANCODE_COMMA, [44] = SDL_SCANCODE_SLASH,
+        [45] = SDL_SCANCODE_N, [46] = SDL_SCANCODE_M, [47] = SDL_SCANCODE_PERIOD,
+        [48] = SDL_SCANCODE_TAB, [49] = SDL_SCANCODE_SPACE, [50] = SDL_SCANCODE_GRAVE,
+        [51] = SDL_SCANCODE_BACKSPACE, [52] = SDL_SCANCODE_KP_ENTER, [53] = SDL_SCANCODE_ESCAPE,
+        [64] = SDL_SCANCODE_F17, [65] = SDL_SCANCODE_KP_PERIOD, [67] = SDL_SCANCODE_KP_MULTIPLY,
+        [69] = SDL_SCANCODE_KP_PLUS, [71] = SDL_SCANCODE_NUMLOCKCLEAR, [72] = SDL_SCANCODE_VOLUMEUP,
+        [73] = SDL_SCANCODE_VOLUMEDOWN, [74] = SDL_SCANCODE_MUTE, [75] = SDL_SCANCODE_KP_DIVIDE,
+        [76] = SDL_SCANCODE_KP_ENTER, [78] = SDL_SCANCODE_KP_MINUS, [79] = SDL_SCANCODE_F18,
+        [80] = SDL_SCANCODE_F19, [81] = SDL_SCANCODE_KP_EQUALS, [82] = SDL_SCANCODE_KP_0,
+        [83] = SDL_SCANCODE_KP_1, [84] = SDL_SCANCODE_KP_2, [85] = SDL_SCANCODE_KP_3,
+        [86] = SDL_SCANCODE_KP_4, [87] = SDL_SCANCODE_KP_5, [88] = SDL_SCANCODE_KP_6,
+        [89] = SDL_SCANCODE_KP_7, [91] = SDL_SCANCODE_KP_8, [92] = SDL_SCANCODE_KP_9,
+        [93] = SDL_SCANCODE_INTERNATIONAL3, [94] = SDL_SCANCODE_INTERNATIONAL1, [95] = SDL_SCANCODE_KP_COMMA,
+        [96] = SDL_SCANCODE_F5, [97] = SDL_SCANCODE_F6, [98] = SDL_SCANCODE_F7,
+        [99] = SDL_SCANCODE_F3, [100] = SDL_SCANCODE_F8, [101] = SDL_SCANCODE_F9,
+        [102] = SDL_SCANCODE_LANG2, [103] = SDL_SCANCODE_F11, [104] = SDL_SCANCODE_LANG1,
+        [105] = SDL_SCANCODE_PRINTSCREEN, [106] = SDL_SCANCODE_F16, [107] = SDL_SCANCODE_SCROLLLOCK,
+        [109] = SDL_SCANCODE_F10, [110] = SDL_SCANCODE_APPLICATION, [111] = SDL_SCANCODE_F12,
+        [113] = SDL_SCANCODE_PAUSE, [114] = SDL_SCANCODE_INSERT, [115] = SDL_SCANCODE_HOME,
+        [116] = SDL_SCANCODE_PAGEUP, [117] = SDL_SCANCODE_DELETE, [118] = SDL_SCANCODE_F4,
+        [119] = SDL_SCANCODE_END, [120] = SDL_SCANCODE_F2, [121] = SDL_SCANCODE_PAGEDOWN,
+        [122] = SDL_SCANCODE_F1, [123] = SDL_SCANCODE_LEFT, [124] = SDL_SCANCODE_RIGHT,
+        [125] = SDL_SCANCODE_DOWN, [126] = SDL_SCANCODE_UP, [127] = SDL_SCANCODE_POWER,
+    };
+    return code < sizeof(keys) / sizeof(keys[0]) ? keys[code] : SDL_SCANCODE_UNKNOWN;
 }
 
 @interface Fe8SettingsController : NSObject <NSWindowDelegate>
@@ -96,6 +104,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 @property(nonatomic, strong) NSMutableArray<NSButton *> *bindingButtons;
 @property(nonatomic, strong) NSButton *listeningButton;
 @property(nonatomic, strong) NSButton *extensionsButton;
+@property(nonatomic, strong) NSButton *voxelButton;
 @property(nonatomic, strong) NSTextField *zoomSensitivityValue;
 @property(nonatomic, strong) id keyMonitor;
 @property(nonatomic, assign) void *stateContext;
@@ -143,6 +152,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
         NSEventMaskKeyDown | NSEventMaskFlagsChanged
         handler:^NSEvent *(NSEvent *event) {
+            if (!self.listeningButton || event.window != self.window) return event;
             NSString *characters = event.type == NSEventTypeKeyDown ?
                 event.charactersIgnoringModifiers : nil;
             if (characters.length && [characters characterAtIndex:0] == 0x1B) {
@@ -181,6 +191,8 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
                 for (NSButton *button in self.bindingButtons)
                     button.title = [self titleForBindingTag:button.tag];
             }
+            if (scancode == SDL_SCANCODE_UNKNOWN && event.type == NSEventTypeKeyDown)
+                self.listeningButton.title = @"Key not supported — try another";
             return nil;
         }];
 }
@@ -192,6 +204,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     case 1: self.settings->vsync_enabled = enabled; break;
     case 2: self.settings->extensions_enabled = enabled; break;
     case 3: self.settings->mouse_enabled = enabled; break;
+    case 4: fe8_macos_toggle_voxel(self.settings); return;
     default: return;
     }
     ++self.settings->revision;
@@ -206,7 +219,15 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     fe8_macos_toggle_extensions(self.settings);
 }
 
+- (void)toggleVoxel:(id)sender {
+    (void)sender;
+    fe8_macos_toggle_voxel(self.settings);
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(toggleVoxel:))
+        item.state = self.settings->voxel_enabled ?
+            NSControlStateValueOn : NSControlStateValueOff;
     if (item.action == @selector(toggleExtensions:))
         item.state = self.settings->extensions_enabled ?
             NSControlStateValueOn : NSControlStateValueOff;
@@ -262,27 +283,36 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.loadState = loadState;
     self.quickStatePath = quickStatePath;
     self.bindingButtons = [NSMutableArray array];
+    CGFloat height = MIN(760, NSScreen.mainScreen.visibleFrame.size.height - 90);
     self.window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 430, 800)
-        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+        initWithContentRect:NSMakeRect(0, 0, 450, MAX(400, height))
+        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
     self.window.title = @"FE8 Frontend Settings";
     self.window.releasedWhenClosed = NO;
     self.window.delegate = self;
 
-    NSView *content = self.window.contentView;
+    self.window.minSize = NSMakeSize(450, 400);
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:self.window.contentView.bounds];
+    scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    scroll.hasVerticalScroller = YES;
+    scroll.autohidesScrollers = YES;
+    NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 430, 870)];
+    scroll.documentView = content;
+    [self.window.contentView addSubview:scroll];
     NSArray<NSString *> *optionNames = @[
         @"Enable audio", @"Synchronize presentation (VSync)",
-        @"Enable extended renderer", @"Enable mouse controls"
+        @"Enable extended renderer", @"Enable mouse controls",
+        @"Enable voxel renderer (experimental)"
     ];
     int optionValues[] = {
         settings->audio_enabled, settings->vsync_enabled,
-        settings->extensions_enabled, settings->mouse_enabled
+        settings->extensions_enabled, settings->mouse_enabled, settings->voxel_enabled
     };
     NSInteger i;
     for (i = 0; i < (NSInteger)optionNames.count; ++i) {
         NSButton *check = [[NSButton alloc]
-            initWithFrame:NSMakeRect(24, 755 - i * 30, 380, 24)];
+            initWithFrame:NSMakeRect(24, 815 - i * 30, 380, 24)];
         check.buttonType = NSButtonTypeSwitch;
         check.title = optionNames[i];
         check.state = optionValues[i] ? NSControlStateValueOn : NSControlStateValueOff;
@@ -291,8 +321,16 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         check.action = @selector(settingChanged:);
         if (i == 2)
             self.extensionsButton = check;
+        if (i == 4)
+            self.voxelButton = check;
         [content addSubview:check];
     }
+
+    NSTextField *voxelHint = [NSTextField wrappingLabelWithString:
+        @"Voxels appear on supported idle maps. The game window title explains any native fallback."];
+    voxelHint.frame = NSMakeRect(30, 649, 365, 38);
+    voxelHint.textColor = NSColor.secondaryLabelColor;
+    [content addSubview:voxelHint];
 
     NSTextField *shaderLabel = [NSTextField labelWithString:@"Video shader"];
     shaderLabel.frame = NSMakeRect(30, 619, 105, 24);
@@ -388,6 +426,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         [self.bindingButtons addObject:binding];
         [content addSubview:binding];
     }
+    [content scrollPoint:NSMakePoint(0, NSHeight(content.bounds))];
     [self.window center];
     return self;
 }
@@ -397,8 +436,31 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     [self stopListening];
 }
 
+- (void)windowDidResignKey:(NSNotification *)notification {
+    (void)notification;
+    [self stopListening];
+}
+
+- (void)refreshBindings:(NSNotification *)notification {
+    (void)notification;
+    /* Library and game are different processes. Pick up bindings saved in the
+     * other window on activation; don't overwrite session-only CLI overrides. */
+    Fe8HostSettings stored = *self.settings;
+    fe8_macos_load_settings(&stored);
+    if (memcmp(stored.bindings, self.settings->bindings, sizeof(stored.bindings)) ||
+            memcmp(stored.hotkeys, self.settings->hotkeys, sizeof(stored.hotkeys))) {
+        memcpy(self.settings->bindings, stored.bindings, sizeof(stored.bindings));
+        memcpy(self.settings->hotkeys, stored.hotkeys, sizeof(stored.hotkeys));
+        ++self.settings->revision;
+        for (NSButton *button in self.bindingButtons)
+            if (button != self.listeningButton)
+                button.title = [self titleForBindingTag:button.tag];
+    }
+}
+
 - (void)showSettings:(id)sender {
     (void)sender;
+    [self refreshBindings:nil];
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activate];
 }
@@ -474,6 +536,15 @@ void fe8_macos_toggle_extensions(Fe8HostSettings *settings) {
             NSControlStateValueOn : NSControlStateValueOff;
 }
 
+void fe8_macos_toggle_voxel(Fe8HostSettings *settings) {
+    if (!settings) return;
+    fe8_host_toggle_voxel(settings);
+    [NSUserDefaults.standardUserDefaults setBool:settings->voxel_enabled forKey:kVoxelKey];
+    if (settingsController.settings == settings)
+        settingsController.voxelButton.state = settings->voxel_enabled ?
+            NSControlStateValueOn : NSControlStateValueOff;
+}
+
 void fe8_macos_load_settings(Fe8HostSettings *settings) {
     @autoreleasepool {
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -481,6 +552,7 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
             kAudioKey: @YES,
             kVSyncKey: @YES,
             kExtensionsKey: @YES,
+            kVoxelKey: @NO,
             kMouseKey: @YES,
             kShaderKey: @(FE8_HOST_SHADER_OFF),
             kZoomSensitivityKey: @(FE8_HOST_ZOOM_SENSITIVITY_LOW),
@@ -490,6 +562,7 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
         settings->vsync_enabled = [defaults boolForKey:kVSyncKey];
         settings->extensions_enabled = [defaults boolForKey:kExtensionsKey];
         settings->mouse_enabled = [defaults boolForKey:kMouseKey];
+        settings->voxel_enabled = [defaults boolForKey:kVoxelKey];
         NSInteger shader = [defaults integerForKey:kShaderKey];
         settings->shader = shader >= 0 && shader < FE8_HOST_SHADER_COUNT ?
             (enum Fe8HostShader)shader : FE8_HOST_SHADER_OFF;
@@ -539,6 +612,9 @@ void fe8_macos_install_settings_menu(
             saveState:save_state
             loadState:load_state
             quickStatePath:path];
+        [NSNotificationCenter.defaultCenter addObserver:settingsController
+            selector:@selector(refreshBindings:) name:NSApplicationDidBecomeActiveNotification
+            object:NSApp];
         NSMenu *mainMenu = NSApp.mainMenu;
         if (!mainMenu) {
             mainMenu = [[NSMenu alloc] initWithTitle:@""];
@@ -571,6 +647,7 @@ void fe8_macos_install_settings_menu(
         open.target = settingsController;
         [settingsMenu addItem:stateMenuItem(@"Extended Renderer",
             @selector(toggleExtensions:), @"", 0)];
+        [settingsMenu addItem:stateMenuItem(@"Voxel Renderer", @selector(toggleVoxel:), @"", 0)];
         [settingsMenu addItem:NSMenuItem.separatorItem];
         [settingsMenu addItem:open];
         settingsRoot.submenu = settingsMenu;

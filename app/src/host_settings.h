@@ -70,6 +70,7 @@ typedef struct Fe8HostSettings {
     int audio_enabled;
     int vsync_enabled;
     int extensions_enabled;
+    int voxel_enabled;
     int mouse_enabled;
     enum Fe8HostShader shader;
     enum Fe8HostSpeedupRate speedup_rate;
@@ -79,6 +80,7 @@ typedef struct Fe8HostSettings {
 
 void fe8_host_settings_init(Fe8HostSettings *settings);
 void fe8_host_toggle_extensions(Fe8HostSettings *settings);
+void fe8_host_toggle_voxel(Fe8HostSettings *settings);
 Fe8HostSettings *fe8_host_settings_current(void);
 uint32_t fe8_host_key_for_scancode(
     const Fe8HostSettings *settings, SDL_Scancode scancode);

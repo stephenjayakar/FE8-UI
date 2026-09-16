@@ -138,6 +138,12 @@ void fe8_host_toggle_extensions(Fe8HostSettings *settings) {
     ++settings->revision;
 }
 
+void fe8_host_toggle_voxel(Fe8HostSettings *settings) {
+    if (!settings) return;
+    settings->voxel_enabled = !settings->voxel_enabled;
+    ++settings->revision;
+}
+
 Fe8HostSettings *fe8_host_settings_current(void) {
     return current_settings;
 }
@@ -152,6 +158,8 @@ double fe8_host_clamp_zoom_sensitivity(double sensitivity) {
 
 uint32_t fe8_host_hotkey_for_scancode(
     const Fe8HostSettings *settings, SDL_Scancode scancode) {
+    if (!settings || scancode <= SDL_SCANCODE_UNKNOWN || scancode >= SDL_NUM_SCANCODES)
+        return 0;
     uint32_t hotkeys = 0;
     unsigned hotkey;
     for (hotkey = 0; hotkey < FE8_HOST_HOTKEY_COUNT; ++hotkey)
@@ -162,6 +170,8 @@ uint32_t fe8_host_hotkey_for_scancode(
 
 uint32_t fe8_host_key_for_scancode(
     const Fe8HostSettings *settings, SDL_Scancode scancode) {
+    if (!settings || scancode <= SDL_SCANCODE_UNKNOWN || scancode >= SDL_NUM_SCANCODES)
+        return 0;
     uint32_t keys = 0;
     unsigned button;
     for (button = 0; button < FE8_HOST_BUTTON_COUNT; ++button)
