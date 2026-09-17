@@ -1,0 +1,12 @@
+{
+  "app/src/frame_alignment.c": "ffc9ae1843b6f99ee41f29c475df787e7b6b3b62a6cc6317de8bf86dd4586f3e",
+  "app/src/frame_alignment.h": "28f9ce2276f746402073588d03a57a9fc18712a786be07df61b0166f8951f73d",
+  "app/src/macos_settings.m": "504b7171a3b802d16b7595d7ad99e781a5527d70c2c12bef7b324157b9637217",
+  "app/src/main.c": "ceb92a1e68b28a080df68f453471431b4b4e9292b8de4b18e86aaac89de443a3",
+  "app/src/voxel_renderer.c": "59ff61466ba4f101f11eb9ef6129fa2dd5024c3ca0c0434fe0c0dfd65a30fc3f",
+  "docs/voxel-inspection-settings.md": "5ccc2b0a23128079a540cdb5215746ea7bf20c0ad9b7cc76ab1b86375ad00e94",
+  "tests/test_frame_alignment.c": "45b09217d9357cff4ab7ba86ca17142e4c47aa339dec9a0e4942a3fde8d9be3d",
+  "tests/test_macos_settings.m": "17c2269d5528f07356aaa4f2aae7cd0ea46d1fa883a2d3ad680cddbe15a5a727",
+  "tests/test_voxel_interaction_rom.c": "b0088a3117c6c91b1f253145571911f764f1ad83385cfadec0b78f3f1af3d4e9",
+  "tests/test_voxel_renderer.c": "d387ff9350f0e6fc52d618a58b3cb640a13e34bce205369bf533063b42063934"
+}
