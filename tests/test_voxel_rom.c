@@ -64,6 +64,26 @@ int main(int argc,char **argv){
     assert(c->saveState(c,after)&&memcmp(before,after,size)==0);puts("PASS render does not mutate serialized emulator state");
     ppm(prefix,"overview",image,1440,960);
     Fe8VoxelStats first=fe8_voxel_stats(view);assert(first.sprites>0&&first.columns>0);
+    unsigned classified=0;
+    for(unsigned y=0;y<s->map_height;++y)for(unsigned x=0;x<s->map_width;++x){
+        unsigned cell=y*s->map_width+x;
+        Fe8BuildingKind expected=fe8_building_kind(s->terrain[cell]);
+        if(!expected||((s->flags&FE8_SNAPSHOT_FOG)&&!s->fog[cell]))continue;
+        Fe8Building building;
+        assert(fe8_voxel_building_at(view,(int)x,(int)y,&building));
+        /* A generic house may be identified by matching special-building art;
+         * authoritative shop/arena/castle IDs must never be overridden. */
+        assert(building.kind==expected || (expected==FE8_BUILDING_HOUSE &&
+            (building.evidence&FE8_BUILDING_ART_MATCH)));
+        assert(building.anchor_x==x&&building.anchor_y==y);
+        printf("BUILDING %s anchor=%u,%u footprint=%u,%u %ux%u evidence=%u\n",
+            fe8_building_name(building.kind),x,y,building.x,building.y,
+            building.width,building.height,building.evidence);
+        ++classified;
+    }
+    assert(classified>0);
+    assert(c->saveState(c,after)&&!memcmp(before,after,size));
+    puts("PASS live building IDs, entrance ownership, connected footprints, and read-only classification");
     start=clock();for(int i=0;i<30;++i)assert(fe8_voxel_render(view,&memory,&map,s,1440,960));
     double warm=1000.*(clock()-start)/CLOCKS_PER_SEC/30;
     Fe8VoxelStats next=fe8_voxel_stats(view);assert(first.terrain_builds==next.terrain_builds&&first.sprite_builds==next.sprite_builds&&next.cached_sprites>first.cached_sprites);

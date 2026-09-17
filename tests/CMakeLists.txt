@@ -247,7 +247,7 @@ endif()
 
 # Runtime geometry contract; real assets are read only from a user's local ROM.
 add_executable(test_voxel_rom test_voxel_rom.c
-    ../app/src/voxel_renderer.c ../app/src/extended_map_renderer.c
+    ../app/src/voxel_renderer.c ../app/src/voxel_buildings.c ../app/src/extended_map_renderer.c
     ../app/src/extended_unit_renderer.c ../app/src/fe8_profile.c ../app/src/address_space.c)
 target_include_directories(test_voxel_rom PRIVATE ../app/src)
 target_compile_definitions(test_voxel_rom PRIVATE $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
@@ -268,7 +268,7 @@ if(FE8_SACRED_ECHOES_ROM)
 endif()
 
 fe8_add_test(voxel_renderer test_voxel_renderer.c
-    ../app/src/voxel_renderer.c ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c)
+    ../app/src/voxel_renderer.c ../app/src/voxel_buildings.c ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c)
 if(NOT MSVC)
     target_link_libraries(test_voxel_renderer PRIVATE m)
 endif()
@@ -295,7 +295,7 @@ if(APPLE)
 endif()
 
 # Not a CTest test: explicitly supplied ROM/state and output dimensions only.
-add_executable(bench_voxel bench_voxel.c ../app/src/voxel_renderer.c
+add_executable(bench_voxel bench_voxel.c ../app/src/voxel_renderer.c ../app/src/voxel_buildings.c
     ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c
     ../app/src/address_space.c ../app/src/fe8_profile.c)
 target_include_directories(bench_voxel PRIVATE ../app/src)
@@ -309,7 +309,7 @@ endif()
 # Cursor movement must not alternate between native and voxel cameras. Exercise
 # HUD slides and native hover-sprite handoffs using each optional local ROM.
 add_executable(test_voxel_interaction_rom test_voxel_interaction_rom.c
-    ../app/src/voxel_renderer.c ../app/src/native_hud.c
+    ../app/src/voxel_renderer.c ../app/src/voxel_buildings.c ../app/src/native_hud.c
     ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c
     ../app/src/frame_alignment.c ../app/src/extended_presentation.c
     ../app/src/mouse_controller.c ../app/src/fe8_profile.c ../app/src/address_space.c)
@@ -326,4 +326,11 @@ endif()
 if(FE8_SACRED_ECHOES_ROM)
     add_test(NAME voxel_interaction_sacred_echoes COMMAND test_voxel_interaction_rom "${FE8_SACRED_ECHOES_ROM}")
     set_tests_properties(voxel_interaction_sacred_echoes PROPERTIES TIMEOUT 120)
+endif()
+
+fe8_add_test(voxel_buildings test_voxel_buildings.c
+    ../app/src/voxel_buildings.c ../app/src/voxel_renderer.c
+    ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c)
+if(NOT MSVC)
+    target_link_libraries(test_voxel_buildings PRIVATE m)
 endif()

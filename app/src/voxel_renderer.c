@@ -36,6 +36,7 @@ struct Fe8VoxelRenderer {
     bool dirty, ready;
     SpriteImage *sprites;
     Fe8VoxelStats stats;
+    Fe8BuildingLayout buildings;
 };
 static float clampf(float a, float lo, float hi) { return a < lo ? lo : a > hi ? hi : a; }
 static uint32_t tint(uint32_t c, float r, float g, float b) {
@@ -182,46 +183,32 @@ static uint64_t map_hash(const Fe8MemoryView *m,const Fe8MapRenderState *map,con
  * Hash all object material footprints, including entire inferred rectangles,
  * so any geometry/material/terrain/fog change still invalidates scenery. */
 static uint64_t object_hash(const Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
-    uint8_t covered[FE8_MAX_MAP_CELLS]={0};
     size_t cells=(size_t)s->map_width*s->map_height;
     uint64_t hash=byteshash(UINT64_C(14695981039346656037),s->terrain,cells);
     hash=byteshash(hash,&s->chapter,sizeof(s->chapter));
     hash=byteshash(hash,&v->mw,sizeof(v->mw));
     hash=byteshash(hash,&v->mh,sizeof(v->mh));
     if(s->flags&FE8_SNAPSHOT_FOG)hash=byteshash(hash,s->fog,cells);
-    for(int z=0;z<s->map_height;++z)for(int x=0;x<s->map_width;++x){
-        if(covered[z*s->map_width+x])continue;
-        unsigned t=s->terrain[z*s->map_width+x];
-        if(roof(t)){
-            int x1=x,z1=z;
-            while(x1+1<s->map_width&&s->terrain[z*s->map_width+x1+1]==t)++x1;
-            while(z1+1<s->map_height&&s->terrain[(z1+1)*s->map_width+x]==t)++z1;
-            for(int j=z;j<=z1;++j)for(int i=x;i<=x1;++i)covered[j*s->map_width+i]=1;
-        }else if(structure(t)||canopy(t)||t==0x0A||t==0x1D||t==0x20||t==0x21||
-                t==0x39||t==0x33||t==0x13||t==0x14)covered[z*s->map_width+x]=1;
-    }
-    for(int z=0;z<v->mh;++z)for(int x=0;x<s->map_width;++x)
-        if(covered[(z/16)*s->map_width+x])
+    for(int z=0;z<v->mh;++z)for(int x=0;x<s->map_width;++x){
+        unsigned t=s->terrain[(z/16)*s->map_width+x];
+        if(roof(t)||fe8_building_kind(t)||t>=0x41||structure(t)||canopy(t)||
+                t==0x1D||t==0x20||t==0x21||t==0x39||t==0x33||t==0x13||t==0x14)
             hash=byteshash(hash,v->terrain+(size_t)z*v->mw+x*16,16*sizeof(*v->terrain));
+    }
     return hash?hash:1;
 }
+static void building_heights(Fe8VoxelRenderer *v);
 static void terrain_heights(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
     int w=v->mw,h=v->mh;size_t n=(size_t)w*h;
     memset(v->heights,0,n);memset(v->shadow,0,n);v->stats.columns=0;
-    /* Infer roof ridges over connected roof cells, rather than repeating a
-     * miniature house on every tile of one large building. */
+    /* Building geometry and its shadow footprint share the same recipes.
+     * Unknown or fog-hidden building tiles stay in the original ground. */
     for(int z=0;z<h;++z)for(int x=0;x<w;++x){
         int tx=x/16,tz=z/16;unsigned t=s->terrain[tz*s->map_width+tx];
+        if(v->buildings.owner[tz*s->map_width+tx] || fe8_building_kind(t) || roof(t)) continue;
         uint32_t c=v->terrain[z*w+x];int r=c&255,g=(c>>8)&255,b=(c>>16)&255;
         float y=0;
-        if(roof(t)){
-            int left=tx,right=tx;
-            while(left>0&&roof(s->terrain[tz*s->map_width+left-1]))--left;
-            while(right+1<s->map_width&&roof(s->terrain[tz*s->map_width+right+1]))++right;
-            float half=(right-left+1)*8.f,dist=fabsf(x+.5f-(left*16+half));
-            y=13+fminf(16,half-dist)*.72f;
-            if(green(c))y=0;
-        }else if(structure(t)){
+        if(structure(t)){
             y=10+(float)((r+g+b)/3)/65;
             if(t==0x1A||t==0x1B)y=20;
             if(green(c))y=0;
@@ -245,6 +232,9 @@ static void terrain_heights(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
         v->heights[z*w+x]=(uint8_t)clampf(roundf(y),0,48);
         v->stats.columns+=y>0;
     }
+    building_heights(v);
+    v->stats.columns=0;
+    for(size_t i=0;i<n;++i)v->stats.columns+=v->heights[i]!=0;
     /* Ground shadow atlas. A few soft, directional taps from every elevated
      * column give contact shadows without baking arbitrary shadows into ROM. */
     for(int z=0;z<h;++z)for(int x=0;x<w;++x){
@@ -297,100 +287,39 @@ static void tree_object(Fe8VoxelRenderer *v,int tx,int tz) {
         box(v,x+fx-step/2,8+iy*step,z+fz-step/2,step,step,step,tint(leaves,shade,shade,shade));
     }
 }
-static void house_object(Fe8VoxelRenderer *v,float x,float z,float w,float d,
-        uint32_t terracotta,uint32_t wall,unsigned seed) {
-    uint32_t timber=tint(wall,.44f,.39f,.35f),stone=mix(wall,0xFFBCBCB5,.4f);
-    float h=10;
-    box(v,x-1,0,z-1,w+2,1.3f,d+2,stone);
-    box(v,x,1,z,w,h,d,wall);
-    for(int row=0;row<3;++row)for(int col=0;col<(int)(w/2);++col){
-        float xx=x+col*2+(row&1?1:0);if(xx+1.8f>x+w)continue;
-        float f=.87f+(noise(col,row,seed)%20)*.01f;
-        box(v,xx,1+row*1.1f,z+d-.05f,1.8f,.95f,.4f,tint(stone,f,f,f));
-    }
-    for(int k=0;k<3;++k){float xx=x+k*w*.5f;
-        box(v,xx-.35f,3,z+d,.7f,8,.55f,timber);
-        box(v,xx-.35f,3,z-.45f,.7f,8,.55f,timber);
-    }
-    box(v,x,5,z+d,w,.6f,.55f,timber);box(v,x,10.5f,z+d,w,.65f,.65f,timber);
-    box(v,x-.35f,4,z,.6f,7,d,timber);
-    /* Symmetric stepped gable; each roof tile is a generated voxel slab. */
-    int rows=(int)ceilf((w+3)*.5f);
-    for(int row=0;row<rows;++row){
-        float rw=w+3-row*2,y=11+row*.8f;
-        box(v,x-1.5f+row,y,z-1.3f,rw,.85f,d+2.6f,terracotta);
-        for(int iz=0;iz<(int)((d+2.6f)/1.7f);++iz)for(int side=0;side<2;++side){
-            float xx=side?x+w+.5f-row:x-1.5f+row;
-            float f=.87f+(noise(row,iz,seed)%28)*.009f;
-            box(v,xx,y+.65f,z-1.3f+iz*1.7f,1,.3f,1.55f,tint(terracotta,f,f,f));
-        }
-    }
-    float door=x+w*.48f;
-    box(v,door-1.2f,1,z+d+.3f,2.6f,5,.45f,timber);
-    box(v,door-.95f,1,z+d+.58f,2,4.7f,.3f,tint(timber,1.2f,1.12f,1.05f));
-    box(v,door+.5f,3,z+d+.95f,.3f,.3f,.2f,0xFF71C3E2);
-    for(int side=0;side<2;++side){float xx=x+w*(side?.80f:.18f);
-        box(v,xx-1.2f,6.2f,z+d+.3f,2.4f,2.8f,.4f,timber);
-        box(v,xx-.9f,6.5f,z+d+.55f,1.8f,2.2f,.35f,0xFF5BB9E7);
-        box(v,xx-.12f,6.45f,z+d+.92f,.24f,2.3f,.15f,timber);
-        box(v,xx-1,7.4f,z+d+.92f,2,.2f,.15f,timber);
-    }
-    box(v,x+w*.73f,11+rows*.32f,z+d*.26f,2.2f,rows*.6f+2,2.1f,stone);
-    box(v,x+w*.73f-.3f,13+rows*.92f,z+d*.26f-.3f,2.8f,.7f,2.7f,tint(stone,.8f,.8f,.8f));
+static Fe8BuildingPainter building_painter(Fe8VoxelRenderer *v,
+        const Fe8Building *b,Fe8BuildingBox draw) {
+    int x=b->x*16,z=b->y*16,w=b->width*16,d=b->height*16;
+    return (Fe8BuildingPainter){v,draw,
+        material(v,x,z,w,d,1,0xFF497FA3),material(v,x,z,w,d,2,0xFFABC1CE)};
 }
-static void tower_object(Fe8VoxelRenderer *v,float x,float z,float w,float h,uint32_t stone) {
-    box(v,x,0,z,w,h,w,stone);
-    box(v,x-.5f,h-2,z-.5f,w+1,1,w+1,tint(stone,1.12f,1.10f,1.04f));
-    for(int k=0;k<(int)w;k+=3){
-        box(v,x+k,h,z,1.7f,2,1.7f,stone);box(v,x+k,h,z+w-1.7f,1.7f,2,1.7f,stone);
-        box(v,x,h,z+k,1.7f,2,1.7f,stone);box(v,x+w-1.7f,h,z+k,1.7f,2,1.7f,stone);
+static void building_box(void *context,float x,float y,float z,float w,float h,float d,uint32_t c) {
+    box(context,x,y,z,w,h,d,c);
+}
+static void height_box(void *context,float x,float y,float z,float w,float h,float d,uint32_t c) {
+    (void)c;Fe8VoxelRenderer *v=context;
+    int left=(int)floorf(fmaxf(0,x)),right=(int)ceilf(fminf(v->mw,x+w));
+    int top=(int)floorf(fmaxf(0,z)),bottom=(int)ceilf(fminf(v->mh,z+d));
+    uint8_t height=(uint8_t)clampf(ceilf(y+h),0,255);
+    for(int zz=top;zz<bottom;++zz)for(int xx=left;xx<right;++xx){
+        uint8_t *at=&v->heights[(size_t)zz*v->mw+xx];
+        if(height>*at)*at=height;
     }
-    box(v,x+w*.5f-.65f,h*.55f,z+w+.04f,1.3f,3,.25f,tint(stone,.32f,.37f,.42f));
-    for(int j=2;j<h-3;j+=3)box(v,x,j,z+w+.02f,w,.15f,.06f,tint(stone,.78f,.80f,.82f));
+}
+static void building_heights(Fe8VoxelRenderer *v) {
+    for(unsigned i=0;i<v->buildings.count;++i){
+        const Fe8Building *b=&v->buildings.objects[i];
+        Fe8BuildingPainter painter=building_painter(v,b,height_box);
+        fe8_building_draw(b,&painter);
+    }
 }
 static void map_objects(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
-    uint8_t done[FE8_MAX_MAP_CELLS]={0};
-    for(int z=0;z<s->map_height;++z)for(int x=0;x<s->map_width;++x){
-        unsigned t=s->terrain[z*s->map_width+x];
-        if(canopy(t)){tree_object(v,x,z);continue;}
-        if(done[z*s->map_width+x])continue;
-        if(roof(t)){
-            int x1=x,z1=z;
-            while(x1+1<s->map_width&&s->terrain[z*s->map_width+x1+1]==t)++x1;
-            while(z1+1<s->map_height&&s->terrain[(z1+1)*s->map_width+x]==t)++z1;
-            for(int j=z;j<=z1;++j)for(int i=x;i<=x1;++i)done[j*s->map_width+i]=1;
-            int w=(x1-x+1)*16,d=(z1-z+1)*16;
-            uint32_t red=material(v,x*16,z*16,w,d,1,0xFF447FAD),wall=material(v,x*16,z*16,w,d,2,0xFFABC1CE);
-            if(t==0x2C){
-                uint32_t stone=mix(wall,0xFFC0BDAE,.45f);
-                box(v,x*16+6,0,z*16+6,w-12,9,d-12,stone);
-                house_object(v,x*16+w*.3f,z*16+d*.25f,w*.40f,d*.40f,red,wall,(unsigned)x);
-                for(int a=0;a<2;++a)for(int b=0;b<2;++b)
-                    tower_object(v,x*16+3+a*(w-13),z*16+3+b*(d-13),10,18,stone);
-                box(v,x*16+w*.5f-3,0,z*16+d-6,6,7,1,tint(stone,.32f,.37f,.42f));
-            }else{
-                house_object(v,x*16+w*.17f,z*16+d*.13f,w*.65f,d*.60f,red,wall,(unsigned)(x+z*17));
-                if(w>=32){
-                    for(int k=0;k<w;k+=3){
-                        box(v,x*16+k,.05f,z*16+d-2,1,3,1,0xFF526B80);
-                        box(v,x*16+k,.05f,z*16+1,1,3,1,0xFF526B80);
-                    }
-                    box(v,x*16,1.8f,z*16+d-2,w,.6f,.65f,0xFF526B80);
-                }
-            }
-        }else if(t==0x0A){
-            uint32_t stone=material(v,x*16,z*16,16,16,2,0xFF99AEB7);
-            box(v,x*16+1,0,z*16+1,14,1.5f,14,stone);
-            for(int k=0;k<4;++k){
-                box(v,x*16+1+k*3.5f,1.5f,z*16+1,2,3,2,stone);
-                box(v,x*16+1+k*3.5f,1.5f,z*16+13,2,3,2,stone);
-                box(v,x*16+1,1.5f,z*16+1+k*3.5f,2,3,2,stone);
-                box(v,x*16+13,1.5f,z*16+1+k*3.5f,2,3,2,stone);
-            }
-        }else if(t==5||t==6||t==7||t==8||t==0x24){
-            uint32_t red=material(v,x*16,z*16,16,16,1,0xFF497FA3),wall=material(v,x*16,z*16,16,16,2,0xFFABC1CE);
-            house_object(v,x*16+2,z*16+2,12,10,red,wall,(unsigned)(x+z*17));
-        }
+    for(int z=0;z<s->map_height;++z)for(int x=0;x<s->map_width;++x)
+        if(canopy(s->terrain[z*s->map_width+x]))tree_object(v,x,z);
+    for(unsigned i=0;i<v->buildings.count;++i){
+        const Fe8Building *b=&v->buildings.objects[i];
+        Fe8BuildingPainter painter=building_painter(v,b,building_box);
+        fe8_building_draw(b,&painter);
     }
 }
 
@@ -411,7 +340,8 @@ static uint32_t substrate(const Fe8VoxelRenderer *v,const Fe8Snapshot *s,int x,i
 static void prepare_ground(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
     for(int z=0;z<v->mh;++z)for(int x=0;x<v->mw;++x){
         size_t i=(size_t)z*v->mw+x;
-        uint32_t c=v->heights[i]?substrate(v,s,x,z):v->terrain[i];
+        uint32_t c=(v->heights[i]||v->buildings.owner[(z/16)*s->map_width+x/16])?
+            substrate(v,s,x,z):v->terrain[i];
         float sh=shadow_at(v,x,z);
         c=tint(c,sh*1.01f,sh*1.015f,sh*.98f);
         if(watery(s->terrain[(z/16)*s->map_width+x/16]))c=mix(c,0xFFAF9374,.12f);
@@ -440,7 +370,7 @@ static void background(Fe8VoxelRenderer *v,const Fe8Snapshot *s) {
     /* Heightfield surface only: internal faces are never emitted. */
     for(int z=0;z<v->mh;++z)for(int x=0;x<v->mw;++x){
         unsigned t=s->terrain[(z/16)*s->map_width+x/16];
-        if(roof(t)||canopy(t)||(t>=3&&t<=8)||t==0x0B||t==0x0A||t==0x24)continue;
+        if(v->buildings.owner[(z/16)*s->map_width+x/16]||roof(t)||canopy(t)||fe8_building_kind(t))continue;
         int ht=v->heights[z*v->mw+x];if(!ht)continue;
         uint32_t c=v->terrain[z*v->mw+x];
         quad(v,project(v,x,ht,z),project(v,x+1,ht,z),project(v,x+1,ht,z+1),project(v,x,ht,z+1),tint(c,1.06f,1.03f,.96f));
@@ -679,7 +609,14 @@ const Fe8HostPixel *fe8_voxel_render_scene(Fe8VoxelRenderer *v,const Fe8MemoryVi
             return NULL;
         }
         uint64_t objects=object_hash(v,s);
-        if(objects!=v->object_hash){terrain_heights(v,s);v->object_hash=objects;v->dirty=true;}
+        if(objects!=v->object_hash){
+            if(!fe8_buildings_classify(&v->buildings,s,v->terrain,v->mw)){
+                v->error="unable to classify building footprints";return NULL;
+            }
+            memset(v->stats.buildings,0,sizeof(v->stats.buildings));
+            for(unsigned i=0;i<v->buildings.count;++i)++v->stats.buildings[v->buildings.objects[i].kind];
+            terrain_heights(v,s);v->object_hash=objects;v->dirty=true;
+        }
         prepare_ground(v,s);
         if(!v->dirty){
             /* Scenery pixels/depth are unchanged. Refresh only visible flat
@@ -798,4 +735,11 @@ Fe8VoxelStats fe8_voxel_stats(const Fe8VoxelRenderer *v){return v?v->stats:(Fe8V
 
 const char *fe8_voxel_error(const Fe8VoxelRenderer *v) {
     return v ? v->error : "unable to create voxel renderer";
+}
+
+bool fe8_voxel_building_at(const Fe8VoxelRenderer *v,int x,int y,Fe8Building *out) {
+    if(!v||!v->ready||!out||x<0||y<0||x>=v->buildings.width||y>=v->buildings.height)return false;
+    unsigned owner=v->buildings.owner[y*v->buildings.width+x];
+    if(!owner)return false;
+    *out=v->buildings.objects[owner-1];return true;
 }

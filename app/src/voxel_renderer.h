@@ -2,6 +2,7 @@
 #define FE8_VOXEL_RENDERER_H
 #include "extended_map_renderer.h"
 #include "fe8_profile.h"
+#include "voxel_buildings.h"
 
 typedef struct Fe8VoxelRenderer Fe8VoxelRenderer;
 typedef struct Fe8VoxelStats {
@@ -10,6 +11,7 @@ typedef struct Fe8VoxelStats {
     unsigned hover_sprites; /* Native hovered-unit replacements, not hidden SMS. */
     uint64_t billboard_pixels, output_pixels;
     int render_width, render_height;
+    unsigned buildings[FE8_BUILDING_COUNT];
 } Fe8VoxelStats;
 
 /* Entirely presentational: read8 is the only emulator capability accepted. */
@@ -42,4 +44,5 @@ bool fe8_voxel_project(const Fe8VoxelRenderer *view, float map_x, float map_y,
     float height, float *screen_x, float *screen_y);
 Fe8VoxelStats fe8_voxel_stats(const Fe8VoxelRenderer *view);
 const char *fe8_voxel_error(const Fe8VoxelRenderer *view);
+bool fe8_voxel_building_at(const Fe8VoxelRenderer *view,int x,int y,Fe8Building *out);
 #endif
