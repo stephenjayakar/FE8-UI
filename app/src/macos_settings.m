@@ -8,6 +8,7 @@ static NSString *const kAudioKey = @"FE8AudioEnabled";
 static NSString *const kVSyncKey = @"FE8VSyncEnabled";
 static NSString *const kExtensionsKey = @"FE8ExtensionsEnabled";
 static NSString *const kVoxelKey = @"FE8VoxelEnabled";
+static NSString *const kVoxelGpuKey = @"FE8VoxelGpu";
 static NSString *const kMouseKey = @"FE8MouseEnabled";
 static NSString *const kShaderKey = @"FE8ShaderMode";
 static NSString *const kZoomSensitivityKey = @"FE8ZoomSensitivity";
@@ -105,6 +106,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 @property(nonatomic, strong) NSButton *listeningButton;
 @property(nonatomic, strong) NSButton *extensionsButton;
 @property(nonatomic, strong) NSButton *voxelButton;
+@property(nonatomic, strong) NSPopUpButton *voxelBackendPopup;
 @property(nonatomic, strong) NSTextField *zoomSensitivityValue;
 @property(nonatomic, strong) id keyMonitor;
 @property(nonatomic, assign) void *stateContext;
@@ -234,6 +236,12 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     return YES;
 }
 
+- (void)voxelBackendChanged:(NSPopUpButton *)sender {
+    self.settings->voxel_gpu = sender.indexOfSelectedItem == 0;
+    ++self.settings->revision;
+    [NSUserDefaults.standardUserDefaults setBool:self.settings->voxel_gpu forKey:kVoxelGpuKey];
+}
+
 - (void)shaderChanged:(NSPopUpButton *)sender {
     NSInteger shader = sender.indexOfSelectedItem;
     if (shader < 0 || shader >= FE8_HOST_SHADER_COUNT)
@@ -326,11 +334,17 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         [content addSubview:check];
     }
 
-    NSTextField *voxelHint = [NSTextField wrappingLabelWithString:
-        @"Voxels appear on supported idle maps. The game window title explains any native fallback."];
-    voxelHint.frame = NSMakeRect(30, 649, 365, 38);
-    voxelHint.textColor = NSColor.secondaryLabelColor;
-    [content addSubview:voxelHint];
+    NSTextField *voxelLabel = [NSTextField labelWithString:@"Voxel rendering"];
+    voxelLabel.frame = NSMakeRect(30, 659, 115, 24);
+    [content addSubview:voxelLabel];
+    self.voxelBackendPopup = [[NSPopUpButton alloc]
+        initWithFrame:NSMakeRect(150, 655, 245, 28) pullsDown:NO];
+    [self.voxelBackendPopup addItemsWithTitles:@[@"OpenGL (GPU)", @"Software (CPU)"]];
+    [self.voxelBackendPopup selectItemAtIndex:settings->voxel_gpu ? 0 : 1];
+    self.voxelBackendPopup.target = self;
+    self.voxelBackendPopup.action = @selector(voxelBackendChanged:);
+    self.voxelBackendPopup.toolTip = @"OpenGL renders the 3D geometry on the GPU. Software is the compatibility path. The window title reports the active backend.";
+    [content addSubview:self.voxelBackendPopup];
 
     NSTextField *shaderLabel = [NSTextField labelWithString:@"Video shader"];
     shaderLabel.frame = NSMakeRect(30, 619, 105, 24);
@@ -553,6 +567,7 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
             kVSyncKey: @YES,
             kExtensionsKey: @YES,
             kVoxelKey: @NO,
+            kVoxelGpuKey: @YES,
             kMouseKey: @YES,
             kShaderKey: @(FE8_HOST_SHADER_OFF),
             kZoomSensitivityKey: @(FE8_HOST_ZOOM_SENSITIVITY_LOW),
@@ -563,6 +578,7 @@ void fe8_macos_load_settings(Fe8HostSettings *settings) {
         settings->extensions_enabled = [defaults boolForKey:kExtensionsKey];
         settings->mouse_enabled = [defaults boolForKey:kMouseKey];
         settings->voxel_enabled = [defaults boolForKey:kVoxelKey];
+        settings->voxel_gpu = [defaults boolForKey:kVoxelGpuKey];
         NSInteger shader = [defaults integerForKey:kShaderKey];
         settings->shader = shader >= 0 && shader < FE8_HOST_SHADER_COUNT ?
             (enum Fe8HostShader)shader : FE8_HOST_SHADER_OFF;

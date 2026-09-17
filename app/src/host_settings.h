@@ -71,6 +71,7 @@ typedef struct Fe8HostSettings {
     int vsync_enabled;
     int extensions_enabled;
     int voxel_enabled;
+    int voxel_gpu; /* Prefer OpenGL rasterization; software remains available. */
     int mouse_enabled;
     enum Fe8HostShader shader;
     enum Fe8HostSpeedupRate speedup_rate;

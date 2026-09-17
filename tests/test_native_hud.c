@@ -216,8 +216,49 @@ static void layout(void) {
     for(int y=1;y<7;++y) assert(guarded[y*10+8]==0xDEADBEEF&&guarded[y*10+9]==0xDEADBEEF);
     assert(guarded[10]==0xFFFFFFFF); assert(guarded[10+7]==0);
 }
+/* Voxel tactics accept selected/range and handless opening/closing action
+ * frames, but never remove the current-frame PPU verification. */
+static void tactical_selection(void) {
+    fixture();snapshot.active_unit_address=0x02006000;snapshot.game_state_bits=3;
+    assert(!extract(true));
+    assert(fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+    assert(!memcmp(frame,original,sizeof frame));
+    for(int state=0;state<3;++state){
+        fixture();snapshot.active_unit_address=0x02006000;snapshot.input_lock=state<2?1:0;
+        memset(vram+0x6800,0,2048);
+        for(int y=0;y<160;++y)for(int x=0;x<240;++x){
+            bool panel=state && x>=64&&x<144&&y>=40&&y<104;
+            frame[y*240+x]=panel?0xFFFF0000:0xFF0000FF;
+        }
+        if(state)for(int y=5;y<13;++y)for(int x=8;x<18;++x)
+            put16(vram,0x6800+(y*32+x)*2,0x1001);
+        memcpy(original,frame,sizeof frame);
+        assert(!extract(true));
+        assert(fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+        assert(!memcmp(frame,original,sizeof frame));
+        assert(state ? hud.count==1&&hud.panels[0].kind==FE8_HUD_ACTION : hud.count==0);
+    }
+    for(int bad=0;bad<8;++bad){
+        fixture();snapshot.active_unit_address=0x02006000;snapshot.game_state_bits=3;
+        switch(bad){
+        case 0:snapshot.phase=0x80;break;
+        case 1:snapshot.input_lock=2;break;
+        case 2:snapshot.combat_panel_active=1;break;
+        case 3:put16(io,0x50,0x80);break;
+        case 4:put16(vram,0x6800+(3*32+3)*2,0x1001);break;
+        case 5:put16(oam,0,0x0100|112);put16(oam,2,184);break;
+        case 6:memset(frame,0xCC,sizeof frame);break;
+        case 7:put16(io,0,0x3F00);break;
+        }
+        memcpy(original,frame,sizeof frame);
+        assert(!fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+        assert(!memcmp(frame,original,sizeof frame));
+    }
+    puts("PASS tactical selection, opening/closing action menu, frame immutability and unsafe-UI rejection");
+}
+
 int main(void) {
-    extraction_and_fallback();
+    extraction_and_fallback();tactical_selection();
     sliding_panels(); alpha_and_world_sprites(); blend_target_variants(); layout();
     puts("native HUD extraction, fallback, sprite preservation, alpha, layout and clipping passed");
     return 0;

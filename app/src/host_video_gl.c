@@ -23,6 +23,8 @@ typedef struct Fe8HostVideoGl {
     int drawable_height;
     GLuint hud_program, hud_vao;
     Fe8GlPlane hud, scene;
+    Fe8VoxelGl *gpu;
+    int gpu_attempted;
 } Fe8HostVideoGl;
 
 /* A single configurable CRT pass keeps preset changes cheap: switching modes
@@ -346,6 +348,32 @@ int fe8_host_video_present_scene(Fe8HostVideo *video,
     return glGetError() == GL_NO_ERROR;
 }
 
+int fe8_host_video_gpu_available(Fe8HostVideo *video) {
+    Fe8HostVideoGl *b = video ? video->backend : NULL;
+    if (!b || SDL_GL_MakeCurrent(video->window, b->gl_context) != 0) return 0;
+    if (!b->gpu_attempted) {
+        b->gpu_attempted = 1;
+        while (glGetError() != GL_NO_ERROR) {}
+        b->gpu = fe8_voxel_gl_create();
+        if (!b->gpu) fprintf(stderr, "Voxel GPU unavailable; using software: %s\n", SDL_GetError());
+    }
+    return b->gpu != NULL;
+}
+int fe8_host_video_present_gpu(Fe8HostVideo *video,
+        const Fe8VoxelGpuFrame *scene, const Fe8VideoOverlay *overlay) {
+    if (!fe8_host_video_gpu_available(video)) return 0;
+    Fe8HostVideoGl *b = video->backend;
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!fe8_voxel_gl_draw(b->gpu, scene, b->drawable_width, b->drawable_height) ||
+            !draw_plane(b, &b->hud, overlay, 1)) return 0;
+    if (video->capture_pixels)
+        video->capture_succeeded = fe8_voxel_gl_capture(b->gpu, video->capture_pixels,
+            b->drawable_width, b->drawable_height);
+    SDL_GL_SwapWindow(video->window);
+    return glGetError() == GL_NO_ERROR;
+}
+
 int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
     int window_x, int window_y, int *canvas_x, int *canvas_y) {
     int window_width;
@@ -433,6 +461,7 @@ void fe8_host_video_deinit(Fe8HostVideo *video) {
     if (backend) {
         if (video->window && backend->gl_context)
             SDL_GL_MakeCurrent(video->window, backend->gl_context);
+        fe8_voxel_gl_destroy(backend->gpu);
         destroy_shader(backend);
         if (backend->hud.texture) glDeleteTextures(1, &backend->hud.texture);
         glDeleteTextures(1, &backend->scene.texture);

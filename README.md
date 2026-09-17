@@ -21,11 +21,15 @@ Here's what the inventory view looks like:
 
 ## Experimental voxel view
 
+The macOS **Voxel rendering** setting now offers **OpenGL (GPU)** (default) and
+**Software (CPU)**. Selection, range preview, walking and native action menus stay
+in the voxel view. [GPU/tactics controls, scope and validation](docs/voxel-gpu-tactics.md).
+
 Use the **Voxel Renderer** hotkey under **Settings → Settings… → Hotkeys** on a
 supported tactical map, or launch with `--voxel`, for a native voxel presentation
 generated from the running ROM. The default binding is F7, and it can be rebound
 to an ordinary key such as V. Units use live sprite pixels; buildings and foliage
-are inferred from terrain. Selection, movement and other unsupported scenes retain
+are inferred from terrain. Combat, dialogue and other unsupported scenes retain
 the original renderer. [Controls, scope and validation](docs/voxel-renderer.md).
 
 # Installing

@@ -4,9 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static uint8_t ewram[0x40000],vram[0x18000],palette[0x400],oam[1024],io[1024];
+static uint8_t rom[0x1000],iwram[0x8000],ewram[0x40000],vram[0x18000],palette[0x400],oam[1024],io[1024];
 static uint8_t read8(void *unused,uint32_t a){
     (void)unused;
+    if(a>=0x03000000&&a<0x03008000)return iwram[a-0x03000000];
+    if(a>=0x08000000&&a<0x08001000)return rom[a-0x08000000];
     if(a>=0x02000000&&a<0x02040000)return ewram[a-0x02000000];
     if(a>=0x06000000&&a<0x06018000)return vram[a-0x06000000];
     if(a>=0x04000000&&a<0x04000400)return io[a-0x04000000];
@@ -225,8 +227,11 @@ int main(void){
         case 10:s->visible_units[0].map_sprite_handle=0x08000000;break;
         case 11:s->flags&=~FE8_SNAPSHOT_UNIT_MAP;break;
         }
-        assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
-        assert(!fe8_voxel_stats(v).hover_sprites&&!fe8_voxel_stats(v).sprites);
+        if(reject==7)assert(!fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+        else {
+            assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+            assert(!fe8_voxel_stats(v).hover_sprites&&!fe8_voxel_stats(v).sprites);
+        }
     }
     *s=saved;
     for(unsigned bad=0;bad<6;++bad) {
@@ -241,5 +246,76 @@ int main(void){
     assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
     assert(fe8_voxel_stats(v).hover_sprites==1&&fe8_voxel_stats(v).sprites==1);
     puts("PASS highlighted native MU billboard, animation/flip/picking, and rejection of hidden/fog/dead/mismatched actors");
+    /* A selected/travelling image is accepted only through its exact native
+     * owner/config/AP chain. Mutating the game state is never needed. */
+    s->game_state_bits=3;s->active_unit_address=0x02006000;s->visible_unit_count=0;
+    wr32(ewram,0x6000,0x08000100);wr32(ewram,0x6004,0x08000180);
+    ewram[0x600B]=1;wr32(ewram,0x600C,1);ewram[0x6010]=ewram[0x6011]=3;ewram[0x6013]=20;
+    wr32(ewram,0x603C,0x02005000);
+    wr32(ewram,0x7000,0x08000080);wr32(ewram,0x702C,0x02006000);
+    wr32(ewram,0x7030,0x03000100);wr32(ewram,0x7034,0x03001000);
+    ewram[0x703F]=1;wr16(ewram,0x704C,48*16);wr16(ewram,0x704E,48*16);
+    iwram[0x1000]=1;iwram[0x1001]=12;wr16(iwram,0x1002,0x380);wr32(iwram,0x1048,0x02007000);
+    wr32(iwram,0x100,0x08000100);wr32(iwram,0x110,0x08000200);wr16(iwram,0x122,0xCB80);
+    wr16(rom,0x200,1);wr16(rom,0x202,0xE0);wr16(rom,0x204,0x81F0);
+    assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_stats(v).sprites==1 && fe8_voxel_stats(v).active_unit_sprites==1);
+    uint64_t state_digest=digest(ewram,sizeof(ewram)), internal_digest=digest(iwram,sizeof(iwram));
+    for(unsigned n=0;n<8;++n)assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+    assert(state_digest==digest(ewram,sizeof(ewram)) && internal_digest==digest(iwram,sizeof(iwram)));
+    ewram[0x703F]=2;s->game_state_bits=0;wr16(ewram,0x704C,50*16);
+    assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_stats(v).unit_moving && fabsf(fe8_voxel_stats(v).active_x-3.625f)<.001f);
+    const Fe8VoxelGpuFrame *gpu=fe8_voxel_build_gpu(v,&memory,&map,s,3456,2234);assert(gpu);
+    assert(gpu->width<=1920&&gpu->height<=1080&&gpu->billboards.count==6&&gpu->scenery.count>0);
+    uint64_t geometry=gpu->scenery.revision,geometry_hash=digest(gpu->scenery.vertices,gpu->scenery.count*sizeof(Fe8GpuVertex));
+    uint64_t raster=fe8_voxel_stats(v).billboard_pixels,upscales=fe8_voxel_stats(v).output_pixels;
+    float transform[16];memcpy(transform,gpu->transform,sizeof(transform));
+    fe8_voxel_camera(v,.15f,1);gpu=fe8_voxel_build_gpu(v,&memory,&map,s,3456,2234);assert(gpu);
+    assert(gpu->scenery.revision==geometry && geometry_hash==digest(gpu->scenery.vertices,gpu->scenery.count*sizeof(Fe8GpuVertex)));
+    assert(memcmp(transform,gpu->transform,sizeof(transform)));
+    assert(fe8_voxel_stats(v).billboard_pixels==raster&&fe8_voxel_stats(v).output_pixels==upscales);
+    uint64_t atlas_revision=gpu->atlas_revision;vram[0x17000]^=0x11;
+    gpu=fe8_voxel_build_gpu(v,&memory,&map,s,3456,2234);assert(gpu&&gpu->atlas_revision>atlas_revision);
+    for(unsigned i=0;i<16;++i)assert(isfinite(gpu->transform[i]));
+    assert(fe8_voxel_project(v,3.625f,3.9375f,12,&sx,&sy));
+    assert(fe8_voxel_pick(v,sx,sy,&x,&y)&&x==3&&y==3);
+    assert(!fe8_voxel_capture(v)); /* GPU pixels are captured by the presenter, not fake CPU re-renders. */
+    /* Native Wait: MU retires before its grey standing handle is installed. */
+    wr16(ewram,0x704C,48*16);
+    assert(fe8_voxel_build_gpu(v,&memory,&map,s,640,480));
+    s->map_sprite_count=0;wr32(ewram,0x600C,2);wr32(ewram,0x603C,0);wr32(ewram,0x7000,0);
+    assert(fe8_voxel_build_gpu(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_stats(v).sprites==1&&fe8_voxel_stats(v).active_unit_sprites==1);
+    s->unit_map[21]=2;
+    assert(fe8_voxel_build_gpu(v,&memory,&map,s,640,480));assert(fe8_voxel_stats(v).sprites==0);
+    s->unit_map[21]=1;wr16(oam,4,0xDB80);
+    assert(!fe8_voxel_build_gpu(v,&memory,&map,s,640,480));
+    wr16(oam,4,0xCB80);wr32(ewram,0x7000,0x08000080);
+    wr32(ewram,0x600C,1);wr32(ewram,0x603C,0x02005000);s->map_sprite_count=1;
+    puts("PASS acted-unit Wait handoff uses only its exact current PPU image and owner tile");
+    s->game_state_bits=3;
+    for(unsigned reject=0;reject<10;++reject){
+        switch(reject){
+        case 0:wr32(iwram,0x1048,0);break; /* no reciprocal ownership */
+        case 1:ewram[0x7040]=1;break;
+        case 2:ewram[0x703F]=7;break; /* death fade */
+        case 3:wr32(ewram,0x600C,5);break; /* dead */
+        case 4:wr32(ewram,0x600C,0x21);break; /* rescued */
+        case 5:wr16(rom,0x200,2);break; /* unknown multi-object AP */
+        case 6:wr16(rom,0x202,0x21E0);break; /* affine/8bpp */
+        case 7:iwram[0x1001]=13;break; /* wrong palette */
+        case 8:ewram[0x600B]=0x80;break; /* another faction */
+        case 9:wr32(iwram,0x110,0x0FFFFFF0);break;
+        }
+        assert(!fe8_voxel_build_gpu(v,&memory,&map,s,640,480));
+        wr32(iwram,0x1048,0x02007000);ewram[0x7040]=0;ewram[0x703F]=2;
+        wr32(ewram,0x600C,1);wr16(rom,0x200,1);wr16(rom,0x202,0xE0);
+        iwram[0x1001]=12;ewram[0x600B]=1;wr32(iwram,0x110,0x08000200);
+    }
+    assert(fe8_voxel_build_gpu(v,&memory,&map,s,640,480));
+    assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+    puts("PASS owned active-unit selection/walking, negative ownership cases, GPU mesh/atlas caching, picking and CPU fallback");
+
     fe8_voxel_destroy(v);fe8_voxel_destroy(NULL);free(s);return 0;
 }

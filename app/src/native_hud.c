@@ -98,7 +98,7 @@ void fe8_native_hud_reset(Fe8NativeHud *hud) {
  * are deliberately stricter than "any nonzero BG0/1 tile is UI". In particular,
  * inventory, dialogue, battle forecasts and ROM-specific submenus fall back. */
 static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
-        const Fe8Snapshot *snapshot) {
+        const Fe8Snapshot *snapshot, bool tactical) {
     uint16_t tiles[600];
     uint8_t seen[600] = {0};
     unsigned queue[600];
@@ -145,6 +145,9 @@ static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
             else if (bank == 1 && edge && width == 11 &&
                     height >= 1 && height <= 6 && (top == 0 || bottom == 19))
                 kind = FE8_HUD_OBJECTIVE;
+            else if(tactical && snapshot->active_unit_address && bank==1 &&
+                    width>=5 && width<=16 && height>=4 && height<=16)
+                kind = FE8_HUD_ACTION; /* The closing menu outlives its input lock. */
             else return false;
         } else if (snapshot->input_lock == 1 && snapshot->active_unit_address &&
                 bank == 1 && width >= 5 && width <= 16 && height >= 4 && height <= 16) {
@@ -163,11 +166,12 @@ static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
     }
     /* A cursor-driven slide can have one frame with no windows at all.
      * The extraction loop still rejects any BG0/1 pixel outside a panel. */
-    return snapshot->input_lock == 0 || hud->count == 1;
+    return snapshot->input_lock == 0 || hud->count == 1 ||
+        (tactical && snapshot->active_unit_address);
 }
 
 static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
-        uint32_t *world, uint32_t *ui) {
+        uint32_t *world, uint32_t *ui, bool tactical) {
     static const int widths[3][4] = {{8,16,32,64},{16,32,32,64},{8,8,16,32}};
     static const int heights[3][4] = {{8,16,32,64},{8,8,16,32},{16,32,32,64}};
     bool hand = false;
@@ -229,17 +233,17 @@ static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
                 if (!(target[pos] & PRESENT) || RANK(sample) <= RANK(target[pos])) target[pos] = sample;
             }
     }
-    return !hud->count || hud->panels[0].kind != FE8_HUD_ACTION || hand;
+    return !hud->count || hud->panels[0].kind != FE8_HUD_ACTION || hand || tactical;
 }
 
-bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
+static bool extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
         const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride,
-        bool live_map) {
+        bool live_map, bool tactical) {
     if (!hud) return false;
     hud->count = 0;
     if (!live_map || !memory || !memory->read8 || !snapshot || !frame || stride < W ||
             snapshot->phase || snapshot->combat_panel_active || snapshot->input_lock > 1 ||
-            (snapshot->game_state_bits & 2)) goto fallback;
+            (!tactical && (snapshot->game_state_bits & 2))) goto fallback;
     HudPpu ppu = {0}; ppu.memory = memory;
     ppu.control = read16(memory, IO);
     /* Only the verified regular-text tactical layout, without hardware windows. */
@@ -256,9 +260,9 @@ bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
     ppu.alpha = read16(memory, IO + 0x52);
     if (((ppu.blend >> 6) & 3) > 1 || (ppu.blend & 1)) goto fallback;
     for (unsigned n = 0; n < 512; ++n) ppu.palette[n] = read16(memory, PAL + n * 2);
-    if (!find_panels(hud, &ppu, snapshot)) goto fallback;
+    if (!find_panels(hud, &ppu, snapshot, tactical)) goto fallback;
     uint32_t world_obj[W * H], ui_obj[W * H];
-    if (!raster_objects(&ppu, hud, world_obj, ui_obj)) goto fallback;
+    if (!raster_objects(&ppu, hud, world_obj, ui_obj, tactical)) goto fallback;
     unsigned checked = 0, matched = 0;
     memset(hud->atlas, 0, sizeof(hud->atlas));
     for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x) {
@@ -317,6 +321,15 @@ bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
 fallback:
     fe8_native_hud_reset(hud);
     return false;
+}
+
+bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
+        const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map) {
+    return extract(hud,memory,snapshot,frame,stride,live_map,false);
+}
+bool fe8_native_hud_extract_tactical(Fe8NativeHud *hud, const Fe8MemoryView *memory,
+        const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map) {
+    return extract(hud,memory,snapshot,frame,stride,live_map,true);
 }
 
 void fe8_native_hud_layout(Fe8NativeHud *hud, int width, int height,

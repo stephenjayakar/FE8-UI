@@ -103,6 +103,18 @@ int main(int argc, char **argv) {
         assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL]==SDL_SCANCODE_B);
         bindKey(controller,button,9,@"v",NO);
         puts("PASS Escape cancellation and binding refresh from another process's saved preferences");
+        assert(settings.voxel_gpu);
+        [controller.voxelBackendPopup selectItemAtIndex:1];
+        [controller voxelBackendChanged:controller.voxelBackendPopup];
+        assert(!settings.voxel_gpu);
+        fe8_macos_load_settings(&restored);assert(!restored.voxel_gpu);
+        [controller.voxelBackendPopup selectItemAtIndex:0];
+        [controller voxelBackendChanged:controller.voxelBackendPopup];
+        fe8_macos_load_settings(&restored);assert(settings.voxel_gpu && restored.voxel_gpu);
+        assert(NSContainsRect(controller.voxelBackendPopup.superview.bounds,controller.voxelBackendPopup.frame));
+        puts("PASS native OpenGL/software selector and persistence");
+        [controller.voxelBackendPopup.superview scrollRectToVisible:controller.voxelBackendPopup.frame];
+        pump(NO);capture(controller.window,directory,@"macos-voxel-gpu-setting.png");
         assert(!settings.voxel_enabled);
         [controller.voxelButton performClick:nil];
         assert(settings.voxel_enabled);

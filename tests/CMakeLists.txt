@@ -283,7 +283,7 @@ if(APPLE)
 endif()
 
 # Actual platform presenter, read back immediately before swap/present.
-fe8_add_test(video_scene test_video_scene.c ../app/src/native_hud.c
+fe8_add_test(video_scene test_video_scene.c ../app/src/native_hud.c ../app/src/voxel_gpu_gl.c
     ../app/src/display_scaling.c ../app/src/pointer_mapping.c ../app/src/host_settings.c)
 target_link_libraries(test_video_scene PRIVATE ${FE8_SDL_TARGET} mgba)
 set_tests_properties(video_scene PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)

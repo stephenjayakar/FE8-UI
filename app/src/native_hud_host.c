@@ -25,7 +25,7 @@ const Fe8HostPixel *fe8_hud_host_update(Fe8HudHost *host,
         const Fe8Snapshot *snapshot, const Fe8HostPixel *frame,
         bool live_map, int frame_x, int frame_y) {
     host->overlay.pixels = NULL;
-    if (!fe8_native_hud_extract(&host->hud, memory, snapshot, frame,
+    if (!(host->voxel_tactical ? fe8_native_hud_extract_tactical : fe8_native_hud_extract)(&host->hud, memory, snapshot, frame,
             FE8_HUD_WIDTH, live_map && host->enabled)) return frame;
     int w = video->scaling.drawable_width, h = video->scaling.drawable_height;
     if (w <= 0 || h <= 0 || (size_t)w > SIZE_MAX / sizeof(*host->pixels) / (size_t)h)

@@ -9,6 +9,9 @@ typedef struct Fe8HostVideoSdl {
     SDL_Renderer *renderer;
     SDL_Texture *texture;
     SDL_Texture *overlay, *scene;
+    Fe8VoxelGl *gpu;
+    SDL_GLContext gl_context;
+    int gpu_attempted;
     int overlay_width, overlay_height, scene_width, scene_height;
 } Fe8HostVideoSdl;
 
@@ -42,6 +45,7 @@ int fe8_host_video_init(Fe8HostVideo *video, const char *title,
         SDL_RENDERER_ACCELERATED | (vsync_enabled ? SDL_RENDERER_PRESENTVSYNC : 0));
     if (!backend->renderer)
         return 0;
+    backend->gl_context = SDL_GL_GetCurrentContext();
     SDL_RenderSetIntegerScale(backend->renderer, SDL_FALSE);
     fe8_display_scaling_init(&video->scaling,
         canvas_width, canvas_height, 240, 160);
@@ -126,6 +130,45 @@ int fe8_host_video_present_scene(Fe8HostVideo *video,
         const Fe8VideoOverlay *scene, const Fe8VideoOverlay *overlay) {
     if (!scene || !scene->pixels || scene->width <= 0 || scene->height <= 0) return 0;
     return present_planes(video, NULL, scene, overlay);
+}
+
+int fe8_host_video_gpu_available(Fe8HostVideo *video) {
+    Fe8HostVideoSdl *b = video ? video->backend : NULL;
+    if (!b) return 0;
+    if (!b->gpu_attempted) {
+        b->gpu_attempted = 1;
+        SDL_RendererInfo info = {0};
+        if (SDL_GetRendererInfo(b->renderer, &info) != 0 || !info.name ||
+                strcmp(info.name, "opengl") || !b->gl_context) {
+            fprintf(stderr, "Voxel GPU unavailable on this SDL driver; using software\n");
+            return 0;
+        }
+        SDL_RenderFlush(b->renderer);
+        if (SDL_GL_MakeCurrent(video->window, b->gl_context) == 0)
+            b->gpu = fe8_voxel_gl_create();
+        if (!b->gpu) fprintf(stderr, "Voxel GPU unavailable; using software: %s\n", SDL_GetError());
+    }
+    return b->gpu != NULL;
+}
+int fe8_host_video_present_gpu(Fe8HostVideo *video,
+        const Fe8VoxelGpuFrame *scene, const Fe8VideoOverlay *overlay) {
+    if (!fe8_host_video_gpu_available(video)) return 0;
+    Fe8HostVideoSdl *b = video->backend;
+    if (SDL_RenderFlush(b->renderer) != 0 ||
+            SDL_GL_MakeCurrent(video->window, b->gl_context) != 0 ||
+            SDL_RenderSetLogicalSize(b->renderer, 0, 0) != 0) return 0;
+    int drawn = SDL_RenderSetViewport(b->renderer, NULL) == 0 &&
+        SDL_RenderSetScale(b->renderer, 1, 1) == 0 && SDL_RenderFlush(b->renderer) == 0 &&
+        fe8_voxel_gl_draw(b->gpu, scene, video->scaling.drawable_width, video->scaling.drawable_height) &&
+        draw_plane(b, &b->overlay, &b->overlay_width, &b->overlay_height, overlay, SDL_BLENDMODE_BLEND) &&
+        SDL_RenderFlush(b->renderer) == 0;
+    if (drawn && video->capture_pixels)
+        video->capture_succeeded = fe8_voxel_gl_capture(b->gpu, video->capture_pixels,
+            video->scaling.drawable_width, video->scaling.drawable_height);
+    int restored = SDL_RenderSetLogicalSize(b->renderer, video->canvas_width, video->canvas_height);
+    if (!drawn || restored != 0) return 0;
+    SDL_RenderPresent(b->renderer);
+    return 1;
 }
 
 int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
@@ -217,6 +260,11 @@ void fe8_host_video_deinit(Fe8HostVideo *video) {
     if (!video)
         return;
     if (backend) {
+        if (backend->gpu) {
+            SDL_RenderFlush(backend->renderer);
+            SDL_GL_MakeCurrent(video->window, backend->gl_context);
+            fe8_voxel_gl_destroy(backend->gpu);
+        }
         SDL_DestroyTexture(backend->texture);
         SDL_DestroyTexture(backend->overlay);
         SDL_DestroyTexture(backend->scene);

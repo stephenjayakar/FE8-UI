@@ -11,6 +11,7 @@ typedef struct Fe8HudHost {
     Fe8VideoOverlay overlay;
     int scale_percent;
     bool enabled;
+    bool voxel_tactical;
 } Fe8HudHost;
 
 /* Returns the original frame unless a complete, validated HUD can be drawn. */

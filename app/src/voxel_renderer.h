@@ -3,11 +3,14 @@
 #include "extended_map_renderer.h"
 #include "fe8_profile.h"
 #include "voxel_buildings.h"
+#include "voxel_gpu.h"
 
 typedef struct Fe8VoxelRenderer Fe8VoxelRenderer;
 typedef struct Fe8VoxelStats {
     unsigned terrain_builds, sprite_builds, cached_sprites, columns, sprites;
     unsigned background_builds, reused_frames, ground_refreshes;
+    unsigned active_unit_sprites, unit_moving;
+    float active_x, active_y;
     unsigned hover_sprites; /* Native hovered-unit replacements, not hidden SMS. */
     uint64_t billboard_pixels, output_pixels;
     int render_width, render_height;
@@ -31,6 +34,10 @@ void fe8_voxel_home(Fe8VoxelRenderer *view);
  * stretches it to the drawable. Picking and panning remain drawable-based.
  * No full-resolution CPU buffer is allocated, scaled, or copied here. */
 const Fe8HostPixel *fe8_voxel_render_scene(Fe8VoxelRenderer *view,
+    const Fe8MemoryView *memory, const Fe8MapRenderState *map,
+    const Fe8Snapshot *snapshot, int drawable_width, int drawable_height);
+/* Build a world-space draw packet without software rasterization. */
+const Fe8VoxelGpuFrame *fe8_voxel_build_gpu(Fe8VoxelRenderer *view,
     const Fe8MemoryView *memory, const Fe8MapRenderState *map,
     const Fe8Snapshot *snapshot, int drawable_width, int drawable_height);
 /* Expand the last scene for an explicit screenshot. Owned by view. */

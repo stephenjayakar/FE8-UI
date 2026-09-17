@@ -50,6 +50,7 @@ else()
 endif()
 
 add_executable(fe8-mgba-sdl
+    app/src/voxel_gpu_gl.c
     app/src/voxel_renderer.c
     app/src/voxel_buildings.c
     app/src/main.c

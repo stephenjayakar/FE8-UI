@@ -29,6 +29,8 @@ void fe8_native_hud_reset(Fe8NativeHud *hud);
 /* read8 must expose the *raw* I/O register shadow (mCore.rawRead8), not GBA
  * bus open-bus values for write-only scroll/blend registers. Purely read-only.
  * False leaves the canonical frame untouched; nothing may be stripped then. */
+bool fe8_native_hud_extract_tactical(Fe8NativeHud *hud, const Fe8MemoryView *memory,
+    const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map);
 bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
     const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride,
     bool live_map);

@@ -20,7 +20,15 @@ int main(void) {
         s->game_state_bits=bit;
         assert(fe8_voxel_scene(true,true,true,s,true,false,true)==FE8_VOXEL_SELECTED);
     }
-    s->game_state_bits=0;
+    s->active_unit_address=0x0202BE4C;
+    for(int lock=0;lock<=1;++lock) {
+        s->input_lock=lock;s->game_state_bits=3;
+        assert(fe8_voxel_scene(true,true,true,s,true,false,true)==FE8_VOXEL_READY);
+        assert(fe8_voxel_scene(true,true,true,s,true,false,false)==FE8_VOXEL_WAITING_HUD);
+    }
+    s->input_lock=2;
+    assert(fe8_voxel_scene(true,true,true,s,true,false,true)==FE8_VOXEL_BUSY);
+    s->input_lock=0;s->game_state_bits=0;
     assert(fe8_voxel_scene(true,true,true,s,false,false,true)==FE8_VOXEL_WAITING_MAP);
     assert(fe8_voxel_scene(true,true,true,s,true,false,false)==FE8_VOXEL_WAITING_HUD);
     assert(fe8_voxel_scene(true,true,true,s,true,false,true)==FE8_VOXEL_READY);

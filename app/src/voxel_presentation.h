@@ -18,9 +18,11 @@ static inline Fe8VoxelScene fe8_voxel_scene(bool enabled, bool supported,
     if (!extensions) return FE8_VOXEL_EXTENSIONS_OFF;
     if (inventory) return FE8_VOXEL_INVENTORY;
     if (!snapshot) return FE8_VOXEL_WAITING_MAP;
-    if (snapshot->input_lock || snapshot->phase || snapshot->combat_panel_active)
+    if (snapshot->input_lock > 1 || snapshot->phase || snapshot->combat_panel_active ||
+            (snapshot->input_lock == 1 && !snapshot->active_unit_address))
         return FE8_VOXEL_BUSY;
-    if (snapshot->game_state_bits & 3) return FE8_VOXEL_SELECTED;
+    if ((snapshot->game_state_bits & 3) && !snapshot->active_unit_address)
+        return FE8_VOXEL_SELECTED;
     if (!validated_map) return FE8_VOXEL_WAITING_MAP;
     if (!verified_hud) return FE8_VOXEL_WAITING_HUD;
     return FE8_VOXEL_READY;

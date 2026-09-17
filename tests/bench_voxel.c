@@ -1,5 +1,6 @@
 /* Optional reproducible CPU benchmark. ROM and state paths are local inputs;
- * no assets are bundled. GPU, HUD, emulation, and upload time are NOT included. */
+ * no assets are bundled. GPU completion, HUD, emulation and upload are excluded.
+ * With gpu, this measures packet preparation, NOT total GPU frame time. */
 #include <mgba/flags.h>
 #include <mgba/core/core.h>
 #include <mgba/core/interface.h>
@@ -16,8 +17,10 @@
 #include <time.h>
 static uint8_t read8(void *ctx,uint32_t a){struct mCore *c=ctx;return c->busRead8(c,a);}
 static int compare(const void *a,const void *b){double x=*(const double *)a,y=*(const double *)b;return (x>y)-(x<y);}
-static const uint32_t *render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,
+static int gpu_build;
+static const void *render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,
         const Fe8MapRenderState *map,const Fe8Snapshot *s,int w,int h){
+    if(gpu_build)return fe8_voxel_build_gpu(v,m,map,s,w,h);
 #ifdef FE8_BENCH_SCENE
     return fe8_voxel_render_scene(v,m,map,s,w,h);
 #else
@@ -25,7 +28,8 @@ static const uint32_t *render(Fe8VoxelRenderer *v,const Fe8MemoryView *m,
 #endif
 }
 int main(int argc,char **argv){
-    if(argc!=8){fprintf(stderr,"Usage: %s ROM STATE WIDTH HEIGHT FRAMES static|animated|orbit TAG\n",argv[0]);return 2;}
+    if(argc!=8&&argc!=9){fprintf(stderr,"Usage: %s ROM STATE WIDTH HEIGHT FRAMES static|animated|orbit TAG [software|gpu]\n",argv[0]);return 2;}
+    if(argc==9){if(strcmp(argv[8],"software")&&strcmp(argv[8],"gpu"))return 2;gpu_build=!strcmp(argv[8],"gpu");}
     int w=atoi(argv[3]),h=atoi(argv[4]),frames=atoi(argv[5]);
     if(w<1||h<1||frames<1||frames>10000)return 2;
     const char *mode=argv[6];
@@ -62,8 +66,8 @@ int main(int argc,char **argv){
     }
     qsort(samples,frames,sizeof(*samples),compare);
     Fe8VoxelStats stats=fe8_voxel_stats(v);
-    printf("%s,%s,%dx%d,%d,cold_ms=%.3f,mean_ms=%.3f,p50_ms=%.3f,p95_ms=%.3f,terrain_builds=%u,sprite_builds=%u",
-        argv[7],mode,w,h,frames,cold,total/frames,samples[frames/2],samples[(frames-1)*95/100],stats.terrain_builds,stats.sprite_builds);
+    printf("%s,%s,backend=%s,%dx%d,%d,cold_ms=%.3f,mean_ms=%.3f,p50_ms=%.3f,p95_ms=%.3f,terrain_builds=%u,sprite_builds=%u",
+        argv[7],mode,gpu_build?"GPU preparation":"CPU raster",w,h,frames,cold,total/frames,samples[frames/2],samples[(frames-1)*95/100],stats.terrain_builds,stats.sprite_builds);
 #ifdef FE8_BENCH_SCENE
     printf(",background_builds=%u,reused_frames=%u,cpu_output_pixels=%llu",stats.background_builds,stats.reused_frames,(unsigned long long)stats.output_pixels);
 #endif
