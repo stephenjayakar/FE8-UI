@@ -88,3 +88,20 @@ Fe8FramePlacement fe8_align_frame_to_terrain(
     }
     return best;
 }
+
+Fe8FramePlacement fe8_align_tactical_frame(
+    const Fe8HostPixel *frame, int frame_width, int frame_height,
+    size_t frame_stride, const Fe8HostPixel *terrain,
+    int terrain_width, int terrain_height, size_t terrain_stride,
+    int expected_x, int expected_y, bool camera_moving) {
+    Fe8FramePlacement result = fe8_align_frame_to_terrain(
+        frame, frame_width, frame_height, frame_stride, terrain,
+        terrain_width, terrain_height, terrain_stride,
+        expected_x, expected_y, camera_moving ? 8 : 0);
+    if (!camera_moving && result.match_percent < 15)
+        result = fe8_align_frame_to_terrain(
+            frame, frame_width, frame_height, frame_stride, terrain,
+            terrain_width, terrain_height, terrain_stride,
+            expected_x, expected_y, 8);
+    return result;
+}

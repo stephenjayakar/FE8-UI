@@ -317,5 +317,46 @@ int main(void){
     assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
     puts("PASS owned active-unit selection/walking, negative ownership cases, GPU mesh/atlas caching, picking and CPU fallback");
 
+    /* Enemy/acted inspection hides the unit only from pathfinding. Its
+     * visible SMS is still authoritative and no moving-unit proc exists. */
+    fe8_voxel_invalidate(v);
+    s->game_state_bits=1;s->input_lock=0;s->phase=0;s->combat_panel_active=false;
+    s->flags|=FE8_SNAPSHOT_MAP_SPRITES|FE8_SNAPSHOT_UNIT_MAP|FE8_SNAPSHOT_FOG;
+    s->map_sprite_count=1;s->unit_map[21]=0;s->fog[21]=1;
+    wr32(ewram,0x7000,0);wr16(ewram,0x5004,48);wr16(ewram,0x5006,48);
+    wr16(ewram,0x5008,0xD000);ewram[0x500B]=0;
+    s->map_sprites[0]=(Fe8VisibleMapSprite){48,48,0xD000,0};
+    memset(vram+0x10000,0x11,0x8000);wr16(palette,0x200+13*32+2,0x001F);
+    const unsigned ids[]={1,0x41,0x81};
+    for(unsigned n=0;n<3;++n) {
+        ewram[0x600B]=(uint8_t)ids[n];wr32(ewram,0x600C,n==0?3:1);
+        uint64_t unchanged=digest(ewram,sizeof(ewram));
+        assert(fe8_voxel_render_scene(v,&memory,&map,s,640,480));
+        assert(fe8_voxel_stats(v).sprites==1&&fe8_voxel_stats(v).active_unit_sprites==0);
+        assert(fe8_voxel_build_gpu(v,&memory,&map,s,640,480));
+        assert(fe8_voxel_stats(v).sprites==1&&fe8_voxel_stats(v).active_unit_sprites==0);
+        assert(unchanged==digest(ewram,sizeof(ewram)));
+    }
+    for(unsigned reject=0;reject<10;++reject) {
+        switch(reject) {
+        case 0:ewram[0x500B]=s->map_sprites[0].config=0x80;break;
+        case 1:s->map_sprite_count=0;break;
+        case 2:wr16(ewram,0x5004,32);break;
+        case 3:s->map_sprites[0].oam2=0xC000;break;
+        case 4:s->fog[21]=0;break;
+        case 5:wr32(ewram,0x600C,5);break;
+        case 6:wr32(ewram,0x600C,0x21);break;
+        case 7:s->unit_map[21]=0x82;break;
+        case 8:s->game_state_bits=3;break;
+        case 9:wr32(ewram,0x6004,0);break;
+        }
+        assert(!fe8_voxel_build_gpu(v,&memory,&map,s,640,480));
+        ewram[0x500B]=s->map_sprites[0].config=0;s->map_sprite_count=1;
+        wr16(ewram,0x5004,48);s->map_sprites[0].oam2=0xD000;
+        s->fog[21]=1;wr32(ewram,0x600C,1);s->unit_map[21]=0;s->game_state_bits=1;
+        wr32(ewram,0x6004,0x08000180);
+    }
+    puts("PASS enemy/green/acted range preview retains the live SMS; hidden, dead, fogged, stale and mismatched ownership stays rejected");
+
     fe8_voxel_destroy(v);fe8_voxel_destroy(NULL);free(s);return 0;
 }

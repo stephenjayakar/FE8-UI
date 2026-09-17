@@ -1820,10 +1820,10 @@ static int run_game(int argc, char **argv) {
                         (snapshot.camera_x != previous_camera_x ||
                          snapshot.camera_y != previous_camera_y);
                     uint64_t stage_started = SDL_GetPerformanceCounter();
-                    frame_placement = fe8_align_frame_to_terrain(
+                    frame_placement = fe8_align_tactical_frame(
                         host_frame, GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH,
                         canvas, canvas_width, canvas_height, canvas_width,
-                        viewport.gba_x, viewport.gba_y, camera_moving ? 8 : 0);
+                        viewport.gba_x, viewport.gba_y, camera_moving != 0);
                     perf.alignment += SDL_GetPerformanceCounter() - stage_started;
                     frame_compatible = frame_placement.match_percent >= 15;
                 }

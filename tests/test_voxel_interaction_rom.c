@@ -59,8 +59,8 @@ static Fe8VoxelScene sample(Test *t, unsigned keys, bool require_live) {
     bool rendered=fe8_render_extended_terrain(&t->memory,&t->map,
         (Fe8ExtendedViewport){480,320,120,80},t->terrain,480);
     bool moving=t->previous_camera_x!=s->camera_x || t->previous_camera_y!=s->camera_y;
-    Fe8FramePlacement placement=fe8_align_frame_to_terrain(t->frame,240,160,240,
-        t->terrain,480,320,480,120,80,moving?8:0);
+    Fe8FramePlacement placement=fe8_align_tactical_frame(t->frame,240,160,240,
+        t->terrain,480,320,480,120,80,moving);
     bool compatible=placement.match_percent>=15 || fe8_extended_move_range_is_active(s);
     bool validated=fe8_presentation_update(&t->presentation,rendered,compatible,
         s->combat_panel_active)==FE8_PRESENTATION_LIVE;
@@ -171,6 +171,18 @@ int main(int argc,char **argv) {
         const Fe8VisibleUnit *u=&initial.visible_units[i];
         if(!u->faction && !(u->state&2))pointer_target(t,u->x,u->y);
     }
+    for(unsigned i=0;i<initial.visible_unit_count;++i) {
+        const Fe8VisibleUnit *u=&initial.visible_units[i];
+        printf("Inspecting unit id=%u faction=%u tile=%d,%d\n",u->unit_id,u->faction,u->x,u->y);
+        pointer_target(t,u->x,u->y);
+        if(u->faction && argc==3)checkpoint_file(t,argv[2],"enemy-hover");
+        frames(t,1,1,true);frames(t,32,0,true);
+        assert(t->snapshot.game_state_bits&1);
+        if(u->faction && argc==3)checkpoint_file(t,argv[2],"enemy-inspection");
+        frames(t,1,2,true);frames(t,16,0,true);
+        assert(!(t->snapshot.game_state_bits&3));
+    }
+    puts("PASS all visible allies/enemies: hover, range inspection and cancellation stay 3D with no missing actor");
     assert(t->hover_frames>=60);
     puts("PASS every keyboard/mouse cursor frame stays voxel; native hover handoffs retain all actors; camera is stationary");
     /* Select, preview a reachable destination, confirm a real walk, open the
@@ -222,6 +234,9 @@ int main(int argc,char **argv) {
     assert(t->core->busRead8(t->core,t->snapshot.active_unit_address+0x10)==dx);
     assert(t->core->busRead8(t->core,t->snapshot.active_unit_address+0x11)==dy);
     assert(t->core->busRead8(t->core,t->snapshot.active_unit_address+0x0C)&2);
+    /* An acted unit still remains visible while hovering. Its general map
+     * menu is outside this range-inspection regression. */
+    pointer_target(t,dx,dy);
     free(menu_checkpoint);
     puts("PASS native Wait commits the actual destination and retains the acted unit in 3D");
     printf("PASS %u selection frames, %u walking frames, %u action-menu frames; both CPU and GPU scene paths remain 3D; actual destination and cancellation verified\n",

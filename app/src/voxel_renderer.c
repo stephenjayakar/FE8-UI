@@ -557,6 +557,31 @@ static int active_sprite(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const Fe8Sna
     if(!(state&1) && (!(state&2) || rd32(m,unit+0x3C) || v->owned_mu_unit!=unit))return 0;
     unsigned id=m->read8(m->context,unit+11),hp=m->read8(m->context,unit+0x13);
     int ux=(int8_t)m->read8(m->context,unit+0x10),uy=(int8_t)m->read8(m->context,unit+0x11);
+    /* Range inspection temporarily removes an enemy/acted unit from the
+     * pathfinding grid (US_HIDDEN) WITHOUT hiding its standing map sprite.
+     * That visible SMS already owns the presentation; do not demand a player
+     * movement MU or clear any native hide flags. Verify the live handle and
+     * snapshot-list entry so an unrelated/stale actor cannot satisfy this. */
+    if(!s->phase && !s->input_lock && !s->combat_panel_active &&
+            (s->game_state_bits&3)==1 && id>0 && id<0xC0 && (id&0x3F) && hp &&
+            !(state&0x22C) && ux>=0 && uy>=0 && ux<s->map_width && uy<s->map_height &&
+            rom_span(rd32(m,unit),0x20) && rom_span(rd32(m,unit+4),0x20) &&
+            (s->flags&FE8_SNAPSHOT_MAP_SPRITES) && (s->flags&FE8_SNAPSHOT_UNIT_MAP) &&
+            (!s->unit_map[uy*s->map_width+ux] || s->unit_map[uy*s->map_width+ux]==id) &&
+            (!(s->flags&FE8_SNAPSHOT_FOG) || s->fog[uy*s->map_width+ux])) {
+        uint32_t handle=rd32(m,unit+0x3C);
+        if(ram_span(handle,12) && (int16_t)rd16(m,handle+4)==ux*16 &&
+                (int16_t)rd16(m,handle+6)==uy*16 &&
+                !(m->read8(m->context,handle+11)&0x80) &&
+                (m->read8(m->context,handle+11)&15)<=5) {
+            for(unsigned i=0;i<s->map_sprite_count;++i) {
+                const Fe8VisibleMapSprite *sms=&s->map_sprites[i];
+                if(sms->x_display==ux*16 && sms->y_display==uy*16 &&
+                        sms->oam2==rd16(m,handle+8) &&
+                        sms->config==m->read8(m->context,handle+11))return 0;
+            }
+        }
+    }
     if(s->phase||s->input_lock>1||s->combat_panel_active||id<1||id>=0x40||!hp||
             (state&0x22C)||ux<0||uy<0||ux>=s->map_width||uy>=s->map_height||
             !rom_span(rd32(m,unit),0x20)||!rom_span(rd32(m,unit+4),0x20))return s->game_state_bits&3 ? -1:0;

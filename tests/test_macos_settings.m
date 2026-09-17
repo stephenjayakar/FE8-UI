@@ -115,6 +115,45 @@ int main(int argc, char **argv) {
         puts("PASS native OpenGL/software selector and persistence");
         [controller.voxelBackendPopup.superview scrollRectToVisible:controller.voxelBackendPopup.frame];
         pump(NO);capture(controller.window,directory,@"macos-voxel-gpu-setting.png");
+        /* Exercise the menu action itself, not only assigning a popup index. */
+        NSMenu *backendMenu=[[[[NSApp.mainMenu itemWithTitle:@"Settings"] submenu]
+            itemWithTitle:@"Voxel Backend"] submenu];
+        assert(backendMenu.numberOfItems==2);
+        NSMenuItem *software=[backendMenu itemWithTitle:@"Software (CPU)"];
+        NSMenuItem *opengl=[backendMenu itemWithTitle:@"OpenGL (GPU)"];
+        assert(software && opengl);
+        [NSApp sendAction:software.action to:software.target from:software];
+        assert(!settings.voxel_gpu && controller.voxelBackendPopup.indexOfSelectedItem==1);
+        assert([controller validateMenuItem:software] && software.state==NSControlStateValueOn);
+        [NSApp sendAction:opengl.action to:opengl.target from:opengl];
+        assert(settings.voxel_gpu && controller.voxelBackendPopup.indexOfSelectedItem==0);
+        assert([controller validateMenuItem:opengl] && opengl.state==NSControlStateValueOn);
+        /* Session-only CLI/software fallback survives an ordinary activation;
+         * a genuinely changed preference from the other process still applies. */
+        settings.voxel_gpu=0;
+        [controller refreshBindings:nil];assert(!settings.voxel_gpu);
+        [isolated setBool:NO forKey:kVoxelGpuKey];[controller refreshBindings:nil];
+        [isolated setBool:YES forKey:kVoxelGpuKey];[controller refreshBindings:nil];
+        assert(settings.voxel_gpu && controller.voxelBackendPopup.indexOfSelectedItem==0);
+        puts("PASS direct backend menu and cross-process preference refresh without overriding CLI/fallback");
+        NSSize previousSize=controller.window.contentView.frame.size;
+        [controller.window setContentSize:NSMakeSize(450,400)];pump(NO);
+        for(unsigned edge=0;edge<2;++edge) {
+            NSView *document=controller.settingsScroll.documentView;
+            [document scrollPoint:NSMakePoint(0,edge?NSHeight(document.bounds):0)];pump(NO);
+            NSView *popup=controller.voxelBackendPopup;
+            assert(NSContainsRect(popup.visibleRect,popup.bounds));
+            NSRect onWindow=[popup convertRect:popup.bounds toView:controller.window.contentView];
+            assert(NSContainsRect(controller.window.contentView.bounds,onWindow));
+            assert(![popup isDescendantOf:document]);
+            assert(NSContainsRect(controller.voxelButton.visibleRect,controller.voxelButton.bounds));
+        }
+        capture(controller.window,directory,@"macos-backend-small-window.png");
+        [controller.window setContentSize:previousSize];pump(NO);
+        NSView *document=controller.settingsScroll.documentView;
+        [document scrollPoint:NSMakePoint(0,0)];pump(NO);
+        capture(controller.window,directory,@"macos-backend-pinned.png");
+        puts("PASS backend control stays visible while scrolling controls and at minimum Settings size");
         assert(!settings.voxel_enabled);
         [controller.voxelButton performClick:nil];
         assert(settings.voxel_enabled);

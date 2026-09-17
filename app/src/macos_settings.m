@@ -107,6 +107,8 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 @property(nonatomic, strong) NSButton *extensionsButton;
 @property(nonatomic, strong) NSButton *voxelButton;
 @property(nonatomic, strong) NSPopUpButton *voxelBackendPopup;
+@property(nonatomic, strong) NSScrollView *settingsScroll;
+@property(nonatomic, assign) BOOL lastStoredVoxelGpu;
 @property(nonatomic, strong) NSTextField *zoomSensitivityValue;
 @property(nonatomic, strong) id keyMonitor;
 @property(nonatomic, assign) void *stateContext;
@@ -230,16 +232,29 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     if (item.action == @selector(toggleVoxel:))
         item.state = self.settings->voxel_enabled ?
             NSControlStateValueOn : NSControlStateValueOff;
+    if (item.action == @selector(selectVoxelBackend:))
+        item.state = (self.settings->voxel_gpu != 0) == (item.tag == 0) ?
+            NSControlStateValueOn : NSControlStateValueOff;
     if (item.action == @selector(toggleExtensions:))
         item.state = self.settings->extensions_enabled ?
             NSControlStateValueOn : NSControlStateValueOff;
     return YES;
 }
 
-- (void)voxelBackendChanged:(NSPopUpButton *)sender {
-    self.settings->voxel_gpu = sender.indexOfSelectedItem == 0;
+- (void)setVoxelGpu:(BOOL)gpu {
+    self.settings->voxel_gpu = gpu;
     ++self.settings->revision;
-    [NSUserDefaults.standardUserDefaults setBool:self.settings->voxel_gpu forKey:kVoxelGpuKey];
+    [NSUserDefaults.standardUserDefaults setBool:gpu forKey:kVoxelGpuKey];
+    self.lastStoredVoxelGpu = gpu;
+    [self.voxelBackendPopup selectItemAtIndex:gpu ? 0 : 1];
+}
+
+- (void)voxelBackendChanged:(NSPopUpButton *)sender {
+    [self setVoxelGpu:sender.indexOfSelectedItem == 0];
+}
+
+- (void)selectVoxelBackend:(NSMenuItem *)sender {
+    [self setVoxelGpu:sender.tag == 0];
 }
 
 - (void)shaderChanged:(NSPopUpButton *)sender {
@@ -286,6 +301,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     if (!self)
         return nil;
     self.settings = settings;
+    self.lastStoredVoxelGpu = [NSUserDefaults.standardUserDefaults boolForKey:kVoxelGpuKey];
     self.stateContext = stateContext;
     self.saveState = saveState;
     self.loadState = loadState;
@@ -301,26 +317,53 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.window.delegate = self;
 
     self.window.minSize = NSMakeSize(450, 400);
-    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:self.window.contentView.bounds];
+    NSView *root = self.window.contentView;
+    const CGFloat rendererHeight = 144;
+    NSView *renderer = [[NSView alloc] initWithFrame:
+        NSMakeRect(0, NSHeight(root.bounds) - rendererHeight, NSWidth(root.bounds), rendererHeight)];
+    renderer.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+    [root addSubview:renderer];
+    NSTextField *rendererHeading = [NSTextField labelWithString:@"Voxel rendering"];
+    rendererHeading.frame = NSMakeRect(24, 110, 380, 24);
+    rendererHeading.font = [NSFont boldSystemFontOfSize:13];
+    [renderer addSubview:rendererHeading];
+    self.voxelButton = [NSButton checkboxWithTitle:@"Enable voxel renderer (experimental)"
+        target:self action:@selector(settingChanged:)];
+    self.voxelButton.frame = NSMakeRect(24, 78, 390, 24);
+    self.voxelButton.tag = 4;
+    self.voxelButton.state = settings->voxel_enabled ? NSControlStateValueOn : NSControlStateValueOff;
+    [renderer addSubview:self.voxelButton];
+    NSTextField *rendererHint = [NSTextField labelWithString:@"The game window title reports the active backend."];
+    rendererHint.frame = NSMakeRect(24, 8, 410, 20);
+    rendererHint.font = [NSFont systemFontOfSize:11];
+    rendererHint.textColor = NSColor.secondaryLabelColor;
+    [renderer addSubview:rendererHint];
+    NSBox *divider = [[NSBox alloc] initWithFrame:NSMakeRect(16, 0, 418, 1)];
+    divider.boxType = NSBoxSeparator;
+    divider.autoresizingMask = NSViewWidthSizable;
+    [renderer addSubview:divider];
+
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:
+        NSMakeRect(0, 0, NSWidth(root.bounds), NSHeight(root.bounds) - rendererHeight)];
+    self.settingsScroll = scroll;
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     scroll.hasVerticalScroller = YES;
     scroll.autohidesScrollers = YES;
-    NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 430, 870)];
+    NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 430, 790)];
     scroll.documentView = content;
     [self.window.contentView addSubview:scroll];
     NSArray<NSString *> *optionNames = @[
         @"Enable audio", @"Synchronize presentation (VSync)",
-        @"Enable extended renderer", @"Enable mouse controls",
-        @"Enable voxel renderer (experimental)"
+        @"Enable extended renderer", @"Enable mouse controls"
     ];
     int optionValues[] = {
         settings->audio_enabled, settings->vsync_enabled,
-        settings->extensions_enabled, settings->mouse_enabled, settings->voxel_enabled
+        settings->extensions_enabled, settings->mouse_enabled
     };
     NSInteger i;
     for (i = 0; i < (NSInteger)optionNames.count; ++i) {
         NSButton *check = [[NSButton alloc]
-            initWithFrame:NSMakeRect(24, 815 - i * 30, 380, 24)];
+            initWithFrame:NSMakeRect(24, 735 - i * 30, 380, 24)];
         check.buttonType = NSButtonTypeSwitch;
         check.title = optionNames[i];
         check.state = optionValues[i] ? NSControlStateValueOn : NSControlStateValueOff;
@@ -329,22 +372,20 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         check.action = @selector(settingChanged:);
         if (i == 2)
             self.extensionsButton = check;
-        if (i == 4)
-            self.voxelButton = check;
         [content addSubview:check];
     }
 
-    NSTextField *voxelLabel = [NSTextField labelWithString:@"Voxel rendering"];
-    voxelLabel.frame = NSMakeRect(30, 659, 115, 24);
-    [content addSubview:voxelLabel];
+    NSTextField *voxelLabel = [NSTextField labelWithString:@"Backend"];
+    voxelLabel.frame = NSMakeRect(30, 41, 100, 24);
+    [renderer addSubview:voxelLabel];
     self.voxelBackendPopup = [[NSPopUpButton alloc]
-        initWithFrame:NSMakeRect(150, 655, 245, 28) pullsDown:NO];
+        initWithFrame:NSMakeRect(130, 37, 280, 28) pullsDown:NO];
     [self.voxelBackendPopup addItemsWithTitles:@[@"OpenGL (GPU)", @"Software (CPU)"]];
     [self.voxelBackendPopup selectItemAtIndex:settings->voxel_gpu ? 0 : 1];
     self.voxelBackendPopup.target = self;
     self.voxelBackendPopup.action = @selector(voxelBackendChanged:);
     self.voxelBackendPopup.toolTip = @"OpenGL renders the 3D geometry on the GPU. Software is the compatibility path. The window title reports the active backend.";
-    [content addSubview:self.voxelBackendPopup];
+    [renderer addSubview:self.voxelBackendPopup];
 
     NSTextField *shaderLabel = [NSTextField labelWithString:@"Video shader"];
     shaderLabel.frame = NSMakeRect(30, 619, 105, 24);
@@ -461,6 +502,14 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
      * other window on activation; don't overwrite session-only CLI overrides. */
     Fe8HostSettings stored = *self.settings;
     fe8_macos_load_settings(&stored);
+    /* A real preference change in the Library applies to the running game.
+     * Mere activation must not undo --voxel-software or a GPU failure fallback. */
+    if ((stored.voxel_gpu != 0) != self.lastStoredVoxelGpu) {
+        self.settings->voxel_gpu = stored.voxel_gpu;
+        self.lastStoredVoxelGpu = stored.voxel_gpu != 0;
+        ++self.settings->revision;
+    }
+    [self.voxelBackendPopup selectItemAtIndex:self.settings->voxel_gpu ? 0 : 1];
     if (memcmp(stored.bindings, self.settings->bindings, sizeof(stored.bindings)) ||
             memcmp(stored.hotkeys, self.settings->hotkeys, sizeof(stored.hotkeys))) {
         memcpy(self.settings->bindings, stored.bindings, sizeof(stored.bindings));
@@ -664,6 +713,16 @@ void fe8_macos_install_settings_menu(
         [settingsMenu addItem:stateMenuItem(@"Extended Renderer",
             @selector(toggleExtensions:), @"", 0)];
         [settingsMenu addItem:stateMenuItem(@"Voxel Renderer", @selector(toggleVoxel:), @"", 0)];
+        NSMenuItem *backendRoot = [[NSMenuItem alloc] initWithTitle:@"Voxel Backend" action:nil keyEquivalent:@""];
+        NSMenu *backend = [[NSMenu alloc] initWithTitle:@"Voxel Backend"];
+        NSArray<NSString *> *backendNames = @[@"OpenGL (GPU)", @"Software (CPU)"];
+        for (NSInteger i = 0; i < (NSInteger)backendNames.count; ++i) {
+            NSMenuItem *item = stateMenuItem(backendNames[i], @selector(selectVoxelBackend:), @"", 0);
+            item.tag = i;
+            [backend addItem:item];
+        }
+        backendRoot.submenu = backend;
+        [settingsMenu addItem:backendRoot];
         [settingsMenu addItem:NSMenuItem.separatorItem];
         [settingsMenu addItem:open];
         settingsRoot.submenu = settingsMenu;
