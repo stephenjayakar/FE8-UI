@@ -1,148 +1,23 @@
-name: Validate and publish OpenGL tactical movement
+name: Publish validated OpenGL tactical movement
 on:
   push:
     branches: [voxel-live-staging-20260916]
-    paths: ['.github/workflows/voxel-live-stage.yml', '.github/staging/**']
+    paths: ['.github/workflows/voxel-live-stage.yml']
 permissions:
-  contents: read
+  contents: write
+  actions: read
 concurrency:
   group: voxel-gpu-publish
   cancel-in-progress: false
 env:
   FEATURE_PARENT: 65551898f5c3b36d2228e4c9e55390750059564f
-  PAYLOAD_SHA256: e23a1e445e3965baa1e055058db6127bc744acfbdb8c11903e94826e977c17b4
+  VALIDATED_RUN: '35182536150'
+  EXPECTED_TREE: 03e4ee15bb122226d1799a93aff194dad8060e3b
+  PATCH_SHA256: 0784ad0490d1652442f3066afc99995954d5102587c7bca8294ab2d0816db153
 jobs:
-  prepare:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      tree: ${{ steps.patch.outputs.tree }}
-      digest: ${{ steps.patch.outputs.digest }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Reconstruct and verify all 28 previously tested source files
-        id: patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import hashlib, json, lzma, os, pathlib, subprocess
-          root = pathlib.Path('.github/staging')
-          payload = b''.join((root / f'voxel-gpu-edits.{i}.xzpart').read_bytes() for i in range(5))
-          assert hashlib.sha256(payload).hexdigest() == os.environ['PAYLOAD_SHA256']
-          edits = json.loads(lzma.decompress(payload))
-          manifest = json.loads((root / 'voxel-gpu-manifest.json').read_text())
-          assert len(edits) == len(manifest) == 28
-          assert {item['path'] for item in edits} == set(manifest)
-          subprocess.run(['git', 'checkout', '--detach', os.environ['FEATURE_PARENT']], check=True)
-          for item in edits:
-              path = pathlib.Path(item['path'])
-              assert not path.is_absolute() and '..' not in path.parts
-              lines = path.read_bytes().decode('utf-8').splitlines(keepends=True) if path.exists() else []
-              for start, count, replacement in reversed(item['edits']):
-                  assert 0 <= start <= len(lines) and start + count <= len(lines)
-                  lines[start:start + count] = replacement.splitlines(keepends=True)
-              data = ''.join(lines).encode('utf-8')
-              assert hashlib.sha256(data).hexdigest() == manifest[str(path)], str(path)
-              path.parent.mkdir(parents=True, exist_ok=True)
-              path.write_bytes(data)
-          subprocess.run(['git', 'add', '--', *manifest], check=True)
-          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
-          output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'verified-gpu'
-          output.mkdir(parents=True, exist_ok=True)
-          patch = subprocess.check_output(['git', 'diff', '--cached', '--binary', '--full-index'])
-          (output / 'feature.patch').write_bytes(patch)
-          (output / 'source-sha256.json').write_text(json.dumps(manifest, indent=2) + '\n')
-          tree = subprocess.check_output(['git', 'write-tree'], text=True).strip()
-          digest = hashlib.sha256(patch).hexdigest()
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f'tree={tree}\ndigest={digest}\n')
-          print(f'All 28 files byte-match the tested patch. Tree: {tree}; patch SHA256: {digest}')
-          PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: verified-opengl-tactics-source
-          path: ${{ runner.temp }}/verified-gpu
-          retention-days: 7
-  validate:
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    env:
-      EXPECTED_TREE: ${{ needs.prepare.outputs.tree }}
-      PATCH_SHA256: ${{ needs.prepare.outputs.digest }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.FEATURE_PARENT }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: verified-opengl-tactics-source
-          path: ${{ runner.temp }}/verified-gpu
-      - name: Verify feature tree and initialize pinned emulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import hashlib, os, pathlib
-          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'verified-gpu/feature.patch'
-          assert hashlib.sha256(p.read_bytes()).hexdigest() == os.environ['PATCH_SHA256']
-          PY
-          git apply --index "$RUNNER_TEMP/verified-gpu/feature.patch"
-          test "$(git write-tree)" = "$EXPECTED_TREE"
-          git submodule update --init --depth 1 third_party/mgba
-      - name: Linux dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build libsdl2-dev libfreetype6-dev zlib1g-dev fonts-dejavu-core xvfb libgl1-mesa-dri
-      - name: macOS dependencies
-        if: runner.os == 'macOS'
-        run: brew install ninja sdl2
-      - name: Build complete native frontend and tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=()
-          if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFE8_BUILD_TESTS=ON "${args[@]}"
-          cmake --build build --parallel 3
-      - name: Require full suite, actual OpenGL geometry readback, and native Settings
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build/voxel-gpu-validation
-          if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a env SDL_RENDER_DRIVER=opengl ctest --test-dir build --output-on-failure | tee build/voxel-gpu-validation/tests.log
-            xvfb-run -a env SDL_RENDER_DRIVER=opengl build/tests/test_video_scene build/voxel-gpu-validation/presenter.ppm | tee build/voxel-gpu-validation/presenter.log
-          else
-            ctest --test-dir build --output-on-failure | tee build/voxel-gpu-validation/tests.log
-            build/tests/test_video_scene build/voxel-gpu-validation/presenter.ppm | tee build/voxel-gpu-validation/presenter.log
-            build/tests/test_macos_settings build/voxel-gpu-validation | tee build/voxel-gpu-validation/settings.log
-          fi
-          grep -q 'real OpenGL geometry/depth' build/voxel-gpu-validation/presenter.log
-          test "$(git write-tree)" = "$EXPECTED_TREE"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: opengl-tactics-validation-${{ runner.os }}
-          path: |
-            build/voxel-gpu-validation
-            build/Testing/Temporary/LastTest.log
-          retention-days: 7
   publish:
-    needs: [prepare, validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    permissions:
-      contents: write
-    env:
-      EXPECTED_TREE: ${{ needs.prepare.outputs.tree }}
-      PATCH_SHA256: ${{ needs.prepare.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,7 +27,10 @@ jobs:
         with:
           name: verified-opengl-tactics-source
           path: ${{ runner.temp }}/verified-gpu
-      - name: Publish validated source only, without force-pushing
+          repository: stephenjayakar/FE8-UI
+          run-id: ${{ env.VALIDATED_RUN }}
+          github-token: ${{ github.token }}
+      - name: Publish already validated functional source to voxel-live
         shell: bash
         run: |
           set -euo pipefail
@@ -164,14 +42,17 @@ jobs:
           git apply --index "$RUNNER_TEMP/verified-gpu/feature.patch"
           git diff --cached --check
           test "$(git write-tree)" = "$EXPECTED_TREE"
+
+          # The validated patch also contains a standalone regression workflow.
+          # This GitHub App may not update workflow files on the target branch,
+          # so publish the functional code/tests/docs only. Linux and macOS
+          # already passed that workflow's checks in VALIDATED_RUN above.
+          git reset HEAD -- .github/workflows/voxel-gpu-tactics.yml
+          rm -f .github/workflows/voxel-gpu-tactics.yml
+          test ! -e .github/workflows/voxel-gpu-tactics.yml
+
           remote=$(git ls-remote --heads origin refs/heads/voxel-live | cut -f1)
           test "$remote" = "$FEATURE_PARENT"
           git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'Render voxel terrain on GPU and keep tactical movement in 3D'
           git push origin HEAD:refs/heads/voxel-live
-          git rev-parse HEAD | tee "$RUNNER_TEMP/COMMIT.txt"
-          echo "Published $(git rev-parse HEAD) to voxel-live after Linux/macOS validation." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: opengl-tactics-published-commit
-          path: ${{ runner.temp }}/COMMIT.txt
-          retention-days: 7
+          echo "Published $(git rev-parse HEAD) to voxel-live." >> "$GITHUB_STEP_SUMMARY"
