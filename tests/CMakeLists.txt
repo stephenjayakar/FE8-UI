@@ -334,3 +334,38 @@ fe8_add_test(voxel_buildings test_voxel_buildings.c
 if(NOT MSVC)
     target_link_libraries(test_voxel_buildings PRIVATE m)
 endif()
+
+fe8_add_test(camera_gesture test_camera_gesture.c ../app/src/camera_gesture.c)
+fe8_add_test(voxel_stage test_voxel_stage.c ../app/src/voxel_stage.c
+    ../app/src/voxel_renderer.c ../app/src/voxel_buildings.c
+    ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c
+    ../app/src/address_space.c ../app/src/native_hud_host.c ../app/src/native_hud.c
+    ../app/src/host_cursor.c ../app/src/host_settings.c)
+target_link_libraries(test_voxel_stage PRIVATE mgba ${FE8_SDL_TARGET})
+if(NOT MSVC)
+    target_link_libraries(test_camera_gesture PRIVATE m)
+    target_link_libraries(test_voxel_stage PRIVATE m)
+endif()
+
+add_executable(test_voxel_session_rom test_voxel_session_rom.c ../app/src/fe8_catalog.c
+    ../app/src/voxel_stage.c ../app/src/voxel_targets.c
+    ../app/src/voxel_renderer.c ../app/src/voxel_buildings.c ../app/src/native_hud.c
+    ../app/src/extended_map_renderer.c ../app/src/extended_unit_renderer.c
+    ../app/src/frame_alignment.c ../app/src/extended_presentation.c ../app/src/mouse_controller.c
+    ../app/src/fe8_profile.c ../app/src/address_space.c)
+target_include_directories(test_voxel_session_rom PRIVATE ../app/src)
+target_compile_definitions(test_voxel_session_rom PRIVATE $<TARGET_PROPERTY:mgba,COMPILE_DEFINITIONS>)
+target_link_libraries(test_voxel_session_rom PRIVATE mgba)
+if(NOT MSVC)
+    target_link_libraries(test_voxel_session_rom PRIVATE m)
+endif()
+if(FE8_ARCHANAE_ROM)
+    add_test(NAME voxel_session_archanae COMMAND test_voxel_session_rom "${FE8_ARCHANAE_ROM}")
+    set_tests_properties(voxel_session_archanae PROPERTIES TIMEOUT 120)
+endif()
+if(FE8_SACRED_ECHOES_ROM)
+    add_test(NAME voxel_session_sacred_echoes COMMAND test_voxel_session_rom "${FE8_SACRED_ECHOES_ROM}")
+    set_tests_properties(voxel_session_sacred_echoes PROPERTIES TIMEOUT 120)
+endif()
+
+fe8_add_test(voxel_targets test_voxel_targets.c ../app/src/voxel_targets.c)

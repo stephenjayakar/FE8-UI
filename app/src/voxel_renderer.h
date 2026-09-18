@@ -22,6 +22,7 @@ Fe8VoxelRenderer *fe8_voxel_create(void);
 void fe8_voxel_destroy(Fe8VoxelRenderer *view);
 void fe8_voxel_invalidate(Fe8VoxelRenderer *view);
 void fe8_voxel_camera(Fe8VoxelRenderer *view, float yaw_delta, float zoom_factor);
+void fe8_voxel_orbit(Fe8VoxelRenderer *view, float yaw_delta, float pitch_delta);
 void fe8_voxel_pan(Fe8VoxelRenderer *view, float screen_dx, float screen_dy);
 void fe8_voxel_focus(Fe8VoxelRenderer *view, float map_x, float map_y);
 void fe8_voxel_home(Fe8VoxelRenderer *view);

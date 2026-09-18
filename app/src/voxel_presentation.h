@@ -8,8 +8,10 @@ typedef enum Fe8VoxelScene {
     FE8_VOXEL_SELECTED, FE8_VOXEL_WAITING_HUD, FE8_VOXEL_READY
 } Fe8VoxelScene;
 
-/* Enabling the mode and being allowed to replace this frame are distinct.
- * Never drop the HUD safety oracle merely to make the enabled switch visible. */
+/* Eligibility to refresh live WORLD inputs, not whether to display 3D.
+ * main retains verified world inputs and the same camera when this returns a
+ * non-ready state, with the intact current native UI in a panel. Never remove
+ * this safety oracle or interpret combat VRAM as terrain to maintain 3D. */
 static inline Fe8VoxelScene fe8_voxel_scene(bool enabled, bool supported,
         bool extensions, const Fe8Snapshot *snapshot, bool validated_map,
         bool inventory, bool verified_hud) {

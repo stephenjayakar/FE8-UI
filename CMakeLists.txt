@@ -50,6 +50,9 @@ else()
 endif()
 
 add_executable(fe8-mgba-sdl
+    app/src/voxel_targets.c
+    app/src/voxel_stage.c
+    app/src/camera_gesture.c
     app/src/voxel_gpu_gl.c
     app/src/voxel_renderer.c
     app/src/voxel_buildings.c

@@ -257,8 +257,34 @@ static void tactical_selection(void) {
     puts("PASS tactical selection, opening/closing action menu, frame immutability and unsafe-UI rejection");
 }
 
+static void forecast_details(void) {
+    fixture();snapshot.input_lock=1;snapshot.active_unit_address=0x02006000;
+    put16(io,0x14,5);put16(io,0x16,3); /* BG1 sub-tile scrolling. */
+    for(int y=0;y<160;++y)for(int x=0;x<240;++x)
+        frame[y*240+x]=x>=179&&x<235&&y>=109&&y<157?0xFFFF0000:0xFF0000FF;
+    memcpy(original,frame,sizeof(frame));
+    assert(!fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+    assert(fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    assert(hud.count==1&&hud.panels[0].kind==FE8_HUD_DETAIL);
+    assert(!memcmp(original,frame,sizeof(frame)));
+    assert(hud.atlas[110*240+180]==0xFFFF0000&&hud.atlas[0]==0);
+    fixture();snapshot.input_lock=1;snapshot.active_unit_address=0x02006000;
+    put16(palette,(3*16+1)*2,0x7C00);
+    for(int y=14;y<20;++y)for(int x=26;x<30;++x)put16(vram,0x6800+(y*32+x)*2,0x3001);
+    assert(fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true)&&hud.count==1);
+    fixture();snapshot.input_lock=1;snapshot.active_unit_address=0x02006000;
+    put16(io,0x50,0xC2);put16(io,0x54,4); /* UI brightness effects remain exact. */
+    for(int y=112;y<160;++y)for(int x=184;x<240;++x)frame[y*240+x]=0xFFC00000;
+    assert(fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    assert(hud.atlas[120*240+190]==0xFFC00000);
+    memset(frame,0xCC,sizeof(frame));
+    assert(!fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    fixture();put16(io,0,0x3F00);assert(!fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    puts("PASS multi-palette forecast windows, sub-tile HUD scrolling and brightness; original 98% oracle and hardware-window rejection retained");
+}
+
 int main(void) {
-    extraction_and_fallback();tactical_selection();
+    extraction_and_fallback();tactical_selection();forecast_details();
     sliding_panels(); alpha_and_world_sprites(); blend_target_variants(); layout();
     puts("native HUD extraction, fallback, sprite preservation, alpha, layout and clipping passed");
     return 0;

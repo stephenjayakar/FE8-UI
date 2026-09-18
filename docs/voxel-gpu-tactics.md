@@ -1,5 +1,8 @@
 # GPU voxel rendering and in-scene tactics
 
+> Updated scene behavior and drag controls: [Persistent 3D session](voxel-persistent-session.md).
+> The older full-window fallback boundaries below are superseded by that audit.
+
 ## macOS option
 
 In **Settings -> Settings... -> Voxel rendering**, choose **OpenGL (GPU)** or

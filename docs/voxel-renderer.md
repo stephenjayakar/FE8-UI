@@ -1,5 +1,8 @@
 # Live voxel renderer (experimental)
 
+> Updated scene behavior and drag controls: [Persistent 3D session](voxel-persistent-session.md).
+> The older full-window fallback boundaries below are superseded by that audit.
+
 This is an opt-in presentation mode in the native FE8 frontend, not the
 standalone Voxel Lab scene. The loaded ROM and libmGBA remain authoritative.
 There are no authored map coordinates, bundled game assets, model downloads,

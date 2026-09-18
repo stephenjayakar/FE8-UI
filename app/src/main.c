@@ -24,6 +24,9 @@
 #include "host_text.h"
 #include "voxel_renderer.h"
 #include "voxel_presentation.h"
+#include "voxel_stage.h"
+#include "voxel_targets.h"
+#include "camera_gesture.h"
 #include "macos_library.h"
 #include "macos_settings.h"
 #include "mouse_controller.h"
@@ -131,7 +134,7 @@ static void usage(const char *program) {
         "       [--auto-continue] [--seek-large-map]\n"
         "       [--state-out MAP_STATE.ss] [--quick-state QUICK_STATE.ss]\n"
         "       [--realtime] [--perf-stats] [--mute] [--inventory]\n"
-        "       [--voxel] (F7 toggles; [ / ] orbit; wheel zoom; Home resets)\n"
+        "       [--voxel] (drag pan; right-drag orbit; wheel zoom; Home resets)\n"
         "       [--voxel-gpu | --voxel-software]\n"
         "       [--no-extensions] [--native-ui] [--hud-scale 80..200]\n", program);
 }
@@ -657,8 +660,12 @@ static int run_game(int argc, char **argv) {
     Fe8HudHost *hud_host = NULL;
     Fe8VoxelRenderer *voxel = NULL;
     Fe8VideoOverlay voxel_overlay = {0};
-    int voxel_active = 0, voxel_drag = 0;
-    float voxel_drag_x = 0, voxel_drag_y = 0;
+    int voxel_active = 0, voxel_live_world = 0, voxel_native_panel = 0, voxel_target_world = 0;
+    Fe8VoxelStage *voxel_stage = NULL;
+    Fe8CameraGesture camera_gesture = {0};
+    Fe8VoxelTargets voxel_targets={0};
+    Fe8TargetClick target_click={0};
+    int gesture_tile_x=0,gesture_tile_y=0,gesture_tile_valid=0;
 
     Fe8HostPixel *canvas = NULL;
     Fe8HostPixel *frozen_canvas = NULL;
@@ -862,7 +869,10 @@ static int run_game(int argc, char **argv) {
         if (state_reload_generation != applied_state_reload_generation) {
             applied_state_reload_generation = state_reload_generation;
             fe8_voxel_invalidate(voxel);
-            voxel_active = voxel_drag = 0;
+            fe8_voxel_stage_reset(voxel_stage);
+            voxel_active = voxel_live_world = 0;
+            fe8_camera_gesture_reset(&camera_gesture);SDL_CaptureMouse(SDL_FALSE);
+            target_click.active=false;voxel_targets.active=false;voxel_targets.proc=0;voxel_targets.tick=0;
             fe8_mouse_cancel(&mouse);
             pointer_canvas_valid = pointer_tile_valid = 0;
             fe8_native_hud_reset(&hud_host->hud);
@@ -920,7 +930,9 @@ static int run_game(int argc, char **argv) {
         if (settings.revision != settings_revision) {
             keyboard_keys = 0;
             hotkeys_down = 0;
-            voxel_active = voxel_drag = 0;
+            voxel_active = voxel_live_world = 0;
+            fe8_camera_gesture_reset(&camera_gesture);SDL_CaptureMouse(SDL_FALSE);
+            target_click.active=false;voxel_targets.active=false;voxel_targets.proc=0;voxel_targets.tick=0;
             fe8_mouse_cancel(&mouse);
             pan.dragging = 0;
             pointer_canvas_valid = 0;
@@ -1040,6 +1052,13 @@ static int run_game(int argc, char **argv) {
             large_map_ready_frames = 0;
         }
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_WINDOWEVENT &&
+                    (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+                     event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
+                fe8_camera_gesture_reset(&camera_gesture);SDL_CaptureMouse(SDL_FALSE);
+                target_click.active=false;voxel_targets.active=false;voxel_targets.proc=0;voxel_targets.tick=0;
+                fe8_mouse_cancel(&mouse);pointer_canvas_valid=pointer_tile_valid=0;
+            }
             if (event.type == SDL_MOUSEMOTION) {
                 if ((settings.mouse_enabled || inventory_ui.active) &&
                         fe8_host_video_event_to_canvas(
@@ -1142,7 +1161,9 @@ static int run_game(int argc, char **argv) {
                     fe8_macos_toggle_voxel(&settings);
                     fe8_mouse_cancel(&mouse);
                     pointer_canvas_valid = pointer_tile_valid = 0;
-                    voxel_active = voxel_drag = 0;
+                    voxel_active = voxel_live_world = 0;
+                    fe8_camera_gesture_reset(&camera_gesture);SDL_CaptureMouse(SDL_FALSE);
+                    target_click.active=false;voxel_targets.active=false;voxel_targets.proc=0;voxel_targets.tick=0;
                     pan.dragging = 0;
                     fprintf(stderr,
                         "Voxel presentation: %s (read-only runtime geometry)\n",
@@ -1204,7 +1225,7 @@ static int run_game(int argc, char **argv) {
             }
             /* Fixed information panels are not map tiles. Do not route a
              * hover/click through them; native action menus still receive A/B. */
-            if (!inventory_ui.active && settings.mouse_enabled && snapshot_valid && snapshot.input_lock == 0 &&
+            if (!voxel_active && !inventory_ui.active && settings.mouse_enabled && snapshot_valid && snapshot.input_lock == 0 &&
                     !pan.dragging && (event.type == SDL_MOUSEMOTION ||
                     (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT))) {
                 int x, y;
@@ -1417,51 +1438,95 @@ static int run_game(int argc, char **argv) {
                     continue;
                 }
             }
-            if (voxel_active && settings.mouse_enabled &&
-                    fe8_voxel_stats(voxel).unit_moving &&
-                    (event.type == SDL_MOUSEMOTION || (event.type == SDL_MOUSEBUTTONDOWN &&
-                     event.button.button == SDL_BUTTON_LEFT && !(SDL_GetModState() & KMOD_SHIFT)))) {
-                fe8_mouse_cancel(&mouse);pointer_canvas_valid=pointer_tile_valid=0;
-                continue;
-            }
-            if (voxel_active && snapshot.input_lock == 1 && event.type == SDL_MOUSEWHEEL) {
-                int dy=event.wheel.y;
-                if(event.wheel.direction==SDL_MOUSEWHEEL_FLIPPED)dy=-dy;
-                if(dy) {
-                    fe8_mouse_cancel(&mouse);
-                    mouse.pulse_key=UINT32_C(1)<<(dy>0?FE8_HOST_UP:FE8_HOST_DOWN);
-                    mouse.release_frames=1;mouse.press_frames=1;
+            if (voxel_active && !inventory_ui.active && settings.mouse_enabled &&
+                    (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP ||
+                     event.type == SDL_MOUSEMOTION)) {
+                int ex=event.type==SDL_MOUSEMOTION?event.motion.x:event.button.x;
+                int ey=event.type==SDL_MOUSEMOTION?event.motion.y:event.button.y;
+                int cx=0,cy=0,ww=1,wh=1;float wx,wy;
+                SDL_GetWindowSize(video.window,&ww,&wh);
+#ifdef __APPLE__
+                wx=(float)ex;wy=(float)ey;
+#else
+                /* SDL_Renderer's event filter already transformed to canvas.
+                 * Convert to window points for a Retina-independent threshold. */
+                voxel_output_point(&video,ex,ey,&wx,&wy);
+                wx*= (float)ww/video.scaling.drawable_width;
+                wy*= (float)wh/video.scaling.drawable_height;
+#endif
+                int in_canvas=fe8_host_video_event_to_canvas(&video,ex,ey,&cx,&cy);
+                int over_ui=in_canvas&&fe8_hud_host_contains(hud_host,&video,cx,cy);
+                if(event.type==SDL_MOUSEBUTTONDOWN && event.button.button<=3) {
+                    target_click.active=false;
+                    if(!camera_gesture.active) {
+                        gesture_tile_valid=0;
+                        if(in_canvas&&!over_ui&&(voxel_live_world||voxel_target_world)) {
+                            gesture_tile_x=pointer_tile_x;gesture_tile_y=pointer_tile_y;
+                            gesture_tile_valid=(pointer_canvas_valid&&pointer_tile_valid&&
+                                pointer_canvas_x==cx&&pointer_canvas_y==cy) ||
+                                presented_map_tile(voxel,true,&video,&map_state,viewport,cx,cy,
+                                    &gesture_tile_x,&gesture_tile_y);
+                        }
+                        fe8_camera_gesture_begin(&camera_gesture,event.button.button,wx,wy,
+                            over_ui,(SDL_GetModState()&KMOD_SHIFT)!=0);
+                        SDL_CaptureMouse(SDL_TRUE);fe8_mouse_cancel(&mouse);
+                    }
+                    continue;
                 }
-                continue;
+                if(event.type==SDL_MOUSEMOTION&&camera_gesture.active) {
+                    float dx,dy;
+                    Fe8CameraGestureAction action=fe8_camera_gesture_move(&camera_gesture,wx,wy,&dx,&dy);
+                    if(action==FE8_GESTURE_PAN)
+                        fe8_voxel_pan(voxel,dx*video.scaling.drawable_width/ww,dy*video.scaling.drawable_height/wh);
+                    else if(action==FE8_GESTURE_ORBIT)
+                        fe8_voxel_orbit(voxel,dx*.008f,dy*.006f);
+                    pointer_canvas_valid=pointer_tile_valid=0;continue;
+                }
+                if(event.type==SDL_MOUSEBUTTONUP && event.button.button<=3) {
+                    int began_ui=camera_gesture.ui;
+                    Fe8CameraGestureAction action=fe8_camera_gesture_end(&camera_gesture,event.button.button,wx,wy);
+                    if(!camera_gesture.active)SDL_CaptureMouse(SDL_FALSE);
+                    if(action==FE8_GESTURE_SELECT&&!began_ui&&!over_ui&&gesture_tile_valid&&voxel_targets.active) {
+                        fe8_mouse_cancel(&mouse);
+                        fe8_voxel_target_click(&target_click,&voxel_targets,gesture_tile_x,gesture_tile_y);
+                    } else if(action==FE8_GESTURE_CANCEL || (action==FE8_GESTURE_SELECT&&
+                            ((began_ui&&over_ui&&(voxel_native_panel||snapshot.input_lock)) ||
+                             (voxel_live_world&&snapshot.input_lock&&!voxel_targets.active&&
+                              gesture_tile_valid&&gesture_tile_x==snapshot.cursor_x&&
+                              gesture_tile_y==snapshot.cursor_y)))) {
+                        fe8_mouse_cancel(&mouse);
+                        mouse.pulse_key=UINT32_C(1)<<(action==FE8_GESTURE_CANCEL?FE8_HOST_B:FE8_HOST_A);
+                        mouse.release_frames=2;mouse.press_frames=2;
+                    } else if(action==FE8_GESTURE_SELECT && !began_ui && !over_ui && in_canvas &&
+                            voxel_live_world && gesture_tile_valid && snapshot_valid &&
+                            snapshot_cursor_controls_camera(&snapshot)&&!fe8_voxel_stats(voxel).unit_moving) {
+                        set_mouse_map_target(&mouse,&snapshot,gesture_tile_x,gesture_tile_y,1);
+                    }
+                    pointer_canvas_valid=pointer_tile_valid=0;continue;
+                }
+                if(event.type==SDL_MOUSEMOTION && (over_ui || !voxel_live_world ||
+                        fe8_voxel_stats(voxel).unit_moving || snapshot.input_lock)) {
+                    if(mouse.active)fe8_mouse_cancel(&mouse);
+                    pointer_canvas_valid=pointer_tile_valid=0;continue;
+                }
             }
             if (voxel_active && event.type == SDL_MOUSEWHEEL) {
-                float delta = (float)event.wheel.y;
-                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) delta = -delta;
-                fe8_voxel_camera(voxel, 0, powf(1.10f, delta));
-                fe8_mouse_cancel(&mouse); pointer_canvas_valid = pointer_tile_valid = 0;
+                /* Menu/target cycling on the UI; zoom anywhere on the 3D world.
+                 * Sub-unit precision preserves trackpad wheels on macOS. */
+                float delta=(float)event.wheel.y;
+#if SDL_VERSION_ATLEAST(2,0,18)
+                delta=event.wheel.preciseY;
+#endif
+                if(event.wheel.direction==SDL_MOUSEWHEEL_FLIPPED)delta=-delta;
+                int on_ui=host_pointer_visible&&fe8_hud_host_contains(hud_host,&video,
+                    host_pointer_canvas_x,host_pointer_canvas_y);
+                fe8_mouse_cancel(&mouse);pointer_canvas_valid=pointer_tile_valid=0;
+                target_click.active=false;
+                if(on_ui && (voxel_native_panel || snapshot.input_lock)) {
+                    if(delta!=0){mouse.pulse_key=UINT32_C(1)<<(delta>0?FE8_HOST_UP:FE8_HOST_DOWN);
+                        mouse.release_frames=1;mouse.press_frames=1;}
+                } else if(!camera_gesture.active)fe8_voxel_camera(voxel,0,powf(1.10f,delta));
                 continue;
-            }
-            if (voxel_active && settings.mouse_enabled && event.type == SDL_MOUSEBUTTONDOWN &&
-                    event.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & KMOD_SHIFT)) {
-                int cx,cy;
-                if (fe8_host_video_event_to_canvas(&video,event.button.x,event.button.y,&cx,&cy)) {
-                    voxel_output_point(&video,cx,cy,&voxel_drag_x,&voxel_drag_y);
-                    voxel_drag = 1;
-                }
-                fe8_mouse_cancel(&mouse); pointer_canvas_valid = pointer_tile_valid = 0;
-                continue;
-            }
-            if (voxel_drag && event.type == SDL_MOUSEMOTION) {
-                int cx,cy; float x,y;
-                if (fe8_host_video_event_to_canvas(&video,event.motion.x,event.motion.y,&cx,&cy)) {
-                    voxel_output_point(&video,cx,cy,&x,&y);
-                    fe8_voxel_pan(voxel,x-voxel_drag_x,y-voxel_drag_y);
-                    voxel_drag_x=x; voxel_drag_y=y;
-                }
-                continue;
-            }
-            if (voxel_drag && event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
-                voxel_drag=0; continue;
             }
             if (event.type == SDL_QUIT) {
                 running = 0;
@@ -1673,6 +1738,7 @@ static int run_game(int argc, char **argv) {
                     pointer_tile_valid = 0;
                     fe8_mouse_cancel(&mouse);
                 }
+                if(event.type==SDL_KEYDOWN)target_click.active=false;
                 update_keyboard(&keyboard_keys, &settings, &event);
                 set_speed_up_mode(
                     (hotkeys_down &
@@ -1697,6 +1763,7 @@ static int run_game(int argc, char **argv) {
                 core->setKeys(core, keyboard_keys |
                     (options.auto_continue && !large_map_ready ?
                         scripted_continue_keys(frame_count) : 0) |
+                    fe8_voxel_target_keys(&target_click,&profile_memory,snapshot_valid?&snapshot:NULL) |
                     fe8_mouse_update(&mouse, &live_state,
                         settings.mouse_enabled && live_state_valid &&
                         visual_profile_active));
@@ -1976,69 +2043,123 @@ static int run_game(int argc, char **argv) {
                     canvas_width, canvas_height,
                     host_pointer_canvas_x, host_pointer_canvas_y);
         }
-        /* Opt-in voxel presentation replaces only a verified tactical
-         * world, including validated selection, travel and action menus.
-         * Unsupported UI, combat, transitions and inventory remain native.
-         * The overlay backend is shared by SDL and the macOS GL frontend. */
-        int was_voxel_active = voxel_active;
-        voxel_active = 0;
-        voxel_overlay.pixels = NULL;
-        const Fe8VoxelGpuFrame *gpu_frame = NULL;
-        Fe8VoxelScene voxel_scene = fe8_voxel_scene(settings.voxel_enabled, family_match,
-            settings.extensions_enabled, snapshot_valid ? &snapshot : NULL,
-            visual_profile_active, inventory_ui.active,
-            hud_host->overlay.pixels &&
-                hud_host->overlay.width == video.scaling.drawable_width &&
-                hud_host->overlay.height == video.scaling.drawable_height);
-        const char *voxel_status = fe8_voxel_scene_label(voxel_scene);
-        if (voxel_scene == FE8_VOXEL_READY) {
-            if (!voxel) voxel = fe8_voxel_create();
-            int w = video.scaling.drawable_width, h = video.scaling.drawable_height;
-            uint64_t voxel_started = SDL_GetPerformanceCounter();
-            const Fe8HostPixel *image = NULL;
-            if (settings.voxel_gpu && fe8_host_video_gpu_available(&video))
-                gpu_frame = fe8_voxel_build_gpu(voxel, &render_memory, &map_state, &snapshot, w, h);
-            if (!gpu_frame)
-                image = fe8_voxel_render_scene(voxel, &render_memory, &map_state, &snapshot, w, h);
-            perf.voxel += SDL_GetPerformanceCounter() - voxel_started;
-            if (!image && !gpu_frame) voxel_status = fe8_voxel_error(voxel);
-            if (image || gpu_frame) {
-                voxel_status = gpu_frame ? "live - OpenGL GPU" : "live - software CPU";
-                voxel_active = 1;
-                Fe8VoxelStats voxel_stats = fe8_voxel_stats(voxel);
-                voxel_overlay = (Fe8VideoOverlay){image, voxel_stats.render_width,
-                    voxel_stats.render_height};
-                if (hud_host->hud.count == 1 && hud_host->hud.panels[0].kind == FE8_HUD_ACTION) {
-                    float x, y;
-                    if (fe8_voxel_project(voxel, snapshot.cursor_x+.5f, snapshot.cursor_y+.5f, 0, &x, &y)) {
-                        hud_host->hud.menu_latched = false;
-                        fe8_native_hud_layout(&hud_host->hud,w,h,x,y,hud_host->scale_percent);
-                        fe8_native_hud_draw(&hud_host->hud,hud_host->pixels,w,w,h);
-                        if (settings.mouse_enabled && host_pointer_visible)
-                            fe8_hud_host_pointer(hud_host,&video,host_pointer_canvas_x,host_pointer_canvas_y);
+        /* 3D is a session, not an idle-map effect. Scene validation controls
+         * which WORLD inputs may refresh; it never chooses a different camera
+         * or hides native game UI. Unsafe scenes use a retained world plus the
+         * current complete native frame. Full battles therefore keep all ROM
+         * effects, HP/EXP/level-up messages and input, without interpreting
+         * battle VRAM as terrain. */
+        int was_voxel_active=voxel_active,was_voxel_live=voxel_live_world;
+        voxel_active=0;voxel_live_world=0;voxel_native_panel=0;voxel_target_world=0;
+        voxel_overlay.pixels=NULL;
+        const Fe8VoxelGpuFrame *gpu_frame=NULL;
+        const Fe8HostPixel *image=NULL;
+        const Fe8MemoryView *voxel_memory=&render_memory;
+        const Fe8MapRenderState *voxel_map=&map_state;
+        Fe8Snapshot voxel_current=snapshot;
+        fe8_voxel_targets_read(&voxel_targets,&profile_memory,
+            settings.voxel_enabled&&snapshot_valid?&snapshot:NULL);
+        if(voxel_targets.active){
+            voxel_current.cursor_x=(uint8_t)voxel_targets.targets[0].x;
+            voxel_current.cursor_y=(uint8_t)voxel_targets.targets[0].y;
+        }
+        const Fe8Snapshot *voxel_snapshot=&voxel_current;
+        const char *voxel_status="off";
+        if(settings.voxel_enabled) {
+            if(!voxel)voxel=fe8_voxel_create();
+            if(!voxel_stage)voxel_stage=fe8_voxel_stage_create();
+            int w=video.scaling.drawable_width,h=video.scaling.drawable_height;
+            if(!voxel||!voxel_stage){fprintf(stderr,"Unable to allocate 3D session\n");running=0;break;}
+            bool has_hud=hud_host->overlay.pixels!=NULL;
+            if(!has_hud&&!inventory_ui.active&&snapshot_valid)
+                has_hud=fe8_hud_host_details(hud_host,&video,&render_memory,&snapshot,
+                    host_frame,visual_profile_active&&frame_placement.match_percent>=15);
+            Fe8VoxelScene source=fe8_voxel_scene(true,family_match,settings.extensions_enabled,
+                snapshot_valid?&snapshot:NULL,visual_profile_active,inventory_ui.active,has_hud);
+            uint64_t voxel_started=SDL_GetPerformanceCounter();
+            if(source==FE8_VOXEL_READY) {
+                if(settings.voxel_gpu&&fe8_host_video_gpu_available(&video))
+                    gpu_frame=fe8_voxel_build_gpu(voxel,voxel_memory,voxel_map,voxel_snapshot,w,h);
+                if(!gpu_frame)image=fe8_voxel_render_scene(voxel,voxel_memory,voxel_map,voxel_snapshot,w,h);
+                if(image||gpu_frame) {
+                    voxel_live_world=1;
+                    if(!fe8_voxel_stage_remember(voxel_stage,&address_space,&map_state,voxel_snapshot)){
+                        fprintf(stderr,"Unable to retain verified 3D world\n");running=0;break;
                     }
                 }
-                /* Only the small footer is drawn on the CPU. Keep the native
-                 * HUD in its separate drawable-resolution plane. */
-                int footer_width = w < 850 ? w : 850;
-                for(unsigned n=0;n<hud_host->hud.count;++n){
-                    Fe8HudRect r=hud_host->hud.panels[n].destination;
-                    if(r.y+r.height>h-62 && r.x<footer_width)footer_width=r.x-4;
+            }
+            if(!voxel_live_world) {
+                voxel_memory=fe8_voxel_stage_memory(voxel_stage);
+                voxel_map=fe8_voxel_stage_map(voxel_stage);
+                voxel_snapshot=fe8_voxel_stage_snapshot(voxel_stage);
+                /* Target selection can retain native-only UI while its validated
+                 * target ring still supports world-space pointing. Never borrow
+                 * coordinates from a different chapter or an unvalidated map. */
+                if(voxel_targets.active&&fe8_voxel_stage_has_map(voxel_stage)&&
+                        voxel_snapshot->chapter==snapshot.chapter&&
+                        voxel_snapshot->map_width==snapshot.map_width&&
+                        voxel_snapshot->map_height==snapshot.map_height){
+                    voxel_current=*voxel_snapshot;
+                    voxel_current.cursor_x=(uint8_t)voxel_targets.targets[0].x;
+                    voxel_current.cursor_y=(uint8_t)voxel_targets.targets[0].y;
+                    voxel_snapshot=&voxel_current;voxel_target_world=1;
                 }
+                if(settings.voxel_gpu&&fe8_host_video_gpu_available(&video))
+                    gpu_frame=fe8_voxel_build_gpu(voxel,voxel_memory,voxel_map,voxel_snapshot,w,h);
+                if(!gpu_frame)image=fe8_voxel_render_scene(voxel,voxel_memory,voxel_map,voxel_snapshot,w,h);
+                /* Failed refresh may have altered builder caches. Retry a clean
+                 * retained scene, not the corrupted/new native memory. */
+                if(!image&&!gpu_frame){
+                    fe8_voxel_invalidate(voxel);
+                    image=fe8_voxel_render_scene(voxel,voxel_memory,voxel_map,voxel_snapshot,w,h);
+                }
+                if(!fe8_hud_host_native_scene(hud_host,&video,host_frame)){
+                    fprintf(stderr,"Unable to allocate native scene panel\n");running=0;break;
+                }
+                voxel_native_panel=1;
+            }
+            perf.voxel+=SDL_GetPerformanceCounter()-voxel_started;
+            if(!image&&!gpu_frame){fprintf(stderr,"3D session render failed: %s\n",fe8_voxel_error(voxel));running=0;break;}
+            voxel_active=1;
+            voxel_status=voxel_live_world?(gpu_frame?"live - OpenGL GPU":"live - software CPU"):
+                (gpu_frame?"3D + live native panel - OpenGL GPU":"3D + live native panel - software CPU");
+            Fe8VoxelStats stats=fe8_voxel_stats(voxel);
+            voxel_overlay=(Fe8VideoOverlay){image,stats.render_width,stats.render_height};
+            if(voxel_live_world&&hud_host->hud.count==1&&hud_host->hud.panels[0].kind==FE8_HUD_ACTION){
+                float x,y;
+                if(fe8_voxel_project(voxel,snapshot.cursor_x+.5f,snapshot.cursor_y+.5f,0,&x,&y)){
+                    hud_host->hud.menu_latched=false;
+                    fe8_native_hud_layout(&hud_host->hud,w,h,x,y,hud_host->scale_percent);
+                    fe8_native_hud_draw(&hud_host->hud,hud_host->pixels,w,w,h);
+                }
+            }
+            if(inventory_ui.active) {
+                /* Keep Armory hit testing at its original full drawable size.
+                 * Only the flat canvas background becomes translucent; cards,
+                 * text, portraits and all interaction geometry stay unchanged. */
+                for(int y=0;y<h;++y)for(int x=0;x<w;++x){
+                    uint32_t c=canvas[(size_t)((int64_t)y*canvas_height/h)*canvas_width+(int64_t)x*canvas_width/w];
+                    if(c==UINT32_C(0xFF1E1510))c=UINT32_C(0xB81E1510);
+                    hud_host->pixels[(size_t)y*w+x]=c;
+                }
+                hud_host->hud.count=0;
+            } else {
+                if(settings.mouse_enabled&&host_pointer_visible)
+                    fe8_hud_host_pointer(hud_host,&video,host_pointer_canvas_x,host_pointer_canvas_y);
+                int footer_width=w<890?w:890;
+                for(unsigned n=0;n<hud_host->hud.count;++n){Fe8HudRect r=hud_host->hud.panels[n].destination;
+                    if(r.y+r.height>h-62&&r.x<footer_width)footer_width=r.x-4;}
                 if(footer_width<64)footer_width=64;
-                for (int y=h-62; y<h-6; ++y) for (int x=14; x<footer_width-14; ++x)
-                    if (y>=0) hud_host->pixels[(size_t)y*w+x]=UINT32_C(0xFF24231E);
+                for(int y=h-62;y<h-6;++y)for(int x=14;x<footer_width-14;++x)
+                    if(y>=0)hud_host->pixels[(size_t)y*w+x]=UINT32_C(0xEA24231E);
                 Fe8HostTextCanvas text;
-                if (fe8_host_text_begin(&text,hud_host->pixels,w,w,h)) {
-                    fe8_host_text_draw(&text,24,h-50,footer_width-48,22,
-                        gpu_frame ? "VOXEL TERRAIN / OPENGL GPU" : "VOXEL TERRAIN / SOFTWARE",14,UINT32_C(0xFFE0F2EA),FE8_HOST_TEXT_SEMIBOLD,0);
-                    char voxel_controls[256];
-                    const char *voxel_key = SDL_GetScancodeName(
-                        settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL]);
-                    snprintf(voxel_controls, sizeof(voxel_controls),
-                        "%s  original view     [ ]  orbit     Scroll  zoom     Shift-drag  pan     C  focus     Home  reset",
-                        voxel_key && *voxel_key ? voxel_key : "Voxel hotkey");
-                    fe8_host_text_draw(&text,24,h-29,footer_width-48,20, voxel_controls,
+                if(fe8_host_text_begin(&text,hud_host->pixels,w,w,h)){
+                    const char *caption=voxel_native_panel?
+                        (fe8_voxel_stage_has_map(voxel_stage)?"3D BATTLEFIELD / LIVE NATIVE SCENE":"3D STAGE / WAITING FOR MAP"):
+                        (gpu_frame?"VOXEL TERRAIN / OPENGL GPU":"VOXEL TERRAIN / SOFTWARE");
+                    fe8_host_text_draw(&text,24,h-50,footer_width-48,22,caption,14,UINT32_C(0xFFE0F2EA),FE8_HOST_TEXT_SEMIBOLD,0);
+                    fe8_host_text_draw(&text,24,h-29,footer_width-48,20,
+                        "Drag: pan   Right-drag: orbit   Scroll: zoom   Click: A   Right-click: B",
                         12,UINT32_C(0xFFC1B8A9),FE8_HOST_TEXT_REGULAR,0);
                     fe8_host_text_end(&text);
                 }
@@ -2052,7 +2173,15 @@ static int run_game(int argc, char **argv) {
             fprintf(stderr, "Voxels: %s (drawable %dx%d)\n", voxel_status,
                 video.scaling.drawable_width, video.scaling.drawable_height);
         }
-        if (!voxel_active) voxel_drag = 0;
+        if (!voxel_active) {fe8_camera_gesture_reset(&camera_gesture);SDL_CaptureMouse(SDL_FALSE);
+            target_click.active=false;voxel_targets.active=false;voxel_targets.proc=0;voxel_targets.tick=0;}
+        if (was_voxel_live != voxel_live_world) {
+            /* A press begun before a menu/battle transition must not confirm
+             * an unrelated target when released afterward. */
+            if(camera_gesture.active)camera_gesture.suppress_click=true;
+            if(!voxel_live_world)fe8_mouse_cancel(&mouse);
+            pointer_canvas_valid=pointer_tile_valid=0;
+        }
         if (was_voxel_active != voxel_active) {
             /* Screen coordinates belong to the previous projection. A queued
              * mouse path already owns a validated world-tile target, however;
@@ -2078,8 +2207,8 @@ static int run_game(int argc, char **argv) {
                 if (!presented) {
                     fprintf(stderr, "Voxel GPU failed; using software for this session: %s\n", SDL_GetError());
                     settings.voxel_gpu = 0;
-                    const Fe8HostPixel *image = fe8_voxel_render_scene(voxel, &render_memory,
-                        &map_state, &snapshot, video.scaling.drawable_width, video.scaling.drawable_height);
+                    const Fe8HostPixel *image = fe8_voxel_render_scene(voxel, voxel_memory,
+                        voxel_map, voxel_snapshot, video.scaling.drawable_width, video.scaling.drawable_height);
                     Fe8VoxelStats st = fe8_voxel_stats(voxel);
                     voxel_overlay = (Fe8VideoOverlay){image, st.render_width, st.render_height};
                     gpu_frame = NULL;
@@ -2151,6 +2280,7 @@ static int run_game(int argc, char **argv) {
 
 cleanup:
     fe8_voxel_destroy(voxel);
+    fe8_voxel_stage_destroy(voxel_stage);
     fe8_stat_evaluator_destroy(stat_evaluator);
     if (options.perf_stats && perf.started)
         print_perf_stats(&perf, performance_frequency);

@@ -29,8 +29,12 @@ Use the **Voxel Renderer** hotkey under **Settings → Settings… → Hotkeys**
 supported tactical map, or launch with `--voxel`, for a native voxel presentation
 generated from the running ROM. The default binding is F7, and it can be rebound
 to an ordinary key such as V. Units use live sprite pixels; buildings and foliage
-are inferred from terrain. Combat, dialogue and other unsupported scenes retain
-the original renderer. [Controls, scope and validation](docs/voxel-renderer.md).
+are inferred from terrain. Drag the world to pan; right-drag to orbit; scroll to
+zoom. Short clicks select/cancel on release. Selection, forecasts, and movement
+stay in 3D. Combat and unsupported full-screen UI remain live in a native panel
+over the same camera-interactive 3D battlefield, rather than switching the whole
+window to 2D. [Persistent-session scope and validation](docs/voxel-persistent-session.md).
+[Other voxel controls](docs/voxel-renderer.md).
 
 # Installing
 The project is in beta. Download the latest version from [Releases](https://github.com/stephenjayakar/FE8-UI/releases). Builds are available for Mac ARM, Linux x86-64, and Windows x64. Windows includes a ROM library and native game menus; see the [Windows launch instructions](docs/windows.md#run).

@@ -18,7 +18,7 @@
 
 typedef struct HudPpu {
     const Fe8MemoryView *memory;
-    uint16_t control, bg[4], x[4], y[4], blend, alpha;
+    uint16_t control, bg[4], x[4], y[4], blend, alpha, brightness;
     uint16_t palette[512];
 } HudPpu;
 
@@ -76,11 +76,20 @@ static void insert(uint32_t sample, uint32_t *first, uint32_t *second) {
 static uint32_t resolved8(const HudPpu *ppu, uint32_t first, uint32_t second) {
     bool alpha = ((ppu->blend >> 6) & 3) == 1 &&
         (ppu->blend & (1u << LAYER(first)));
-    if (((first & SEMI) || alpha) &&
+    if ((second & PRESENT) && ((first & SEMI) || alpha) &&
             (ppu->blend & (1u << (8 + LAYER(second)))))
         return mix8(first & 0x7FFF, second & 0x7FFF,
             minimum(ppu->alpha & 31, 16), minimum((ppu->alpha >> 8) & 31, 16));
-    return color8(first & 0x7FFF);
+    uint32_t c=color8(first&0x7FFF);
+    unsigned effect=(ppu->blend>>6)&3;
+    if(effect>=2 && (ppu->blend&(1u<<LAYER(first)))){
+        unsigned evy=minimum(ppu->brightness&31,16);uint32_t result=0xFF000000u;
+        for(unsigned shift=0;shift<24;shift+=8){unsigned value=(c>>shift)&255;
+            value=effect==2?value+((255-value)*evy>>4):value-(value*evy>>4);
+            result|=value<<shift;}
+        return result;
+    }
+    return c;
 }
 static int panel_at(const Fe8NativeHud *hud, int x, int y) {
     for (unsigned n = 0; n < hud->count; ++n)
@@ -94,16 +103,50 @@ void fe8_native_hud_reset(Fe8NativeHud *hud) {
     hud->menu_latched = false;
 }
 
+/* Target/forecast windows may scroll BG0/1 by a few pixels and use multiple
+ * palette banks. Discover their screen-space coverage, never ROM-specific text
+ * or colors. The pixel oracle below still verifies every detached pixel. */
+static bool find_detail_panels(Fe8NativeHud *hud,const HudPpu *ppu) {
+    uint8_t cells[600]={0},seen[600]={0};unsigned queue[600];
+    for(int y=0;y<H;++y)for(int x=0;x<W;++x)
+        if((bg_sample(ppu,0,x,y)|bg_sample(ppu,1,x,y))&PRESENT)cells[(y/8)*30+x/8]=1;
+    for(int i=0;i<600;++i){
+        if(!cells[i]||seen[i])continue;
+        unsigned head=0,tail=1;queue[0]=(unsigned)i;seen[i]=1;
+        int l=i%30,r=l,t=i/30,b=t;
+        while(head<tail){int p=(int)queue[head++],x=p%30,y=p/30;
+            l=minimum(l,x);r=maximum(r,x);t=minimum(t,y);b=maximum(b,y);
+            for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){
+                int xx=x+dx,yy=y+dy,q=yy*30+xx;
+                if(xx<0||xx>=30||yy<0||yy>=20||!cells[q]||seen[q])continue;
+                seen[q]=1;queue[tail++]=(unsigned)q;
+            }
+        }
+        int w=(r-l+1)*8,h=(b-t+1)*8;
+        if(w<16||h<16||w*h>W*H*3/4||hud->count==FE8_HUD_MAX_PANELS)return false;
+        /* Include the selector hand/icon's ordinary one-tile overhang. */
+        int x=maximum(0,l*8-8),y=maximum(0,t*8-8);
+        Fe8HudRect rect={x,y,minimum(W,(r+1)*8+8)-x,minimum(H,(b+1)*8+8)-y};
+        hud->panels[hud->count++]=(Fe8HudPanel){FE8_HUD_DETAIL,rect,{0}};
+    }
+    /* Expanded rectangles must not overlap: drawing a blended pixel twice
+     * would darken it and give ambiguous pointer ownership. */
+    for(unsigned i=0;i<hud->count;++i)for(unsigned j=0;j<i;++j)
+        if(overlap(hud->panels[i].source,hud->panels[j].source))return false;
+    return true;
+}
+
 /* Recognize whole, rectangular FE8 BG1 windows. Shape + palette + live scene
  * are deliberately stricter than "any nonzero BG0/1 tile is UI". In particular,
  * inventory, dialogue, battle forecasts and ROM-specific submenus fall back. */
 static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
-        const Fe8Snapshot *snapshot, bool tactical) {
+        const Fe8Snapshot *snapshot, int tactical) {
+    if(tactical==2)return find_detail_panels(hud,ppu);
     uint16_t tiles[600];
     uint8_t seen[600] = {0};
     unsigned queue[600];
     uint32_t base = VRAM + ((ppu->bg[1] >> 8) & 31) * 2048;
-    bool kinds[4] = {false};
+    bool kinds[6] = {false};
     for (int y = 0; y < 20; ++y)
         for (int x = 0; x < 30; ++x)
             tiles[y * 30 + x] = read16(ppu->memory, base + (y * 32 + x) * 2);
@@ -129,7 +172,13 @@ static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
         if (end != (unsigned)(width * height) || hud->count == FE8_HUD_MAX_PANELS)
             return false;
         Fe8HudKind kind;
-        if (snapshot->input_lock == 0) {
+        if (tactical == 2) {
+            /* UI geometry is not inferred from a shop/weapon name. Take the
+             * complete rectangular native window and verify its current pixels.
+             * The larger branch is opt-in and never changes native 2D stripping. */
+            if (width < 2 || height < 2 || width * height > 480) return false;
+            kind = FE8_HUD_DETAIL;
+        } else if (snapshot->input_lock == 0) {
             bool edge = left == 0 || right == 29;
             /* Native idle HUD windows slide across the screen edges as the
              * cursor moves. Their visible BG1 rectangle is temporarily narrower
@@ -153,7 +202,7 @@ static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
                 bank == 1 && width >= 5 && width <= 16 && height >= 4 && height <= 16) {
             kind = FE8_HUD_ACTION;
         } else return false;
-        if (kinds[kind]) return false;
+        if (kinds[kind] && kind != FE8_HUD_DETAIL) return false;
         kinds[kind] = true;
         Fe8HudRect source = {left * 8, top * 8, width * 8, height * 8};
         if (kind == FE8_HUD_ACTION) {
@@ -171,7 +220,7 @@ static bool find_panels(Fe8NativeHud *hud, const HudPpu *ppu,
 }
 
 static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
-        uint32_t *world, uint32_t *ui, bool tactical) {
+        uint32_t *world, uint32_t *ui, int tactical) {
     static const int widths[3][4] = {{8,16,32,64},{16,32,32,64},{8,8,16,32}};
     static const int heights[3][4] = {{8,16,32,64},{8,8,16,32},{16,32,32,64}};
     bool hand = false;
@@ -202,7 +251,8 @@ static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
             bool digits = tile >= 0x2E0 && tile <= 0x2EF && bank == 8 && width == 8 && height == 8;
             bool icon = tile >= 0x300 && tile <= 0x37F && (bank == 4 || bank == 5) &&
                 width == 16 && height == 16;
-            is_ui = is_hand || digits || icon;
+            bool cursor = tile == 2 && bank == 0 && width == 8 && height == 8;
+            is_ui = (tactical == 2 && !cursor) || is_hand || digits || icon;
             hand |= is_hand;
             if (is_ui) break;
         }
@@ -238,7 +288,7 @@ static bool raster_objects(const HudPpu *ppu, const Fe8NativeHud *hud,
 
 static bool extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
         const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride,
-        bool live_map, bool tactical) {
+        bool live_map, int tactical) {
     if (!hud) return false;
     hud->count = 0;
     if (!live_map || !memory || !memory->read8 || !snapshot || !frame || stride < W ||
@@ -254,11 +304,12 @@ static bool extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
         ppu.y[bg] = read16(memory, IO + 18 + bg * 4);
         if (ppu.bg[bg] & 0xC0C0) goto fallback; /* 4bpp, 256x256, no mosaic */
         if ((ppu.bg[bg] & 3) != bg) goto fallback;
-        if (bg < 2 && (ppu.x[bg] || ppu.y[bg])) goto fallback;
+        if (tactical != 2 && bg < 2 && (ppu.x[bg] || ppu.y[bg])) goto fallback;
     }
     ppu.blend = read16(memory, IO + 0x50);
     ppu.alpha = read16(memory, IO + 0x52);
-    if (((ppu.blend >> 6) & 3) > 1 || (ppu.blend & 1)) goto fallback;
+    ppu.brightness = read16(memory, IO + 0x54);
+    if (tactical!=2 && (((ppu.blend >> 6) & 3) > 1 || (ppu.blend & 1))) goto fallback;
     for (unsigned n = 0; n < 512; ++n) ppu.palette[n] = read16(memory, PAL + n * 2);
     if (!find_panels(hud, &ppu, snapshot, tactical)) goto fallback;
     uint32_t world_obj[W * H], ui_obj[W * H];
@@ -293,7 +344,7 @@ static bool extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
                 matches = false;
         ++checked; matched += matches;
         hud->world[pos] = world;
-        uint32_t pixel = color8(top_ui & 0x7FFF);
+        uint32_t pixel = tactical==2 ? resolved8(&ppu,top_ui,0) : color8(top_ui & 0x7FFF);
         /* FE8 blends BG1 against world layers. Encode independent foreground
          * and background coefficients in a straight-alpha host pixel, even
          * when EVA + EVB is 15 rather than 16 (native action menus). */
@@ -302,7 +353,7 @@ static bool extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
          * panel, not a fixed global target mask. A foreground map cursor is
          * above BG1, so skip it when reconstructing the panel behind it. */
         uint32_t below_ui = RANK(first) > RANK(top_ui) ? first : second;
-        if (LAYER(top_ui) == 1 && ((ppu.blend >> 6) & 3) == 1 && (ppu.blend & 2) &&
+        if (LAYER(top_ui) <= 1 && ((ppu.blend >> 6) & 3) == 1 && (ppu.blend & (1u << LAYER(top_ui))) &&
                 (ppu.blend & (1u << (8 + LAYER(below_ui))))) {
             unsigned eva = minimum(ppu.alpha & 31, 16), evb = minimum((ppu.alpha >> 8) & 31, 16);
             if (evb >= 16 || eva > 16 - evb) goto fallback;
@@ -311,6 +362,8 @@ static bool extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
             for (unsigned shift = 0; shift < 24; shift += 8)
                 pixel |= (((color8(top_ui & 0x7FFF) >> shift) & 255) * eva / a) << shift;
         }
+        if(tactical==2 && (next_ui&PRESENT) && RANK(next_ui)<RANK(below_ui))
+            pixel=resolved8(&ppu,top_ui,next_ui);
         hud->atlas[pos] = pixel;
     }
     /* Reject stale VRAM, scanline effects, unsupported sprites and custom
@@ -326,6 +379,10 @@ fallback:
 bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
         const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map) {
     return extract(hud,memory,snapshot,frame,stride,live_map,false);
+}
+bool fe8_native_hud_extract_details(Fe8NativeHud *hud, const Fe8MemoryView *memory,
+        const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map) {
+    return extract(hud,memory,snapshot,frame,stride,live_map,2);
 }
 bool fe8_native_hud_extract_tactical(Fe8NativeHud *hud, const Fe8MemoryView *memory,
         const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map) {
@@ -367,6 +424,17 @@ void fe8_native_hud_layout(Fe8NativeHud *hud, int width, int height,
             x = anchor_x + gap;
             if (x + w > width - margin) x = anchor_x - gap - w;
             y = anchor_y - h / 2;
+        }
+        if (p->kind == FE8_HUD_DETAIL) {
+            x = p->source.x * (width - w) / maximum(1,W-p->source.width);
+            y = p->source.y * (height - h) / maximum(1,H-p->source.height);
+        } else if (p->kind == FE8_HUD_SCENE) {
+            /* A live native battle/menu panel, never a fullscreen 2D switch.
+             * The retained world remains visible and camera-interactive. */
+            double fit = (double)width * .58 / W;
+            if ((double)height * .70 / H < fit) fit = (double)height * .70 / H;
+            w=maximum(1,(int)(W*fit));h=maximum(1,(int)(H*fit));
+            x=width-margin-w;y=(height-h)/2;
         }
         p->destination = (Fe8HudRect){clamp(x,0,width-w),clamp(y,0,height-h),w,h};
     }

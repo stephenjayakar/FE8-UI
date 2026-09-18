@@ -186,9 +186,9 @@ static bool resize(Fe8VoxelRenderer *v,int w,int h,int mw,int mh) {
     if(tn>v->terrain_capacity){
         uint32_t *t=malloc(tn*4),*g=malloc(tn*4);uint8_t *he=malloc(tn),*sh=malloc(tn);
         if(!t||!g||!he||!sh){free(t);free(g);free(he);free(sh);return false;}
-        free(v->gpu.scenery.vertices);free(v->gpu.overlays.vertices);free(v->gpu.billboards.vertices);
-    free(v->gpu.scenery.vertices);free(v->gpu.overlays.vertices);free(v->gpu.billboards.vertices);
-    free(v->terrain);free(v->ground);free(v->heights);free(v->shadow);
+        /* Mesh capacity is independent of the terrain atlas. Keep its buffers
+         * alive: the next geometry rebuild resets counts, not dangling pointers. */
+        free(v->terrain);free(v->ground);free(v->heights);free(v->shadow);
         v->terrain=t;v->ground=g;v->heights=he;v->shadow=sh;v->terrain_capacity=tn;
     }
     if(v->width!=w||v->height!=h)v->dirty=true;
@@ -811,7 +811,12 @@ void fe8_voxel_destroy(Fe8VoxelRenderer *v) {
 void fe8_voxel_invalidate(Fe8VoxelRenderer *v){if(v){v->owned_mu_unit=0;v->terrain_hash=0;v->object_hash=0;v->geometry_dirty=true;v->dirty=true;v->ready=false;memset(v->sprites,0,SPRITE_CACHE*sizeof(*v->sprites));}}
 void fe8_voxel_camera(Fe8VoxelRenderer *v,float yaw_delta,float zoom_factor){
     if(!v||!isfinite(yaw_delta)||!isfinite(zoom_factor)||zoom_factor<=0)return;
-    v->yaw=clampf(v->yaw+yaw_delta,-1.2f,1.2f);v->zoom=clampf(v->zoom*zoom_factor,.65f,4);v->dirty=true;
+    v->yaw=remainderf(v->yaw+yaw_delta,6.283185307f);v->zoom=clampf(v->zoom*zoom_factor,.65f,4);v->dirty=true;
+}
+void fe8_voxel_orbit(Fe8VoxelRenderer *v,float yaw_delta,float pitch_delta){
+    if(!v||!isfinite(yaw_delta)||!isfinite(pitch_delta))return;
+    fe8_voxel_camera(v,yaw_delta,1);
+    v->pitch=clampf(v->pitch+pitch_delta,.30f,1.35f);v->dirty=true;
 }
 void fe8_voxel_pan(Fe8VoxelRenderer *v,float dx,float dy){
     if(!v||!v->ready||!isfinite(dx)||!isfinite(dy))return;
@@ -826,7 +831,7 @@ void fe8_voxel_focus(Fe8VoxelRenderer *v,float x,float z){
     v->pan_x=clampf(x*16-v->mw*.5f,-v->mw*.5f,v->mw*.5f);
     v->pan_z=clampf(z*16-v->mh*.5f,-v->mh*.5f,v->mh*.5f);v->dirty=true;
 }
-void fe8_voxel_home(Fe8VoxelRenderer *v){if(v){v->pan_x=v->pan_z=0;v->zoom=1;v->yaw=-.32f;v->dirty=true;}}
+void fe8_voxel_home(Fe8VoxelRenderer *v){if(v){v->pan_x=v->pan_z=0;v->zoom=1;v->yaw=-.32f;v->pitch=.74f;v->dirty=true;}}
 static bool update_frame(Fe8VoxelRenderer *v,const Fe8MemoryView *m,const Fe8MapRenderState *map,
         const Fe8Snapshot *s,int width,int height){
     if(v){v->ready=false;v->error="invalid or unavailable map data";}
