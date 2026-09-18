@@ -66,6 +66,39 @@ static void extraction_and_fallback(void) {
     expect_fallback(); /* stale palette/VRAM must not strip a mismatched frame */
     fixture(); put16(oam,0,0x0100|112); put16(oam,2,184); expect_fallback(); /* affine OBJ */
 }
+/* Native panel motion clips complete rectangles at a screen edge; unlike
+ * malformed/disconnected windows it must not change presentation modes. */
+static void sliding_panels(void) {
+    for (int kind=0;kind<3;++kind) for (int edge=0;edge<2;++edge) {
+        int limit=kind==0?20:kind==1?7:6;
+        for (int span=1;span<=limit;++span) {
+            fixture(); memset(vram+0x6800,0,2048);
+            unsigned bank=kind==0?3:1;
+            int width=kind==2?11:span, height=kind==2?span:6;
+            int left=edge?30-width:0, top=edge?20-height:0;
+            put16(palette,(bank*16+1)*2,0x7C00);
+            for (int y=top;y<top+height;++y) for(int x=left;x<left+width;++x)
+                put16(vram,0x6800+(y*32+x)*2,(bank<<12)|1);
+            for(int y=0;y<160;++y) for(int x=0;x<240;++x)
+                frame[y*240+x]=x>=left*8&&x<(left+width)*8&&
+                    y>=top*8&&y<(top+height)*8?0xFFFF0000:0xFF0000FF;
+            memcpy(original,frame,sizeof frame);
+            assert(extract(true)&&hud.count==1);
+            assert(hud.panels[0].kind==(kind==0?FE8_HUD_UNIT:
+                kind==1?FE8_HUD_TERRAIN:FE8_HUD_OBJECTIVE));
+            assert(!memcmp(frame,original,sizeof frame));
+            for(unsigned q=0;q<240*160;++q) assert(hud.world[q]==0xFF0000FF);
+        }
+    }
+    fixture();memset(vram+0x6800,0,2048);
+    for(unsigned q=0;q<240*160;++q) frame[q]=0xFF0000FF;
+    assert(extract(true)&&hud.count==0); /* fully slid-out, verified empty HUD */
+    assert(!memcmp(hud.world,frame,sizeof frame));
+    for(unsigned q=0;q<240*160;++q) assert(hud.atlas[q]==0);
+    snapshot.input_lock=1;assert(!extract(true)); /* not permission for menus */
+    snapshot.input_lock=0;put16(vram,0x6000+2,1);assert(!extract(true));
+    puts("PASS edge-clipped unit/terrain/objective HUD slides and empty idle HUD; unknown UI still rejected");
+}
 static void alpha_and_world_sprites(void) {
     fixture();
     put16(io,0x50,0x3C42); put16(io,0x52,0x030D);
@@ -183,8 +216,76 @@ static void layout(void) {
     for(int y=1;y<7;++y) assert(guarded[y*10+8]==0xDEADBEEF&&guarded[y*10+9]==0xDEADBEEF);
     assert(guarded[10]==0xFFFFFFFF); assert(guarded[10+7]==0);
 }
+/* Voxel tactics accept selected/range and handless opening/closing action
+ * frames, but never remove the current-frame PPU verification. */
+static void tactical_selection(void) {
+    fixture();snapshot.active_unit_address=0x02006000;snapshot.game_state_bits=3;
+    assert(!extract(true));
+    assert(fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+    assert(!memcmp(frame,original,sizeof frame));
+    for(int state=0;state<3;++state){
+        fixture();snapshot.active_unit_address=0x02006000;snapshot.input_lock=state<2?1:0;
+        memset(vram+0x6800,0,2048);
+        for(int y=0;y<160;++y)for(int x=0;x<240;++x){
+            bool panel=state && x>=64&&x<144&&y>=40&&y<104;
+            frame[y*240+x]=panel?0xFFFF0000:0xFF0000FF;
+        }
+        if(state)for(int y=5;y<13;++y)for(int x=8;x<18;++x)
+            put16(vram,0x6800+(y*32+x)*2,0x1001);
+        memcpy(original,frame,sizeof frame);
+        assert(!extract(true));
+        assert(fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+        assert(!memcmp(frame,original,sizeof frame));
+        assert(state ? hud.count==1&&hud.panels[0].kind==FE8_HUD_ACTION : hud.count==0);
+    }
+    for(int bad=0;bad<8;++bad){
+        fixture();snapshot.active_unit_address=0x02006000;snapshot.game_state_bits=3;
+        switch(bad){
+        case 0:snapshot.phase=0x80;break;
+        case 1:snapshot.input_lock=2;break;
+        case 2:snapshot.combat_panel_active=1;break;
+        case 3:put16(io,0x50,0x80);break;
+        case 4:put16(vram,0x6800+(3*32+3)*2,0x1001);break;
+        case 5:put16(oam,0,0x0100|112);put16(oam,2,184);break;
+        case 6:memset(frame,0xCC,sizeof frame);break;
+        case 7:put16(io,0,0x3F00);break;
+        }
+        memcpy(original,frame,sizeof frame);
+        assert(!fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+        assert(!memcmp(frame,original,sizeof frame));
+    }
+    puts("PASS tactical selection, opening/closing action menu, frame immutability and unsafe-UI rejection");
+}
+
+static void forecast_details(void) {
+    fixture();snapshot.input_lock=1;snapshot.active_unit_address=0x02006000;
+    put16(io,0x14,5);put16(io,0x16,3); /* BG1 sub-tile scrolling. */
+    for(int y=0;y<160;++y)for(int x=0;x<240;++x)
+        frame[y*240+x]=x>=179&&x<235&&y>=109&&y<157?0xFFFF0000:0xFF0000FF;
+    memcpy(original,frame,sizeof(frame));
+    assert(!fe8_native_hud_extract_tactical(&hud,&memory,&snapshot,frame,240,true));
+    assert(fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    assert(hud.count==1&&hud.panels[0].kind==FE8_HUD_DETAIL);
+    assert(!memcmp(original,frame,sizeof(frame)));
+    assert(hud.atlas[110*240+180]==0xFFFF0000&&hud.atlas[0]==0);
+    fixture();snapshot.input_lock=1;snapshot.active_unit_address=0x02006000;
+    put16(palette,(3*16+1)*2,0x7C00);
+    for(int y=14;y<20;++y)for(int x=26;x<30;++x)put16(vram,0x6800+(y*32+x)*2,0x3001);
+    assert(fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true)&&hud.count==1);
+    fixture();snapshot.input_lock=1;snapshot.active_unit_address=0x02006000;
+    put16(io,0x50,0xC2);put16(io,0x54,4); /* UI brightness effects remain exact. */
+    for(int y=112;y<160;++y)for(int x=184;x<240;++x)frame[y*240+x]=0xFFC00000;
+    assert(fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    assert(hud.atlas[120*240+190]==0xFFC00000);
+    memset(frame,0xCC,sizeof(frame));
+    assert(!fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    fixture();put16(io,0,0x3F00);assert(!fe8_native_hud_extract_details(&hud,&memory,&snapshot,frame,240,true));
+    puts("PASS multi-palette forecast windows, sub-tile HUD scrolling and brightness; original 98% oracle and hardware-window rejection retained");
+}
+
 int main(void) {
-    extraction_and_fallback(); alpha_and_world_sprites(); blend_target_variants(); layout();
+    extraction_and_fallback();tactical_selection();forecast_details();
+    sliding_panels(); alpha_and_world_sprites(); blend_target_variants(); layout();
     puts("native HUD extraction, fallback, sprite preservation, alpha, layout and clipping passed");
     return 0;
 }

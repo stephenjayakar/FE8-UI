@@ -102,15 +102,21 @@ int main(void) {
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_SAVE] == SDL_SCANCODE_F5);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_QUICK_LOAD] == SDL_SCANCODE_F8);
     assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] == SDL_SCANCODE_F6);
+    assert(settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL] == SDL_SCANCODE_F7);
     assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) ==
         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==
+        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL));
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_F6) == 0);
     assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS),
         "Extended Renderer") == 0);
     settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS] = SDL_SCANCODE_F7;
     assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F6) == 0);
     assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_F7) ==
-        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS));
+        ((UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_EXTENSIONS) |
+         (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL)));
+    assert(strcmp(fe8_host_hotkey_name(FE8_HOST_HOTKEY_TOGGLE_VOXEL),
+        "Voxel Renderer") == 0);
     {
         Fe8HostSettings expected = settings;
         expected.extensions_enabled = 0;
@@ -122,6 +128,22 @@ int main(void) {
         fe8_host_toggle_extensions(&settings);
         assert(memcmp(&settings, &expected, sizeof(settings)) == 0);
         fe8_host_toggle_extensions(NULL);
+    }
+    settings.hotkeys[FE8_HOST_HOTKEY_TOGGLE_VOXEL] = SDL_SCANCODE_V;
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_V) ==
+        (UINT32_C(1) << FE8_HOST_HOTKEY_TOGGLE_VOXEL));
+    settings.hotkeys[FE8_HOST_HOTKEY_QUICK_SAVE] = SDL_SCANCODE_UNKNOWN;
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_SCANCODE_UNKNOWN) == 0);
+    assert(fe8_host_hotkey_for_scancode(&settings, SDL_NUM_SCANCODES) == 0);
+    assert(fe8_host_key_for_scancode(NULL, SDL_SCANCODE_V) == 0);
+    assert(!settings.voxel_enabled);
+    {
+        unsigned revision = settings.revision;
+        fe8_host_toggle_voxel(&settings);
+        assert(settings.voxel_enabled && settings.revision == revision + 1);
+        fe8_host_toggle_voxel(&settings);
+        assert(!settings.voxel_enabled && settings.revision == revision + 2);
+        fe8_host_toggle_voxel(NULL);
     }
     assert(fe8_host_key_for_scancode(&settings, SDL_SCANCODE_Z) ==
         (UINT32_C(1) << FE8_HOST_A));

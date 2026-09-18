@@ -23,4 +23,13 @@ Fe8FramePlacement fe8_align_frame_to_terrain(
     int terrain_width, int terrain_height, size_t terrain_stride,
     int expected_x, int expected_y, int search_radius);
 
+/* Use the cheap exact-position check on settled frames, but retry a bounded
+ * scroll search when its evidence fails. The PPU can still be settling after
+ * the logical camera has stopped; no previous framebuffer is reused. */
+Fe8FramePlacement fe8_align_tactical_frame(
+    const Fe8HostPixel *frame, int frame_width, int frame_height,
+    size_t frame_stride, const Fe8HostPixel *terrain,
+    int terrain_width, int terrain_height, size_t terrain_stride,
+    int expected_x, int expected_y, bool camera_moving);
+
 #endif

@@ -48,6 +48,23 @@ int main(void) {
     assert(placement.y == 21);
     assert(placement.match_percent >= 70);
 
-    puts("frame alignment tests passed");
+    /* The logical camera can stop one frame before the displayed scroll.
+     * An exact-position miss must get the same bounded recovery as motion. */
+    placement = fe8_align_tactical_frame(
+        frame, FRAME_WIDTH, FRAME_HEIGHT, FRAME_WIDTH,
+        terrain, TERRAIN_WIDTH, TERRAIN_HEIGHT, TERRAIN_WIDTH, 25, 21, false);
+    assert(placement.x == 33 && placement.y == 21 && placement.match_percent >= 70);
+    placement = fe8_align_tactical_frame(
+        frame, FRAME_WIDTH, FRAME_HEIGHT, FRAME_WIDTH,
+        terrain, TERRAIN_WIDTH, TERRAIN_HEIGHT, TERRAIN_WIDTH, 33, 21, false);
+    assert(placement.x == 33 && placement.y == 21 && placement.match_percent >= 70);
+    /* Unknown/faded frames are still rejected, not accepted by a time latch. */
+    for (y = 0; y < FRAME_HEIGHT; ++y)
+        for (x = 0; x < FRAME_WIDTH; ++x) frame[y * FRAME_WIDTH + x] = 0xFF000001;
+    placement = fe8_align_tactical_frame(
+        frame, FRAME_WIDTH, FRAME_HEIGHT, FRAME_WIDTH,
+        terrain, TERRAIN_WIDTH, TERRAIN_HEIGHT, TERRAIN_WIDTH, 25, 21, false);
+    assert(placement.match_percent < 15);
+    puts("frame alignment tests passed, including stopped-camera PPU settling");
     return 0;
 }

@@ -1,0 +1,57 @@
+name: Voxel GPU and tactical interaction
+on:
+  push:
+    branches: [voxel-live]
+    paths: ['app/src/**', 'tests/**', 'CMakeLists.txt', '.github/workflows/voxel-gpu-tactics.yml']
+  pull_request:
+    paths: ['app/src/**', 'tests/**', 'CMakeLists.txt', '.github/workflows/voxel-gpu-tactics.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize pinned emulator
+        run: git submodule update --init --depth 1 third_party/mgba
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build libsdl2-dev libfreetype6-dev zlib1g-dev fonts-dejavu-core xvfb libgl1-mesa-dri
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja sdl2
+      - name: Build native application and all tests
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFE8_BUILD_TESTS=ON "${args[@]}"
+          cmake --build build --parallel 3
+      - name: Run full suite and require actual GPU pixel readback
+        shell: bash
+        run: |
+          mkdir -p build/voxel-gpu-validation
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a env SDL_RENDER_DRIVER=opengl ctest --test-dir build --output-on-failure
+            xvfb-run -a env SDL_RENDER_DRIVER=opengl build/tests/test_video_scene build/voxel-gpu-validation/presenter.ppm | tee build/voxel-gpu-validation/presenter.log
+          else
+            ctest --test-dir build --output-on-failure
+            build/tests/test_video_scene build/voxel-gpu-validation/presenter.ppm | tee build/voxel-gpu-validation/presenter.log
+            build/tests/test_macos_settings build/voxel-gpu-validation | tee build/voxel-gpu-validation/settings.log
+          fi
+          # A skipped/no-display CTest is not GPU validation.
+          grep -q 'real OpenGL geometry/depth' build/voxel-gpu-validation/presenter.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voxel-gpu-validation-${{ runner.os }}
+          path: |
+            build/voxel-gpu-validation
+            build/Testing/Temporary/LastTest.log
+          retention-days: 7

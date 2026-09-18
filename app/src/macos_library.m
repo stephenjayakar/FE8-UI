@@ -8,6 +8,17 @@
 
 static NSString *const kLibraryDefaultsKey = @"FE8GameLibrary";
 
+static NSArray<NSString *> *gameArguments(NSString *rom, NSString *save,
+        NSString *state, BOOL resume, BOOL voxel) {
+    NSMutableArray<NSString *> *arguments = [@[
+        @"--rom", rom, @"--save", save, @"--quick-state", state,
+    ] mutableCopy];
+    if (resume) [arguments addObjectsFromArray:@[@"--state", state]];
+    if (voxel) [arguments addObject:@"--voxel"];
+    return arguments;
+}
+
+
 @class Fe8LibraryController;
 
 @interface Fe8LibraryDropView : NSView <NSDraggingDestination>
@@ -459,17 +470,12 @@ static NSMutableDictionary *gameForPath(NSString *path) {
     }
     [self migrateAdjacentSaveForGame:game];
     NSString *state = [self statePathForGame:game];
-    NSMutableArray<NSString *> *arguments = [@[
-        @"--rom", game[@"path"],
-        @"--save", [self savePathForGame:game],
-        @"--quick-state", state,
-    ] mutableCopy];
-    if (resume && [NSFileManager.defaultManager fileExistsAtPath:state])
-        [arguments addObjectsFromArray:@[@"--state", state]];
-
+    Fe8HostSettings *settings = fe8_host_settings_current();
     NSTask *task = [[NSTask alloc] init];
     task.launchPath = self.executablePath;
-    task.arguments = arguments;
+    task.arguments = gameArguments(game[@"path"], [self savePathForGame:game], state,
+        resume && [NSFileManager.defaultManager fileExistsAtPath:state],
+        settings && settings->voxel_enabled);
     task.standardInput = NSFileHandle.fileHandleWithNullDevice;
     task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
     task.standardError = NSFileHandle.fileHandleWithNullDevice;
@@ -518,12 +524,13 @@ static NSMutableDictionary *gameForPath(NSString *path) {
 static Fe8LibraryController *libraryController;
 static Fe8HostSettings librarySettings;
 
-int fe8_macos_run_library(const char *executable_path) {
+int fe8_macos_run_library(const char *executable_path, int voxel_enabled) {
     @autoreleasepool {
         NSApplication *application = NSApplication.sharedApplication;
         [application setActivationPolicy:NSApplicationActivationPolicyRegular];
         fe8_host_settings_init(&librarySettings);
         fe8_macos_load_settings(&librarySettings);
+        if (voxel_enabled) librarySettings.voxel_enabled = 1;
         libraryController = [[Fe8LibraryController alloc]
             initWithExecutablePath:[NSString stringWithUTF8String:executable_path]];
         application.delegate = libraryController;

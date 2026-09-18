@@ -5,6 +5,7 @@
 
 #include "host_settings.h"
 #include "display_scaling.h"
+#include "voxel_gpu.h"
 
 /* Optional straight-alpha RGBA plane in drawable pixels, after game shaders. */
 typedef struct Fe8VideoOverlay {
@@ -22,6 +23,10 @@ typedef struct Fe8HostVideo {
     Fe8DisplayScaling scaling;
     int vsync_active;
     enum Fe8HostShader shader;
+    /* Optional caller-owned full drawable buffer, read once before swap.
+     * Never allocated/read during ordinary interactive presentation. */
+    Fe8HostPixel *capture_pixels;
+    int capture_succeeded;
 } Fe8HostVideo;
 
 int fe8_host_video_init(Fe8HostVideo *video, const char *title,
@@ -30,6 +35,14 @@ int fe8_host_video_set_vsync(Fe8HostVideo *video, int enabled);
 int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader shader);
 int fe8_host_video_present(Fe8HostVideo *video, const void *pixels,
     const Fe8VideoOverlay *overlay);
+/* Opaque, already-rendered scene stretched to the drawable, then the native
+ * HUD. Unlike the game path this skips GBA scaling/CRT and never requires a
+ * CPU-upscaled full-resolution scene. The normal path is unchanged. */
+int fe8_host_video_present_scene(Fe8HostVideo *video,
+    const Fe8VideoOverlay *scene, const Fe8VideoOverlay *overlay);
+int fe8_host_video_gpu_available(Fe8HostVideo *video);
+int fe8_host_video_present_gpu(Fe8HostVideo *video,
+    const Fe8VoxelGpuFrame *scene, const Fe8VideoOverlay *overlay);
 int fe8_host_video_window_to_canvas(const Fe8HostVideo *video,
     int window_x, int window_y, int *canvas_x, int *canvas_y);
 /* SDL_RenderSetLogicalSize transforms mouse-event coordinates, but not

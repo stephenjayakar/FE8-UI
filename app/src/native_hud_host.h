@@ -11,6 +11,7 @@ typedef struct Fe8HudHost {
     Fe8VideoOverlay overlay;
     int scale_percent;
     bool enabled;
+    bool voxel_tactical;
 } Fe8HudHost;
 
 /* Returns the original frame unless a complete, validated HUD can be drawn. */
@@ -18,6 +19,12 @@ const Fe8HostPixel *fe8_hud_host_update(Fe8HudHost *host,
     const Fe8HostVideo *video, const Fe8MemoryView *memory,
     const Fe8Snapshot *snapshot, const Fe8HostPixel *frame,
     bool live_map, int frame_x, int frame_y);
+/* Compose the authoritative current native frame in a live panel over 3D. */
+bool fe8_hud_host_native_scene(Fe8HudHost *host, const Fe8HostVideo *video,
+    const Fe8HostPixel *frame);
+bool fe8_hud_host_details(Fe8HudHost *host, const Fe8HostVideo *video,
+    const Fe8MemoryView *memory, const Fe8Snapshot *snapshot,
+    const Fe8HostPixel *frame, bool validated_map);
 bool fe8_hud_host_contains(const Fe8HudHost *host, const Fe8HostVideo *video,
     int canvas_x, int canvas_y);
 void fe8_hud_host_pointer(Fe8HudHost *host, const Fe8HostVideo *video,

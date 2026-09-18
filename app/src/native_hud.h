@@ -9,7 +9,8 @@
 enum { FE8_HUD_WIDTH = 240, FE8_HUD_HEIGHT = 160, FE8_HUD_MAX_PANELS = 4,
        FE8_HUD_DEFAULT_SCALE = 150 };
 typedef enum Fe8HudKind {
-    FE8_HUD_UNIT, FE8_HUD_TERRAIN, FE8_HUD_OBJECTIVE, FE8_HUD_ACTION
+    FE8_HUD_UNIT, FE8_HUD_TERRAIN, FE8_HUD_OBJECTIVE, FE8_HUD_ACTION,
+    FE8_HUD_DETAIL, FE8_HUD_SCENE
 } Fe8HudKind;
 typedef struct Fe8HudRect { int x, y, width, height; } Fe8HudRect;
 typedef struct Fe8HudPanel {
@@ -29,10 +30,16 @@ void fe8_native_hud_reset(Fe8NativeHud *hud);
 /* read8 must expose the *raw* I/O register shadow (mCore.rawRead8), not GBA
  * bus open-bus values for write-only scroll/blend registers. Purely read-only.
  * False leaves the canonical frame untouched; nothing may be stripped then. */
+bool fe8_native_hud_extract_tactical(Fe8NativeHud *hud, const Fe8MemoryView *memory,
+    const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map);
 bool fe8_native_hud_extract(Fe8NativeHud *hud, const Fe8MemoryView *memory,
     const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride,
     bool live_map);
 /* cursor_x/y are drawable coordinates. Action menus latch once per opening. */
+/* Additional text-mode panels (weapon/staff lists, forecasts, target help).
+ * Uses the same pixel oracle. Unsupported effects use an intact live panel. */
+bool fe8_native_hud_extract_details(Fe8NativeHud *hud, const Fe8MemoryView *memory,
+    const Fe8Snapshot *snapshot, const Fe8HostPixel *frame, size_t stride, bool live_map);
 void fe8_native_hud_layout(Fe8NativeHud *hud, int width, int height,
     double cursor_x, double cursor_y, int scale_percent);
 bool fe8_native_hud_hit_test(const Fe8NativeHud *hud, int x, int y);

@@ -50,6 +50,12 @@ else()
 endif()
 
 add_executable(fe8-mgba-sdl
+    app/src/voxel_targets.c
+    app/src/voxel_stage.c
+    app/src/camera_gesture.c
+    app/src/voxel_gpu_gl.c
+    app/src/voxel_renderer.c
+    app/src/voxel_buildings.c
     app/src/main.c
     app/src/native_hud.c
     app/src/native_hud_host.c
@@ -105,6 +111,7 @@ if(APPLE)
     target_compile_definitions(fe8-mgba-sdl PRIVATE BUILD_GLES3 GL_SILENCE_DEPRECATION)
     target_link_libraries(fe8-mgba-sdl PRIVATE
         "-framework Cocoa"
+        "-framework Carbon"
         "-framework CoreText"
         "-framework OpenGL"
         "-framework UniformTypeIdentifiers")

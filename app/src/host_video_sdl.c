@@ -8,8 +8,11 @@
 typedef struct Fe8HostVideoSdl {
     SDL_Renderer *renderer;
     SDL_Texture *texture;
-    SDL_Texture *overlay;
-    int overlay_width, overlay_height;
+    SDL_Texture *overlay, *scene;
+    Fe8VoxelGl *gpu;
+    SDL_GLContext gl_context;
+    int gpu_attempted;
+    int overlay_width, overlay_height, scene_width, scene_height;
 } Fe8HostVideoSdl;
 
 static int apply_layout(Fe8HostVideo *video, Fe8HostVideoSdl *backend) {
@@ -42,6 +45,7 @@ int fe8_host_video_init(Fe8HostVideo *video, const char *title,
         SDL_RENDERER_ACCELERATED | (vsync_enabled ? SDL_RENDERER_PRESENTVSYNC : 0));
     if (!backend->renderer)
         return 0;
+    backend->gl_context = SDL_GL_GetCurrentContext();
     SDL_RenderSetIntegerScale(backend->renderer, SDL_FALSE);
     fe8_display_scaling_init(&video->scaling,
         canvas_width, canvas_height, 240, 160);
@@ -74,40 +78,96 @@ int fe8_host_video_set_shader(Fe8HostVideo *video, enum Fe8HostShader shader) {
     return 1;
 }
 
+/* The logical size controls mouse events, so physical-plane presentation
+ * always restores it, including on errors. Texture allocation is resize-only. */
+static int draw_plane(Fe8HostVideoSdl *backend, SDL_Texture **slot,
+        int *width, int *height, const Fe8VideoOverlay *plane, SDL_BlendMode blend) {
+    if (!plane || !plane->pixels) return 1;
+    if (plane->width <= 0 || plane->height <= 0) return 0;
+    if (!*slot || *width != plane->width || *height != plane->height) {
+        SDL_Texture *texture = SDL_CreateTexture(backend->renderer,
+            SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, plane->width, plane->height);
+        if (!texture) return 0;
+        SDL_SetTextureBlendMode(texture, blend);
+        SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+        SDL_DestroyTexture(*slot);
+        *slot = texture; *width = plane->width; *height = plane->height;
+    }
+    if (SDL_UpdateTexture(*slot, NULL, plane->pixels, plane->width * 4) != 0) return 0;
+    return SDL_RenderCopy(backend->renderer, *slot, NULL, NULL) == 0;
+}
+
+static int present_planes(Fe8HostVideo *video, const void *pixels,
+        const Fe8VideoOverlay *scene, const Fe8VideoOverlay *overlay) {
+    Fe8HostVideoSdl *backend = video ? video->backend : NULL;
+    if (!backend) return 0;
+    if (!scene) {
+        if (!pixels || SDL_UpdateTexture(backend->texture, NULL, pixels,
+                video->canvas_width * 4) != 0) return 0;
+        SDL_SetRenderDrawColor(backend->renderer, 8, 10, 12, 255);
+        if (SDL_RenderClear(backend->renderer) != 0 ||
+                SDL_RenderCopy(backend->renderer, backend->texture, NULL, NULL) != 0) return 0;
+    }
+    if (SDL_RenderSetLogicalSize(backend->renderer, 0, 0) != 0) return 0;
+    int drawn = SDL_RenderSetViewport(backend->renderer, NULL) == 0 &&
+        SDL_RenderSetScale(backend->renderer, 1, 1) == 0 &&
+        draw_plane(backend, &backend->scene, &backend->scene_width, &backend->scene_height,
+            scene, SDL_BLENDMODE_NONE) &&
+        draw_plane(backend, &backend->overlay, &backend->overlay_width, &backend->overlay_height,
+            overlay, SDL_BLENDMODE_BLEND);
+    int restored = SDL_RenderSetLogicalSize(backend->renderer, video->canvas_width, video->canvas_height);
+    if (!drawn || restored != 0) return 0;
+    SDL_RenderPresent(backend->renderer);
+    return 1;
+}
+
 int fe8_host_video_present(Fe8HostVideo *video, const void *pixels,
         const Fe8VideoOverlay *overlay) {
-    Fe8HostVideoSdl *backend = video ? video->backend : NULL;
-    if (!backend)
-        return 0;
-    if (SDL_UpdateTexture(backend->texture, NULL, pixels,
-            video->canvas_width * 4) != 0)
-        return 0;
-    SDL_SetRenderDrawColor(backend->renderer, 8, 10, 12, 255);
-    SDL_RenderClear(backend->renderer);
-    SDL_RenderCopy(backend->renderer, backend->texture, NULL, NULL);
-    if (overlay && overlay->pixels) {
-        if (!backend->overlay || backend->overlay_width != overlay->width ||
-                backend->overlay_height != overlay->height) {
-            SDL_Texture *texture = SDL_CreateTexture(backend->renderer,
-                SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, overlay->width, overlay->height);
-            if (!texture) return 0;
-            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
-            SDL_DestroyTexture(backend->overlay);
-            backend->overlay = texture;
-            backend->overlay_width = overlay->width; backend->overlay_height = overlay->height;
-        }
-        if (SDL_UpdateTexture(backend->overlay, NULL, overlay->pixels, overlay->width * 4) != 0)
+    return present_planes(video, pixels, NULL, overlay);
+}
+
+int fe8_host_video_present_scene(Fe8HostVideo *video,
+        const Fe8VideoOverlay *scene, const Fe8VideoOverlay *overlay) {
+    if (!scene || !scene->pixels || scene->width <= 0 || scene->height <= 0) return 0;
+    return present_planes(video, NULL, scene, overlay);
+}
+
+int fe8_host_video_gpu_available(Fe8HostVideo *video) {
+    Fe8HostVideoSdl *b = video ? video->backend : NULL;
+    if (!b) return 0;
+    if (!b->gpu_attempted) {
+        b->gpu_attempted = 1;
+        SDL_RendererInfo info = {0};
+        if (SDL_GetRendererInfo(b->renderer, &info) != 0 || !info.name ||
+                strcmp(info.name, "opengl") || !b->gl_context) {
+            fprintf(stderr, "Voxel GPU unavailable on this SDL driver; using software\n");
             return 0;
-        /* Draw in physical pixels, then restore the mouse-event transform. */
-        SDL_RenderSetLogicalSize(backend->renderer, 0, 0);
-        SDL_RenderSetViewport(backend->renderer, NULL);
-        SDL_RenderSetScale(backend->renderer, 1, 1);
-        int drawn = SDL_RenderCopy(backend->renderer, backend->overlay, NULL, NULL);
-        int restored = SDL_RenderSetLogicalSize(backend->renderer, video->canvas_width, video->canvas_height);
-        if (drawn != 0 || restored != 0) return 0;
+        }
+        SDL_RenderFlush(b->renderer);
+        if (SDL_GL_MakeCurrent(video->window, b->gl_context) == 0)
+            b->gpu = fe8_voxel_gl_create();
+        if (!b->gpu) fprintf(stderr, "Voxel GPU unavailable; using software: %s\n", SDL_GetError());
     }
-    SDL_RenderPresent(backend->renderer);
+    return b->gpu != NULL;
+}
+int fe8_host_video_present_gpu(Fe8HostVideo *video,
+        const Fe8VoxelGpuFrame *scene, const Fe8VideoOverlay *overlay) {
+    if (!fe8_host_video_gpu_available(video)) return 0;
+    Fe8HostVideoSdl *b = video->backend;
+    if (SDL_RenderFlush(b->renderer) != 0 ||
+            SDL_GL_MakeCurrent(video->window, b->gl_context) != 0 ||
+            SDL_RenderSetLogicalSize(b->renderer, 0, 0) != 0) return 0;
+    int drawn = SDL_RenderSetViewport(b->renderer, NULL) == 0 &&
+        SDL_RenderSetScale(b->renderer, 1, 1) == 0 && SDL_RenderFlush(b->renderer) == 0 &&
+        fe8_voxel_gl_draw(b->gpu, scene, video->scaling.drawable_width, video->scaling.drawable_height) &&
+        draw_plane(b, &b->overlay, &b->overlay_width, &b->overlay_height, overlay, SDL_BLENDMODE_BLEND) &&
+        SDL_RenderFlush(b->renderer) == 0;
+    if (drawn && video->capture_pixels)
+        video->capture_succeeded = fe8_voxel_gl_capture(b->gpu, video->capture_pixels,
+            video->scaling.drawable_width, video->scaling.drawable_height);
+    int restored = SDL_RenderSetLogicalSize(b->renderer, video->canvas_width, video->canvas_height);
+    if (!drawn || restored != 0) return 0;
+    SDL_RenderPresent(b->renderer);
     return 1;
 }
 
@@ -200,8 +260,14 @@ void fe8_host_video_deinit(Fe8HostVideo *video) {
     if (!video)
         return;
     if (backend) {
+        if (backend->gpu) {
+            SDL_RenderFlush(backend->renderer);
+            SDL_GL_MakeCurrent(video->window, backend->gl_context);
+            fe8_voxel_gl_destroy(backend->gpu);
+        }
         SDL_DestroyTexture(backend->texture);
         SDL_DestroyTexture(backend->overlay);
+        SDL_DestroyTexture(backend->scene);
         SDL_DestroyRenderer(backend->renderer);
         free(backend);
     }

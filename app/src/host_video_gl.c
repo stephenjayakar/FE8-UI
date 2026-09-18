@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct Fe8GlPlane {
+    GLuint texture;
+    int width, height;
+} Fe8GlPlane;
+
 typedef struct Fe8HostVideoGl {
     SDL_GLContext gl_context;
     struct mGLES2Context renderer;
@@ -16,8 +21,10 @@ typedef struct Fe8HostVideoGl {
     int shader_initialized;
     int drawable_width;
     int drawable_height;
-    GLuint hud_program, hud_texture, hud_vao;
-    int hud_width, hud_height;
+    GLuint hud_program, hud_vao;
+    Fe8GlPlane hud, scene;
+    Fe8VoxelGl *gpu;
+    int gpu_attempted;
 } Fe8HostVideoGl;
 
 /* A single configurable CRT pass keeps preset changes cheap: switching modes
@@ -246,7 +253,8 @@ static GLuint compile_hud_shader(GLenum type, const char *source) {
     }
     return shader;
 }
-static int draw_hud(Fe8HostVideoGl *backend, const Fe8VideoOverlay *overlay) {
+static int draw_plane(Fe8HostVideoGl *backend, Fe8GlPlane *plane,
+        const Fe8VideoOverlay *overlay, int alpha) {
     if (!overlay || !overlay->pixels) return 1;
     if (!backend->hud_program) {
         const char *vs = "#version 150\n"
@@ -272,31 +280,33 @@ static int draw_hud(Fe8HostVideoGl *backend, const Fe8VideoOverlay *overlay) {
         }
         backend->hud_program = program;
         glGenVertexArrays(1, &backend->hud_vao);
-        glGenTextures(1, &backend->hud_texture);
     }
+    if (!plane->texture) glGenTextures(1, &plane->texture);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, backend->drawable_width, backend->drawable_height);
     glDisable(GL_SCISSOR_TEST);
     glUseProgram(backend->hud_program);
     glBindVertexArray(backend->hud_vao);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, backend->hud_texture);
+    glBindTexture(GL_TEXTURE_2D, plane->texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    if (backend->hud_width != overlay->width || backend->hud_height != overlay->height) {
+    if (plane->width != overlay->width || plane->height != overlay->height) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, overlay->width, overlay->height,
             0, GL_RGBA, GL_UNSIGNED_BYTE, overlay->pixels);
-        backend->hud_width = overlay->width; backend->hud_height = overlay->height;
+        plane->width = overlay->width; plane->height = overlay->height;
     } else {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, overlay->width, overlay->height,
             GL_RGBA, GL_UNSIGNED_BYTE, overlay->pixels);
     }
     glUniform1i(glGetUniformLocation(backend->hud_program, "hud"), 0);
-    glEnable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    if (alpha) glEnable(GL_BLEND); else glDisable(GL_BLEND);
     glBlendEquation(GL_FUNC_ADD);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -319,7 +329,47 @@ int fe8_host_video_present(Fe8HostVideo *video, const void *pixels,
     backend->renderer.d.clear(&backend->renderer.d);
     backend->renderer.d.setImage(&backend->renderer.d, VIDEO_LAYER_IMAGE, pixels);
     backend->renderer.d.drawFrame(&backend->renderer.d);
-    if (!draw_hud(backend, overlay)) return 0;
+    if (!draw_plane(backend, &backend->hud, overlay, 1)) return 0;
+    SDL_GL_SwapWindow(video->window);
+    return glGetError() == GL_NO_ERROR;
+}
+
+int fe8_host_video_present_scene(Fe8HostVideo *video,
+        const Fe8VideoOverlay *scene, const Fe8VideoOverlay *overlay) {
+    Fe8HostVideoGl *backend = video ? video->backend : NULL;
+    if (!backend || !scene || !scene->pixels || scene->width <= 0 || scene->height <= 0)
+        return 0;
+    while (glGetError() != GL_NO_ERROR) {}
+    /* The scene covers the full drawable. Do not upload/draw the hidden GBA
+     * canvas, execute its CRT passes, or blend an opaque scene on the CPU. */
+    if (!draw_plane(backend, &backend->scene, scene, 0) ||
+            !draw_plane(backend, &backend->hud, overlay, 1)) return 0;
+    SDL_GL_SwapWindow(video->window);
+    return glGetError() == GL_NO_ERROR;
+}
+
+int fe8_host_video_gpu_available(Fe8HostVideo *video) {
+    Fe8HostVideoGl *b = video ? video->backend : NULL;
+    if (!b || SDL_GL_MakeCurrent(video->window, b->gl_context) != 0) return 0;
+    if (!b->gpu_attempted) {
+        b->gpu_attempted = 1;
+        while (glGetError() != GL_NO_ERROR) {}
+        b->gpu = fe8_voxel_gl_create();
+        if (!b->gpu) fprintf(stderr, "Voxel GPU unavailable; using software: %s\n", SDL_GetError());
+    }
+    return b->gpu != NULL;
+}
+int fe8_host_video_present_gpu(Fe8HostVideo *video,
+        const Fe8VoxelGpuFrame *scene, const Fe8VideoOverlay *overlay) {
+    if (!fe8_host_video_gpu_available(video)) return 0;
+    Fe8HostVideoGl *b = video->backend;
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!fe8_voxel_gl_draw(b->gpu, scene, b->drawable_width, b->drawable_height) ||
+            !draw_plane(b, &b->hud, overlay, 1)) return 0;
+    if (video->capture_pixels)
+        video->capture_succeeded = fe8_voxel_gl_capture(b->gpu, video->capture_pixels,
+            b->drawable_width, b->drawable_height);
     SDL_GL_SwapWindow(video->window);
     return glGetError() == GL_NO_ERROR;
 }
@@ -411,8 +461,10 @@ void fe8_host_video_deinit(Fe8HostVideo *video) {
     if (backend) {
         if (video->window && backend->gl_context)
             SDL_GL_MakeCurrent(video->window, backend->gl_context);
+        fe8_voxel_gl_destroy(backend->gpu);
         destroy_shader(backend);
-        if (backend->hud_texture) glDeleteTextures(1, &backend->hud_texture);
+        if (backend->hud.texture) glDeleteTextures(1, &backend->hud.texture);
+        glDeleteTextures(1, &backend->scene.texture);
         if (backend->hud_vao) glDeleteVertexArrays(1, &backend->hud_vao);
         if (backend->hud_program) glDeleteProgram(backend->hud_program);
         if (backend->renderer_initialized)

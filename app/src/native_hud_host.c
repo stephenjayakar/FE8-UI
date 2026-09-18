@@ -25,7 +25,7 @@ const Fe8HostPixel *fe8_hud_host_update(Fe8HudHost *host,
         const Fe8Snapshot *snapshot, const Fe8HostPixel *frame,
         bool live_map, int frame_x, int frame_y) {
     host->overlay.pixels = NULL;
-    if (!fe8_native_hud_extract(&host->hud, memory, snapshot, frame,
+    if (!(host->voxel_tactical ? fe8_native_hud_extract_tactical : fe8_native_hud_extract)(&host->hud, memory, snapshot, frame,
             FE8_HUD_WIDTH, live_map && host->enabled)) return frame;
     int w = video->scaling.drawable_width, h = video->scaling.drawable_height;
     if (w <= 0 || h <= 0 || (size_t)w > SIZE_MAX / sizeof(*host->pixels) / (size_t)h)
@@ -46,6 +46,35 @@ const Fe8HostPixel *fe8_hud_host_update(Fe8HudHost *host,
 fallback:
     fe8_native_hud_reset(&host->hud);
     return frame;
+}
+static bool draw_extra(Fe8HudHost *host, const Fe8HostVideo *video) {
+    int w=video->scaling.drawable_width,h=video->scaling.drawable_height;
+    if(w<=0||h<=0||(size_t)w>SIZE_MAX/sizeof(*host->pixels)/(size_t)h)return false;
+    size_t count=(size_t)w*h;
+    if(count>host->capacity){
+        Fe8HostPixel *p=realloc(host->pixels,count*sizeof(*p));if(!p)return false;
+        host->pixels=p;host->capacity=count;
+    }
+    fe8_native_hud_layout(&host->hud,w,h,w*.5,h*.5,host->scale_percent);
+    fe8_native_hud_draw(&host->hud,host->pixels,w,w,h);
+    host->overlay=(Fe8VideoOverlay){host->pixels,w,h};return true;
+}
+bool fe8_hud_host_native_scene(Fe8HudHost *host,const Fe8HostVideo *video,
+        const Fe8HostPixel *frame) {
+    if(!host||!video||!frame)return false;
+    fe8_native_hud_reset(&host->hud);
+    for(unsigned i=0;i<FE8_HUD_WIDTH*FE8_HUD_HEIGHT;++i)
+        host->hud.atlas[i]=frame[i]|UINT32_C(0xFF000000);
+    host->hud.count=1;host->hud.panels[0]=(Fe8HudPanel){FE8_HUD_SCENE,
+        {0,0,FE8_HUD_WIDTH,FE8_HUD_HEIGHT},{0}};
+    return draw_extra(host,video);
+}
+bool fe8_hud_host_details(Fe8HudHost *host,const Fe8HostVideo *video,
+        const Fe8MemoryView *memory,const Fe8Snapshot *snapshot,
+        const Fe8HostPixel *frame,bool validated_map) {
+    if(!host||!video)return false;
+    return fe8_native_hud_extract_details(&host->hud,memory,snapshot,frame,
+        FE8_HUD_WIDTH,validated_map) && draw_extra(host,video);
 }
 bool fe8_hud_host_contains(const Fe8HudHost *host, const Fe8HostVideo *video,
         int canvas_x, int canvas_y) {
