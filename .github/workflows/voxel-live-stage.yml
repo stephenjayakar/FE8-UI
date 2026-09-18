@@ -1,16 +1,16 @@
-name: Validate and publish voxel inspection fixes
+name: Validate and publish persistent 3D session
 on:
   push:
     branches: [voxel-live-staging-20260916]
-    paths: ['.github/workflows/voxel-live-stage.yml']
+    paths: ['.github/workflows/voxel-live-stage.yml', '.github/staging/persistent-session.*']
 permissions:
   contents: read
 concurrency:
-  group: voxel-inspection-publish
-  cancel-in-progress: true
+  group: voxel-persistent-session-publish
+  cancel-in-progress: false
 env:
-  FEATURE_PARENT: 1baf252db8c30fd4505d719ff6ed0cfd7e6f908b
-  PAYLOAD_SHA256: 81a1ec86131baacf0c92440a392ae5f7f150c4a85b2c4aec0685a77a1a857b88
+  FEATURE_PARENT: 31aea8ff6fd27b775c2c0930dda64b426612a53e
+  PAYLOAD_SHA256: 5ed8fcdd77b586ab6cb405bf9f28cf550a62970c37ca520508e5da0282c09fdf
 jobs:
   prepare:
     runs-on: ubuntu-24.04
@@ -22,47 +22,50 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Reconstruct exact tested inspection/settings patch
+      - name: Reconstruct and verify exact locally tested source
         id: patch
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64, hashlib, json, lzma, os, pathlib, subprocess
+          import hashlib, json, lzma, os, pathlib, subprocess
           root = pathlib.Path('.github/staging')
-          encoded = ''.join((root / f'inspection-edits.{i}.b64part').read_text() for i in range(2))
-          payload = base64.b64decode(encoded)
+          payload = b''.join((root / f'persistent-session.{i}.xzpart').read_bytes() for i in range(3))
           assert hashlib.sha256(payload).hexdigest() == os.environ['PAYLOAD_SHA256']
-          edits = json.loads(lzma.decompress(payload))
-          manifest = json.loads((root / 'inspection-manifest.json').read_text())
-          assert len(edits) == len(manifest) == 10
+          bundle = json.loads(lzma.decompress(payload))
+          edits, manifest = bundle['edits'], bundle['sha256']
+          assert len(edits) == len(manifest) == 25
+          assert {item['path'] for item in edits} == set(manifest)
           subprocess.run(['git','checkout','--detach',os.environ['FEATURE_PARENT']],check=True)
           for item in edits:
               path = pathlib.Path(item['path'])
-              lines = path.read_text().splitlines(keepends=True) if path.exists() else []
+              assert not path.is_absolute() and '..' not in path.parts
+              assert not str(path).startswith('.github/')
+              lines = path.read_bytes().decode('utf-8').splitlines(keepends=True) if path.exists() else []
               for start,count,replacement in reversed(item['edits']):
+                  assert 0 <= start <= len(lines) and 0 <= count <= len(lines) - start
                   lines[start:start+count] = replacement.splitlines(keepends=True)
-              data = ''.join(lines).encode()
+              data = ''.join(lines).encode('utf-8')
               assert hashlib.sha256(data).hexdigest() == manifest[str(path)], str(path)
               path.parent.mkdir(parents=True, exist_ok=True)
               path.write_bytes(data)
           subprocess.run(['git','add','--',*manifest],check=True)
           subprocess.run(['git','diff','--cached','--check'],check=True)
-          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'verified-inspection'
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'verified-session'
           out.mkdir(parents=True, exist_ok=True)
           patch = subprocess.check_output(['git','diff','--cached','--binary','--full-index'])
           (out / 'feature.patch').write_bytes(patch)
+          (out / 'source-sha256.json').write_text(json.dumps(manifest,indent=2)+'\n')
           tree = subprocess.check_output(['git','write-tree'],text=True).strip()
           digest = hashlib.sha256(patch).hexdigest()
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-              f.write('tree='+tree+'\n')
-              f.write('digest='+digest+'\n')
-          print('Verified tree', tree, 'patch', digest)
+              f.write(f'tree={tree}\ndigest={digest}\n')
+          print('All 25 source files verified:', tree, 'patch:', digest)
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: verified-voxel-inspection-source
-          path: ${{ runner.temp }}/verified-inspection
+          name: verified-persistent-3d-source
+          path: ${{ runner.temp }}/verified-session
           retention-days: 7
   validate:
     needs: prepare
@@ -72,21 +75,28 @@ jobs:
         os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      EXPECTED_TREE: ${{ needs.prepare.outputs.tree }}
+      PATCH_SHA256: ${{ needs.prepare.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.FEATURE_PARENT }}
       - uses: actions/download-artifact@v4
         with:
-          name: verified-voxel-inspection-source
-          path: ${{ runner.temp }}/verified-inspection
+          name: verified-persistent-3d-source
+          path: ${{ runner.temp }}/verified-session
       - name: Apply verified source and initialize pinned emulator
         shell: bash
         run: |
           set -euo pipefail
-          test "$(sha256sum "$RUNNER_TEMP/verified-inspection/feature.patch" | cut -d' ' -f1)" = "${{ needs.prepare.outputs.digest }}"
-          git apply --index "$RUNNER_TEMP/verified-inspection/feature.patch"
-          test "$(git write-tree)" = "${{ needs.prepare.outputs.tree }}"
+          python3 - <<'PY'
+          import hashlib, os, pathlib
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'verified-session/feature.patch'
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == os.environ['PATCH_SHA256']
+          PY
+          git apply --index "$RUNNER_TEMP/verified-session/feature.patch"
+          test "$(git write-tree)" = "$EXPECTED_TREE"
           git submodule update --init --depth 1 third_party/mgba
       - name: Linux dependencies
         if: runner.os == 'Linux'
@@ -94,7 +104,7 @@ jobs:
       - name: macOS dependencies
         if: runner.os == 'macOS'
         run: brew install ninja sdl2
-      - name: Build and test complete native frontend
+      - name: Build complete native frontend and regression suite
         shell: bash
         run: |
           set -euo pipefail
@@ -102,20 +112,38 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=$(uname -m)"); fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFE8_BUILD_TESTS=ON "${args[@]}"
           cmake --build build --parallel 3
+      - name: Test persistent world, native panels, gestures, targets and actual GPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/session-validation
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a env SDL_RENDER_DRIVER=opengl ctest --test-dir build --output-on-failure
+            xvfb-run -a env SDL_RENDER_DRIVER=opengl ctest --test-dir build --output-on-failure | tee build/session-validation/tests.log
+            xvfb-run -a env SDL_RENDER_DRIVER=opengl build/tests/test_video_scene build/session-validation/presenter.ppm | tee build/session-validation/presenter.log
           else
-            ctest --test-dir build --output-on-failure
-            mkdir -p build/inspection-settings
-            build/tests/test_macos_settings build/inspection-settings
+            ctest --test-dir build --output-on-failure | tee build/session-validation/tests.log
+            build/tests/test_video_scene build/session-validation/presenter.ppm | tee build/session-validation/presenter.log
+            build/tests/test_macos_settings build/session-validation | tee build/session-validation/settings.log
           fi
-          test "$(git write-tree)" = "${{ needs.prepare.outputs.tree }}"
+          grep -q 'real OpenGL geometry/depth' build/session-validation/presenter.log
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persistent-3d-validation-${{ runner.os }}
+          path: |
+            build/session-validation
+            build/Testing/Temporary/LastTest.log
+          retention-days: 7
   publish:
     needs: [prepare, validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
+    env:
+      EXPECTED_TREE: ${{ needs.prepare.outputs.tree }}
+      PATCH_SHA256: ${{ needs.prepare.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,16 +151,28 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: verified-voxel-inspection-source
-          path: ${{ runner.temp }}/verified-inspection
-      - name: Publish validated fixes to voxel-live
+          name: verified-persistent-3d-source
+          path: ${{ runner.temp }}/verified-session
+      - name: Publish validated source to voxel-live without force-pushing
         shell: bash
         run: |
           set -euo pipefail
-          git apply --index "$RUNNER_TEMP/verified-inspection/feature.patch"
-          test "$(git write-tree)" = "${{ needs.prepare.outputs.tree }}"
+          python3 - <<'PY'
+          import hashlib, os, pathlib
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'verified-session/feature.patch'
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == os.environ['PATCH_SHA256']
+          PY
+          git apply --index "$RUNNER_TEMP/verified-session/feature.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
           remote=$(git ls-remote --heads origin refs/heads/voxel-live | cut -f1)
           test "$remote" = "$FEATURE_PARENT"
-          git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'Keep voxel inspection in 3D and expose GPU backend'
+          git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'Keep voxel mode persistent through native scenes and add drag camera controls'
           git push origin HEAD:refs/heads/voxel-live
-          echo "Published $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/COMMIT.txt"
+          echo "Published $(git rev-parse HEAD) to voxel-live after native Linux/macOS validation." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: persistent-3d-published-commit
+          path: ${{ runner.temp }}/COMMIT.txt
+          retention-days: 7
