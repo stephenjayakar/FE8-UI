@@ -199,17 +199,19 @@ If a same-name `.sav` exists beside an imported ROM, it is copied into isolated
 storage on first launch. Removing a row only removes the library reference; it
 does not delete the ROM or that game's saves.
 
-**Settings → Settings…** is available from both the library and a running game.
+**Settings…** (Command-comma, in the application menu) is available from both
+the library and a running game. Its **General**, **Video**, **Controls**, and
+**Hotkeys** tabs are global.
 Audio, VSync, extended rendering, video shader, zoom sensitivity, and every
 keyboard binding are global and apply to all imported games.
 
-The Settings window also has a global **Hotkeys** section. Hold **Space** to run
+The Settings window's **Hotkeys** tab is global. Hold **Space** to run
 at the configured **2×**, **3×**, **4×** (default), or **Unlimited** speed;
 audio and VSync resume automatically when it is released. Unlimited removes
 frontend frame pacing and runs as quickly as emulation and rendering allow. **F5**
 quick-saves and **F8** quick-loads the current game's isolated state by default.
 **F6** toggles the extended renderer without restarting or closing the inventory
-manager. On macOS, **Settings → Extended Renderer** provides the same toggle.
+manager. On macOS, **View → Extended Renderer** provides the same toggle.
 All four hotkeys can be rebound by clicking their binding and pressing a key.
 
 The command-line interface remains available for diagnostics and direct launch:
@@ -235,8 +237,8 @@ saved global audio preference.
 
 The extended logical canvas is at least 480×320 and adapts to the drawable's
 aspect ratio. The window starts maximized and uses nearest-neighbor sampling to
-preserve hard pixel edges. Scroll over the canvas for gradual zoom. **Settings →
-Settings… → Zoom sensitivity** provides a continuous Low–High slider from 0.5%
+preserve hard pixel edges. Scroll over the canvas for gradual zoom. **Settings… →
+General → Zoom sensitivity** provides a continuous Low–High slider from 0.5%
 to 3% per wheel unit; the default is **Low**, matching the original 0.5% rate.
 Zoom stays anchored to the map position beneath the pointer;
 the extended terrain and units are re-rendered for each new canvas size instead
@@ -248,9 +250,10 @@ Emulation is paced from libmGBA's GBA timing (59.728 fps), independently of a
 
 Audio is enabled by default and converted from libmGBA's native stream to the
 CoreAudio device format through SDL. Presentation uses VSync while retaining
-GBA-clock pacing. Open **Settings → Settings…** in the macOS menu bar (or press
+GBA-clock pacing. Open **Settings…** from the application menu (or press
 Command-comma) to toggle audio, VSync, or the extended renderer and select a
-video preset. **Off** is the default sharp, unfiltered presentation; **CRT (TV
+video preset; **View → Video Shader** switches presets and **Adjust Shader…**
+tunes the active one. **Off** is the default sharp, unfiltered presentation; **CRT (TV
 Mode)** adds mGBA's subtle horizontal blend and scanlines; **Scanlines** keeps
 the pixels sharp while darkening alternating lines. The shader processes the
 entire dynamic host canvas, including the extended map, and can be changed live.
@@ -283,7 +286,7 @@ Mouse map input is disabled during dialogue and cutscenes, while left/right
 click continue to act as A/B for native UI.
 
 Mouse controls are enabled by default and can be toggled globally under
-**Settings → Settings… → Enable mouse controls**. When enabled, the game canvas
+**Settings… → General → Enable mouse controls**. When enabled, the game canvas
 uses a large blue-and-gold tactician pointer with an exact tip hotspot. Disabling
 the option immediately cancels pending mouse input and restores the normal macOS
 pointer; the preference also applies to games launched later from the library.

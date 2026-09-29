@@ -90,13 +90,49 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     return SDL_SCANCODE_UNKNOWN;
 }
 
+void fe8_macos_show_shader_settings(void);
+void fe8_macos_install_shader_menu(NSMenu *menu);
+
+/* Toolbar-style preference tabs that resize the window to each pane. */
+@interface Fe8SettingsTabController : NSTabViewController
+@end
+
+@implementation Fe8SettingsTabController
+
+- (void)fitWindowToItem:(NSTabViewItem *)item animate:(BOOL)animate {
+    NSWindow *window = self.view.window;
+    NSView *pane = item.viewController.view;
+    if (!window || !pane)
+        return;
+    NSSize size = item.viewController.preferredContentSize;
+    NSRect content = [window contentRectForFrameRect:window.frame];
+    NSRect target = [window frameRectForContentRect:
+        NSMakeRect(NSMinX(content), NSMaxY(content) - size.height, size.width, size.height)];
+    [window setFrame:target display:YES animate:animate && window.visible];
+}
+
+- (void)tabView:(NSTabView *)tabView didSelectTabViewItem:(NSTabViewItem *)item {
+    [super tabView:tabView didSelectTabViewItem:item];
+    [self fitWindowToItem:item animate:YES];
+}
+
+@end
+
 @interface Fe8SettingsController : NSObject <NSWindowDelegate>
 @property(nonatomic, assign) Fe8HostSettings *settings;
 @property(nonatomic, strong) NSWindow *window;
+@property(nonatomic, strong) Fe8SettingsTabController *tabs;
 @property(nonatomic, strong) NSMutableArray<NSButton *> *bindingButtons;
 @property(nonatomic, strong) NSButton *listeningButton;
+@property(nonatomic, strong) NSButton *audioButton;
+@property(nonatomic, strong) NSButton *vsyncButton;
+@property(nonatomic, strong) NSButton *mouseButton;
 @property(nonatomic, strong) NSButton *extensionsButton;
+@property(nonatomic, strong) NSPopUpButton *shaderPopup;
+@property(nonatomic, strong) NSPopUpButton *speedupPopup;
+@property(nonatomic, strong) NSSlider *zoomSlider;
 @property(nonatomic, strong) NSTextField *zoomSensitivityValue;
+@property(nonatomic, strong) NSTextField *bindingStatus;
 @property(nonatomic, strong) id keyMonitor;
 @property(nonatomic, assign) void *stateContext;
 @property(nonatomic, assign) Fe8HostStateCallback saveState;
@@ -110,6 +146,85 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 - (void)showSettings:(id)sender;
 @end
 
+static const CGFloat kPaneWidth = 540;
+
+static NSTextField *formLabel(NSString *text) {
+    NSTextField *label = [NSTextField labelWithString:text];
+    label.alignment = NSTextAlignmentRight;
+    return label;
+}
+
+static NSTextField *hintLabel(NSString *text) {
+    NSTextField *label = [NSTextField wrappingLabelWithString:text];
+    label.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    label.textColor = NSColor.secondaryLabelColor;
+    label.preferredMaxLayoutWidth = 330;
+    label.selectable = NO;
+    return label;
+}
+
+static NSGridView *formGrid(void) {
+    NSGridView *grid = [NSGridView gridViewWithNumberOfColumns:2 rows:0];
+    grid.rowSpacing = 10;
+    grid.columnSpacing = 10;
+    grid.rowAlignment = NSGridRowAlignmentFirstBaseline;
+    grid.translatesAutoresizingMaskIntoConstraints = NO;
+    return grid;
+}
+
+static void finishFormGrid(NSGridView *grid) {
+    [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
+    [grid columnAtIndex:0].width = 150;
+    [grid columnAtIndex:1].xPlacement = NSGridCellPlacementLeading;
+}
+
+static void addFormRow(NSGridView *grid, NSString *label, NSView *control) {
+    [grid addRowWithViews:@[label ? formLabel(label) : NSGridCell.emptyContentView, control]];
+}
+
+static void addHintRow(NSGridView *grid, NSString *text) {
+    NSGridRow *row = [grid addRowWithViews:@[NSGridCell.emptyContentView, hintLabel(text)]];
+    row.topPadding = -5;
+}
+
+static void addSeparatorRow(NSGridView *grid) {
+    NSBox *line = [[NSBox alloc] init];
+    line.boxType = NSBoxSeparator;
+    NSGridRow *row = [grid addRowWithViews:@[line]];
+    [row mergeCellsInRange:NSMakeRange(0, 2)];
+    row.topPadding = 4;
+    row.bottomPadding = 4;
+    [row cellAtIndex:0].xPlacement = NSGridCellPlacementFill;
+}
+
+static NSViewController *paneController(NSString *title, NSView *body) {
+    NSView *pane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kPaneWidth, 200)];
+    body.translatesAutoresizingMaskIntoConstraints = NO;
+    [body setContentHuggingPriority:NSLayoutPriorityRequired
+        forOrientation:NSLayoutConstraintOrientationVertical];
+    [pane addSubview:body];
+    NSLayoutConstraint *bottom = [body.bottomAnchor
+        constraintEqualToAnchor:pane.bottomAnchor constant:-24];
+    [NSLayoutConstraint activateConstraints:@[
+        [pane.widthAnchor constraintEqualToConstant:kPaneWidth],
+        [body.topAnchor constraintEqualToAnchor:pane.topAnchor constant:22],
+        bottom,
+        [body.centerXAnchor constraintEqualToAnchor:pane.centerXAnchor],
+        [body.leadingAnchor constraintGreaterThanOrEqualToAnchor:pane.leadingAnchor constant:20],
+    ]];
+    /* Freeze each pane at its natural height so a taller sibling tab can
+     * never stretch the grid rows apart. */
+    NSSize size = pane.fittingSize;
+    bottom.active = NO;
+    [body.bottomAnchor constraintLessThanOrEqualToAnchor:pane.bottomAnchor constant:-24].active = YES;
+    [pane.heightAnchor constraintEqualToConstant:size.height].active = YES;
+    NSViewController *controller = [[NSViewController alloc] init];
+    controller.view = pane;
+    controller.title = title;
+    controller.preferredContentSize = size;
+    return controller;
+}
+
 @implementation Fe8SettingsController
 
 - (NSString *)titleForBindingTag:(NSInteger)tag {
@@ -120,7 +235,28 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
             tag < FE8_HOTKEY_TAG_BASE + FE8_HOST_HOTKEY_COUNT)
         scancode = self.settings->hotkeys[tag - FE8_HOTKEY_TAG_BASE];
     const char *name = SDL_GetScancodeName(scancode);
-    return name && *name ? [NSString stringWithUTF8String:name] : @"Unbound";
+    return name && *name ? [NSString stringWithUTF8String:name] : @"Not Set";
+}
+
+- (void)setBindingButton:(NSButton *)button listening:(BOOL)listening {
+    button.bezelColor = listening ? NSColor.controlAccentColor : nil;
+    button.state = listening ? NSControlStateValueOn : NSControlStateValueOff;
+    button.title = listening ? @"Press a key…" : [self titleForBindingTag:button.tag];
+    button.font = listening ? [NSFont systemFontOfSize:NSFont.systemFontSize] :
+        [NSFont monospacedSystemFontOfSize:NSFont.systemFontSize weight:NSFontWeightMedium];
+    BOOL unbound = !listening && [button.title isEqualToString:@"Not Set"];
+    button.contentTintColor = unbound ? NSColor.tertiaryLabelColor : nil;
+}
+
+- (void)setBindingStatusText:(NSString *)text warning:(BOOL)warning {
+    self.bindingStatus.stringValue = text;
+    self.bindingStatus.textColor = warning ? NSColor.systemOrangeColor :
+        NSColor.secondaryLabelColor;
+}
+
+- (void)resetBindingStatus {
+    [self setBindingStatusText:@"Click a binding, then press the key to use. Esc cancels."
+        warning:NO];
 }
 
 - (void)stopListening {
@@ -129,20 +265,32 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
         self.keyMonitor = nil;
     }
     if (self.listeningButton) {
-        NSInteger tag = self.listeningButton.tag;
-        self.listeningButton.title = [self titleForBindingTag:tag];
+        NSButton *button = self.listeningButton;
         self.listeningButton = nil;
+        [self setBindingButton:button listening:NO];
     }
+    [self resetBindingStatus];
+}
+
+- (void)refreshBindingButtons {
+    for (NSButton *button in self.bindingButtons)
+        if (button != self.listeningButton)
+            [self setBindingButton:button listening:NO];
 }
 
 - (void)captureBinding:(NSButton *)sender {
+    BOOL toggleOff = self.listeningButton == sender;
     [self stopListening];
+    if (toggleOff)
+        return;
     self.listeningButton = sender;
-    sender.title = @"Press a key…  (Esc cancels)";
-    [self.window makeFirstResponder:sender];
+    [self setBindingButton:sender listening:YES];
+    [self setBindingStatusText:@"Press the new key now. Esc cancels." warning:NO];
+    [self.window makeFirstResponder:nil];
     self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
         NSEventMaskKeyDown | NSEventMaskFlagsChanged
         handler:^NSEvent *(NSEvent *event) {
+            if (!self.listeningButton) return event;
             NSString *characters = event.type == NSEventTypeKeyDown ?
                 event.charactersIgnoringModifiers : nil;
             if (characters.length && [characters characterAtIndex:0] == 0x1B) {
@@ -169,6 +317,9 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
                     forKey:hotkeyBindingKey(hotkey)];
                 [self stopListening];
             }
+            if (scancode == SDL_SCANCODE_UNKNOWN && event.type == NSEventTypeKeyDown)
+                [self setBindingStatusText:@"That key isn't supported. Try another, or press Esc."
+                    warning:YES];
             return nil;
         }];
 }
@@ -210,6 +361,11 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     [NSUserDefaults.standardUserDefaults setInteger:shader forKey:kShaderKey];
 }
 
+- (void)showShaderSettings:(id)sender {
+    (void)sender;
+    fe8_macos_show_shader_settings();
+}
+
 - (void)speedupRateChanged:(NSPopUpButton *)sender {
     NSInteger rate = sender.indexOfSelectedItem;
     if (rate < 0 || rate >= FE8_HOST_SPEEDUP_COUNT)
@@ -222,7 +378,7 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
 - (NSString *)zoomSensitivityTitle:(double)sensitivity {
     NSString *level = sensitivity <= 0.006 ? @"Low" :
         (sensitivity <= 0.018 ? @"Medium" : @"High");
-    return [NSString stringWithFormat:@"%@ · %.1f%%", level, sensitivity * 100.0];
+    return [NSString stringWithFormat:@"%@ (%.1f%%)", level, sensitivity * 100.0];
 }
 
 - (void)zoomSensitivityChanged:(NSSlider *)sender {
@@ -234,6 +390,200 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     ++self.settings->revision;
     [NSUserDefaults.standardUserDefaults setDouble:sensitivity
         forKey:kZoomSensitivityKey];
+}
+
+#pragma mark Construction
+
+- (NSButton *)checkbox:(NSString *)title tag:(NSInteger)tag on:(int)on {
+    NSButton *check = [NSButton checkboxWithTitle:title target:self
+        action:@selector(settingChanged:)];
+    check.tag = tag;
+    check.state = on ? NSControlStateValueOn : NSControlStateValueOff;
+    return check;
+}
+
+- (NSPopUpButton *)popupWithTitles:(NSArray<NSString *> *)titles selected:(NSInteger)selected
+    action:(SEL)action {
+    NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    [popup addItemsWithTitles:titles];
+    [popup selectItemAtIndex:selected];
+    popup.target = self;
+    popup.action = action;
+    [popup.widthAnchor constraintGreaterThanOrEqualToConstant:190].active = YES;
+    return popup;
+}
+
+- (NSButton *)bindingButtonWithTag:(NSInteger)tag {
+    NSButton *binding = [NSButton buttonWithTitle:@"" target:self
+        action:@selector(captureBinding:)];
+    binding.tag = tag;
+    binding.bezelStyle = NSBezelStyleRounded;
+    [binding.widthAnchor constraintEqualToConstant:150].active = YES;
+    [self setBindingButton:binding listening:NO];
+    [self.bindingButtons addObject:binding];
+    return binding;
+}
+
+- (NSViewController *)generalPane {
+    Fe8HostSettings *settings = self.settings;
+    NSGridView *grid = formGrid();
+    self.audioButton = [self checkbox:@"Play game audio" tag:0 on:settings->audio_enabled];
+    addFormRow(grid, @"Sound:", self.audioButton);
+    self.vsyncButton = [self checkbox:@"Synchronize with display (VSync)" tag:1
+        on:settings->vsync_enabled];
+    addFormRow(grid, @"Presentation:", self.vsyncButton);
+    addHintRow(grid, @"Emulation is always paced at the GBA's native 59.73 fps.");
+
+    addSeparatorRow(grid);
+    self.mouseButton = [self checkbox:@"Enable mouse controls" tag:3 on:settings->mouse_enabled];
+    addFormRow(grid, @"Mouse:", self.mouseButton);
+    addHintRow(grid, @"Point to move the map cursor. Click for A, right-click for B, "
+        @"Shift-drag to pan.");
+
+    NSMutableArray<NSString *> *rates = [NSMutableArray array];
+    for (NSInteger i = 0; i < FE8_HOST_SPEEDUP_COUNT; ++i)
+        [rates addObject:[NSString stringWithUTF8String:
+            fe8_host_speedup_name((enum Fe8HostSpeedupRate)i)]];
+    self.speedupPopup = [self popupWithTitles:rates selected:settings->speedup_rate
+        action:@selector(speedupRateChanged:)];
+    addSeparatorRow(grid);
+    addFormRow(grid, @"Speed-up rate:", self.speedupPopup);
+    addHintRow(grid, @"Applies while the Speed Up hotkey is held.");
+
+    self.zoomSlider = [NSSlider sliderWithValue:settings->zoom_sensitivity * 100.0
+        minValue:FE8_HOST_ZOOM_SENSITIVITY_LOW * 100.0
+        maxValue:FE8_HOST_ZOOM_SENSITIVITY_HIGH * 100.0
+        target:self action:@selector(zoomSensitivityChanged:)];
+    self.zoomSlider.continuous = YES;
+    self.zoomSlider.numberOfTickMarks = 6;
+    [self.zoomSlider.widthAnchor constraintEqualToConstant:190].active = YES;
+    self.zoomSensitivityValue = [NSTextField labelWithString:
+        [self zoomSensitivityTitle:settings->zoom_sensitivity]];
+    self.zoomSensitivityValue.font = [NSFont monospacedDigitSystemFontOfSize:
+        NSFont.smallSystemFontSize weight:NSFontWeightRegular];
+    self.zoomSensitivityValue.textColor = NSColor.secondaryLabelColor;
+    NSStackView *zoom = [NSStackView stackViewWithViews:@[self.zoomSlider,
+        self.zoomSensitivityValue]];
+    zoom.spacing = 10;
+    zoom.alignment = NSLayoutAttributeFirstBaseline;
+    addFormRow(grid, @"Zoom sensitivity:", zoom);
+    addHintRow(grid, @"How far each scroll-wheel step zooms the map.");
+    finishFormGrid(grid);
+    return paneController(@"General", grid);
+}
+
+- (NSViewController *)videoPane {
+    Fe8HostSettings *settings = self.settings;
+    NSGridView *grid = formGrid();
+    self.extensionsButton = [self checkbox:@"Extended renderer" tag:2
+        on:settings->extensions_enabled];
+    addFormRow(grid, @"Map:", self.extensionsButton);
+    addHintRow(grid, @"Draws terrain and units beyond the 240×160 GBA frame.");
+
+    addSeparatorRow(grid);
+    NSMutableArray<NSString *> *shaders = [NSMutableArray array];
+    for (NSInteger i = 0; i < FE8_HOST_SHADER_COUNT; ++i)
+        [shaders addObject:[NSString stringWithUTF8String:
+            fe8_host_shader_name((enum Fe8HostShader)i)]];
+    self.shaderPopup = [self popupWithTitles:shaders selected:settings->shader
+        action:@selector(shaderChanged:)];
+    NSButton *adjust = [NSButton buttonWithTitle:@"Adjust…" target:self
+        action:@selector(showShaderSettings:)];
+    NSStackView *shaderRow = [NSStackView stackViewWithViews:@[self.shaderPopup, adjust]];
+    shaderRow.spacing = 8;
+    shaderRow.alignment = NSLayoutAttributeFirstBaseline;
+    addFormRow(grid, @"Video shader:", shaderRow);
+    addHintRow(grid, @"Applied to the whole canvas, including the extended map.");
+    finishFormGrid(grid);
+    return paneController(@"Video", grid);
+}
+
+- (NSGridView *)bindingGridWithTitle:(NSString *)title buttons:(const enum Fe8HostButton *)buttons
+    count:(NSInteger)count {
+    NSGridView *grid = formGrid();
+    grid.rowSpacing = 8;
+    NSTextField *heading = [NSTextField labelWithString:title];
+    heading.font = [NSFont systemFontOfSize:NSFont.systemFontSize weight:NSFontWeightSemibold];
+    NSGridRow *headingRow = [grid addRowWithViews:@[heading]];
+    [headingRow mergeCellsInRange:NSMakeRange(0, 2)];
+    [headingRow cellAtIndex:0].xPlacement = NSGridCellPlacementLeading;
+    headingRow.bottomPadding = 2;
+    for (NSInteger i = 0; i < count; ++i)
+        [grid addRowWithViews:@[formLabel([NSString stringWithUTF8String:
+            fe8_host_button_name(buttons[i])]), [self bindingButtonWithTag:buttons[i]]]];
+    [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
+    [grid columnAtIndex:0].width = 52;
+    return grid;
+}
+
+- (NSTextField *)statusLabel {
+    NSTextField *status = [NSTextField labelWithString:@""];
+    status.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    status.alignment = NSTextAlignmentCenter;
+    return status;
+}
+
+- (NSViewController *)controlsPane {
+    static const enum Fe8HostButton face[] = {
+        FE8_HOST_A, FE8_HOST_B, FE8_HOST_L, FE8_HOST_R, FE8_HOST_START, FE8_HOST_SELECT,
+    };
+    static const enum Fe8HostButton dpad[] = {
+        FE8_HOST_UP, FE8_HOST_DOWN, FE8_HOST_LEFT, FE8_HOST_RIGHT,
+    };
+    NSGridView *buttons = [self bindingGridWithTitle:@"Buttons" buttons:face count:6];
+    NSGridView *directions = [self bindingGridWithTitle:@"D-Pad" buttons:dpad count:4];
+    for (NSGridView *grid in @[buttons, directions])
+        [grid setContentHuggingPriority:NSLayoutPriorityRequired
+            forOrientation:NSLayoutConstraintOrientationVertical];
+    NSStackView *columns = [NSStackView stackViewWithViews:@[buttons, directions]];
+    columns.alignment = NSLayoutAttributeTop;
+    columns.spacing = 36;
+
+    NSTextField *status = [self statusLabel];
+    NSStackView *body = [NSStackView stackViewWithViews:@[columns, status]];
+    body.orientation = NSUserInterfaceLayoutOrientationVertical;
+    body.spacing = 18;
+    self.bindingStatus = status;
+    [self resetBindingStatus];
+    return paneController(@"Controls", body);
+}
+
+- (NSViewController *)hotkeysPane {
+    NSGridView *grid = formGrid();
+    grid.rowSpacing = 8;
+    static NSString *const hints[FE8_HOST_HOTKEY_COUNT] = {
+        @"Hold to fast-forward", @"Save the quick state", @"Load the quick state",
+        @"Toggle the extended map",
+    };
+    for (NSInteger i = 0; i < FE8_HOST_HOTKEY_COUNT; ++i) {
+        NSButton *binding = [self bindingButtonWithTag:FE8_HOTKEY_TAG_BASE + i];
+        NSTextField *hint = [NSTextField labelWithString:hints[i]];
+        hint.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        hint.textColor = NSColor.secondaryLabelColor;
+        NSStackView *row = [NSStackView stackViewWithViews:@[binding, hint]];
+        row.spacing = 10;
+        row.alignment = NSLayoutAttributeFirstBaseline;
+        addFormRow(grid, [NSString stringWithFormat:@"%s:",
+            fe8_host_hotkey_name((enum Fe8HostHotkey)i)], row);
+    }
+    finishFormGrid(grid);
+    [grid columnAtIndex:0].width = 130;
+
+    NSTextField *status = [self statusLabel];
+    status.stringValue = @"Click a binding, then press the key to use. Esc cancels.";
+    status.textColor = NSColor.secondaryLabelColor;
+    NSStackView *body = [NSStackView stackViewWithViews:@[grid, status]];
+    body.orientation = NSUserInterfaceLayoutOrientationVertical;
+    body.spacing = 18;
+    return paneController(@"Hotkeys", body);
+}
+
+- (NSTabViewItem *)tabItem:(NSViewController *)controller symbol:(NSString *)symbolName {
+    NSTabViewItem *item = [NSTabViewItem tabViewItemWithViewController:controller];
+    item.label = controller.title;
+    item.image = [NSImage imageWithSystemSymbolName:symbolName
+        accessibilityDescription:controller.title];
+    return item;
 }
 
 - (instancetype)initWithSettings:(Fe8HostSettings *)settings
@@ -250,132 +600,39 @@ static SDL_Scancode scancodeForEvent(NSEvent *event) {
     self.loadState = loadState;
     self.quickStatePath = quickStatePath;
     self.bindingButtons = [NSMutableArray array];
-    self.window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 430, 800)
-        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-        backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"FE8 Frontend Settings";
+
+    self.tabs = [[Fe8SettingsTabController alloc] init];
+    self.tabs.tabStyle = NSTabViewControllerTabStyleToolbar;
+    self.tabs.transitionOptions = NSViewControllerTransitionNone;
+    [self.tabs addTabViewItem:[self tabItem:[self generalPane] symbol:@"gearshape"]];
+    [self.tabs addTabViewItem:[self tabItem:[self videoPane] symbol:@"display"]];
+    [self.tabs addTabViewItem:[self tabItem:[self controlsPane] symbol:@"gamecontroller"]];
+    [self.tabs addTabViewItem:[self tabItem:[self hotkeysPane] symbol:@"keyboard"]];
+
+    self.window = [NSWindow windowWithContentViewController:self.tabs];
+    self.window.styleMask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
+    self.window.toolbarStyle = NSWindowToolbarStylePreference;
     self.window.releasedWhenClosed = NO;
     self.window.delegate = self;
-
-    NSView *content = self.window.contentView;
-    NSArray<NSString *> *optionNames = @[
-        @"Enable audio", @"Synchronize presentation (VSync)",
-        @"Enable extended renderer", @"Enable mouse controls"
-    ];
-    int optionValues[] = {
-        settings->audio_enabled, settings->vsync_enabled,
-        settings->extensions_enabled, settings->mouse_enabled
-    };
-    NSInteger i;
-    for (i = 0; i < (NSInteger)optionNames.count; ++i) {
-        NSButton *check = [[NSButton alloc]
-            initWithFrame:NSMakeRect(24, 755 - i * 30, 380, 24)];
-        check.buttonType = NSButtonTypeSwitch;
-        check.title = optionNames[i];
-        check.state = optionValues[i] ? NSControlStateValueOn : NSControlStateValueOff;
-        check.tag = i;
-        check.target = self;
-        check.action = @selector(settingChanged:);
-        if (i == 2)
-            self.extensionsButton = check;
-        [content addSubview:check];
-    }
-
-    NSTextField *shaderLabel = [NSTextField labelWithString:@"Video shader"];
-    shaderLabel.frame = NSMakeRect(30, 619, 105, 24);
-    [content addSubview:shaderLabel];
-    NSPopUpButton *shaderPopup = [[NSPopUpButton alloc]
-        initWithFrame:NSMakeRect(150, 615, 245, 28) pullsDown:NO];
-    for (i = 0; i < FE8_HOST_SHADER_COUNT; ++i)
-        [shaderPopup addItemWithTitle:[NSString stringWithUTF8String:
-            fe8_host_shader_name((enum Fe8HostShader)i)]];
-    [shaderPopup selectItemAtIndex:settings->shader];
-    shaderPopup.target = self;
-    shaderPopup.action = @selector(shaderChanged:);
-    [content addSubview:shaderPopup];
-
-    NSTextField *zoomLabel = [NSTextField labelWithString:@"Zoom sensitivity"];
-    zoomLabel.frame = NSMakeRect(30, 579, 115, 24);
-    [content addSubview:zoomLabel];
-    NSSlider *zoomSlider = [NSSlider sliderWithValue:
-        settings->zoom_sensitivity * 100.0
-        minValue:FE8_HOST_ZOOM_SENSITIVITY_LOW * 100.0
-        maxValue:FE8_HOST_ZOOM_SENSITIVITY_HIGH * 100.0
-        target:self action:@selector(zoomSensitivityChanged:)];
-    zoomSlider.frame = NSMakeRect(150, 579, 150, 24);
-    zoomSlider.continuous = YES;
-    zoomSlider.numberOfTickMarks = 6;
-    zoomSlider.allowsTickMarkValuesOnly = NO;
-    [content addSubview:zoomSlider];
-    self.zoomSensitivityValue = [NSTextField labelWithString:
-        [self zoomSensitivityTitle:settings->zoom_sensitivity]];
-    self.zoomSensitivityValue.frame = NSMakeRect(307, 579, 95, 24);
-    self.zoomSensitivityValue.alignment = NSTextAlignmentRight;
-    [content addSubview:self.zoomSensitivityValue];
-
-    NSTextField *speedupLabel = [NSTextField labelWithString:@"Speed-up rate"];
-    speedupLabel.frame = NSMakeRect(30, 539, 115, 24);
-    [content addSubview:speedupLabel];
-    NSPopUpButton *speedupPopup = [[NSPopUpButton alloc]
-        initWithFrame:NSMakeRect(150, 535, 245, 28) pullsDown:NO];
-    for (i = 0; i < FE8_HOST_SPEEDUP_COUNT; ++i)
-        [speedupPopup addItemWithTitle:[NSString stringWithUTF8String:
-            fe8_host_speedup_name((enum Fe8HostSpeedupRate)i)]];
-    [speedupPopup selectItemAtIndex:settings->speedup_rate];
-    speedupPopup.target = self;
-    speedupPopup.action = @selector(speedupRateChanged:);
-    [content addSubview:speedupPopup];
-
-    NSTextField *heading = [NSTextField labelWithString:@"Keyboard controls"];
-    heading.frame = NSMakeRect(24, 495, 380, 24);
-    heading.font = [NSFont boldSystemFontOfSize:13];
-    [content addSubview:heading];
-
-    NSTextField *hint = [NSTextField labelWithString:
-        @"Click a binding, then press the key you want to use."];
-    hint.frame = NSMakeRect(24, 470, 380, 20);
-    hint.textColor = NSColor.secondaryLabelColor;
-    [content addSubview:hint];
-
-    for (i = 0; i < FE8_HOST_BUTTON_COUNT; ++i) {
-        CGFloat y = 438 - i * 29;
-        NSTextField *label = [NSTextField labelWithString:[NSString stringWithUTF8String:
-            fe8_host_button_name((enum Fe8HostButton)i)]];
-        label.frame = NSMakeRect(30, y + 4, 90, 20);
-        [content addSubview:label];
-
-        NSButton *binding = [NSButton buttonWithTitle:
-            [self titleForBindingTag:i]
-            target:self action:@selector(captureBinding:)];
-        binding.frame = NSMakeRect(130, y, 265, 26);
-        binding.tag = i;
-        binding.bezelStyle = NSBezelStyleRounded;
-        [self.bindingButtons addObject:binding];
-        [content addSubview:binding];
-    }
-
-    NSTextField *hotkeyHeading = [NSTextField labelWithString:@"Hotkeys"];
-    hotkeyHeading.frame = NSMakeRect(24, 140, 380, 24);
-    hotkeyHeading.font = [NSFont boldSystemFontOfSize:13];
-    [content addSubview:hotkeyHeading];
-    for (i = 0; i < FE8_HOST_HOTKEY_COUNT; ++i) {
-        CGFloat y = 108 - i * 29;
-        NSInteger tag = FE8_HOTKEY_TAG_BASE + i;
-        NSTextField *label = [NSTextField labelWithString:[NSString stringWithUTF8String:
-            fe8_host_hotkey_name((enum Fe8HostHotkey)i)]];
-        label.frame = NSMakeRect(30, y + 4, 145, 20);
-        [content addSubview:label];
-        NSButton *binding = [NSButton buttonWithTitle:[self titleForBindingTag:tag]
-            target:self action:@selector(captureBinding:)];
-        binding.frame = NSMakeRect(180, y, 215, 26);
-        binding.tag = tag;
-        binding.bezelStyle = NSBezelStyleRounded;
-        [self.bindingButtons addObject:binding];
-        [content addSubview:binding];
-    }
+    [self.tabs fitWindowToItem:self.tabs.tabViewItems[self.tabs.selectedTabViewItemIndex]
+        animate:NO];
     [self.window center];
     return self;
+}
+
+- (void)refreshControls {
+    Fe8HostSettings *settings = self.settings;
+    self.audioButton.state = settings->audio_enabled;
+    self.vsyncButton.state = settings->vsync_enabled;
+    self.mouseButton.state = settings->mouse_enabled;
+    self.extensionsButton.state = settings->extensions_enabled;
+    [self.shaderPopup selectItemAtIndex:settings->shader];
+    [self.speedupPopup selectItemAtIndex:settings->speedup_rate];
+}
+
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    (void)notification;
+    [self refreshControls];
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
@@ -517,6 +774,7 @@ void fe8_macos_install_settings_menu(
     const char *quick_state_path) {
     @autoreleasepool {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        NSWindow.allowsAutomaticWindowTabbing = NO;
         NSString *path = quick_state_path ?
             [NSString stringWithUTF8String:quick_state_path] : nil;
         settingsController = [[Fe8SettingsController alloc]
@@ -531,6 +789,28 @@ void fe8_macos_install_settings_menu(
             NSApp.mainMenu = mainMenu;
         }
 
+        /* macOS convention: Settings… (⌘,) lives in the application menu.
+         * SDL already reserves a disabled "Preferences…" slot; reuse it. */
+        NSMenu *appMenu = mainMenu.numberOfItems ? [mainMenu itemAtIndex:0].submenu : nil;
+        NSMenuItem *open = nil;
+        for (NSMenuItem *item in appMenu.itemArray)
+            if ([item.keyEquivalent isEqualToString:@","])
+                open = item;
+        if (!open && appMenu) {
+            NSInteger index = appMenu.numberOfItems > 0 &&
+                [appMenu itemAtIndex:0].action == @selector(orderFrontStandardAboutPanel:) ? 1 : 0;
+            if (index == 1)
+                [appMenu insertItem:NSMenuItem.separatorItem atIndex:index++];
+            open = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@","];
+            [appMenu insertItem:open atIndex:index];
+        }
+        open.title = @"Settings…";
+        open.action = @selector(showSettings:);
+        open.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+        open.target = settingsController;
+
+        NSInteger windowIndex = NSApp.windowsMenu ?
+            [mainMenu indexOfItemWithSubmenu:NSApp.windowsMenu] : -1;
         if (save_state && load_state) {
             NSMenuItem *stateRoot = [[NSMenuItem alloc]
                 initWithTitle:@"State" action:nil keyEquivalent:@""];
@@ -545,21 +825,23 @@ void fe8_macos_install_settings_menu(
             [stateMenu addItem:stateMenuItem(@"Load State…", @selector(loadStateFrom:),
                 @"l", NSEventModifierFlagCommand | NSEventModifierFlagShift)];
             stateRoot.submenu = stateMenu;
-            [mainMenu addItem:stateRoot];
+            if (windowIndex >= 0)
+                [mainMenu insertItem:stateRoot atIndex:windowIndex++];
+            else
+                [mainMenu addItem:stateRoot];
         }
 
-        NSMenuItem *settingsRoot = [[NSMenuItem alloc]
-            initWithTitle:@"Settings" action:nil keyEquivalent:@""];
-        NSMenu *settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
-        NSMenuItem *open = [[NSMenuItem alloc] initWithTitle:@"Settings…"
-            action:@selector(showSettings:) keyEquivalent:@","];
-        open.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-        open.target = settingsController;
-        [settingsMenu addItem:stateMenuItem(@"Extended Renderer",
+        NSMenuItem *viewRoot = [[NSMenuItem alloc]
+            initWithTitle:@"View" action:nil keyEquivalent:@""];
+        NSMenu *viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+        [viewMenu addItem:stateMenuItem(@"Extended Renderer",
             @selector(toggleExtensions:), @"", 0)];
-        [settingsMenu addItem:NSMenuItem.separatorItem];
-        [settingsMenu addItem:open];
-        settingsRoot.submenu = settingsMenu;
-        [mainMenu addItem:settingsRoot];
+        [viewMenu addItem:NSMenuItem.separatorItem];
+        fe8_macos_install_shader_menu(viewMenu);
+        viewRoot.submenu = viewMenu;
+        if (windowIndex >= 0)
+            [mainMenu insertItem:viewRoot atIndex:windowIndex];
+        else
+            [mainMenu addItem:viewRoot];
     }
 }

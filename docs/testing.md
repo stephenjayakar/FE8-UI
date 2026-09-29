@@ -143,7 +143,7 @@ before emitting A. While a long path is still moving, right-click and confirm
 the forced B release/new press cancels the selection rather than being mistaken
 for the already-held acceleration button.
 
-In **Settings → Settings…**, verify **Enable mouse controls** defaults on. The
+In **Settings… → General**, verify **Enable mouse controls** defaults on. The
 game canvas should replace the macOS arrow with the large blue-and-gold pointer,
 while the Settings window itself retains the normal system pointer. Turning the
 option off must immediately restore the system pointer, cancel pending movement,
@@ -155,10 +155,10 @@ capture should take approximately 2.0 seconds at the reported 59.728 fps.
 
 ## Verify macOS settings
 
-Build the macOS `.app`, launch a map, and open **Settings → Settings…** (or
-press Command-comma). The window exposes persistent Audio, VSync, and Extended
-Renderer toggles, a Video Shader selector, and a capture button for every GBA
-input. Click a binding,
+Build the macOS `.app`, launch a map, and open **Settings…** from the application menu (or
+press Command-comma). The General and Video tabs expose persistent Audio, VSync,
+and Extended Renderer toggles and a Video Shader selector; the Controls tab has a
+capture button for every GBA input. Click a binding,
 confirm that it changes to `Press a key…`, press a replacement key, and reopen
 the app to verify that the new binding persisted. Repeat with standalone left
 and right Shift and Control keys, including binding Select to Shift; modifier

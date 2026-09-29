@@ -9,6 +9,8 @@ static NSString *const kShaderParameterPrefix = @"FE8ShaderParameter";
 @property(nonatomic, strong) NSMenu *menu;
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) NSTextField *presetLabel;
+@property(nonatomic, strong) NSPopUpButton *presetPopup;
+@property(nonatomic, strong) NSButton *resetButton;
 @property(nonatomic, strong) NSMutableArray<NSSlider *> *sliders;
 @property(nonatomic, strong) NSMutableArray<NSTextField *> *valueLabels;
 @end
@@ -117,22 +119,38 @@ static NSString *const kShaderParameterPrefix = @"FE8ShaderParameter";
     [self refreshControls];
 }
 
+- (void)presetChanged:(NSPopUpButton *)sender {
+    Fe8HostSettings *settings = fe8_host_settings_current();
+    NSInteger shader = sender.indexOfSelectedItem;
+    if (!settings || shader < 0 || shader >= FE8_HOST_SHADER_COUNT)
+        return;
+    settings->shader = (enum Fe8HostShader)shader;
+    ++settings->revision;
+    [NSUserDefaults.standardUserDefaults setInteger:shader forKey:kShaderModeKey];
+    [self refreshControls];
+}
+
 - (void)refreshControls {
     Fe8HostSettings *settings = fe8_host_settings_current();
     enum Fe8HostShader shader = settings ? settings->shader : FE8_HOST_SHADER_OFF;
     Fe8HostShaderConfig config;
     fe8_host_shader_get_config(shader, &config);
-    self.presetLabel.stringValue = [NSString stringWithFormat:@"Preset: %s",
-        fe8_host_shader_name(shader)];
-    for (NSInteger i = 0; i < self.sliders.count; ++i) {
+    [self.presetPopup selectItemAtIndex:shader];
+    BOOL adjustable = shader != FE8_HOST_SHADER_OFF;
+    self.presetLabel.stringValue = adjustable ?
+        @"Changes apply immediately and are remembered for each preset." :
+        @"Choose a preset to adjust its parameters.";
+    self.resetButton.enabled = adjustable;
+    for (NSInteger i = 0; i < (NSInteger)self.sliders.count; ++i) {
         NSSlider *slider = self.sliders[i];
         NSTextField *value = self.valueLabels[i];
         double parameterValue = [self valueForConfig:&config parameter:i];
-        slider.enabled = shader != FE8_HOST_SHADER_OFF;
+        slider.enabled = adjustable;
         slider.doubleValue = parameterValue;
         value.stringValue = i == 4 ?
             [NSString stringWithFormat:@"%.3f", parameterValue] :
             [NSString stringWithFormat:@"%.2f", parameterValue];
+        value.textColor = adjustable ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor;
     }
 }
 
@@ -143,11 +161,16 @@ static NSString *const kShaderParameterPrefix = @"FE8ShaderParameter";
     [NSApp activate];
 }
 
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    (void)notification;
+    [self refreshControls];
+}
+
 - (void)menuWillOpen:(NSMenu *)menu {
     Fe8HostSettings *settings = fe8_host_settings_current();
     enum Fe8HostShader shader = settings ? settings->shader : FE8_HOST_SHADER_OFF;
     for (NSMenuItem *item in menu.itemArray) {
-        if (item.tag >= 0 && item.tag < FE8_HOST_SHADER_COUNT)
+        if (item.action == @selector(selectShader:))
             item.state = item.tag == shader ? NSControlStateValueOn : NSControlStateValueOff;
     }
 }
@@ -160,60 +183,96 @@ static NSString *const kShaderParameterPrefix = @"FE8ShaderParameter";
     self.sliders = [NSMutableArray array];
     self.valueLabels = [NSMutableArray array];
 
-    self.window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 470, 360)
-        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-        backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"CRT Shader Settings";
-    self.window.releasedWhenClosed = NO;
-    self.window.delegate = self;
-    NSView *content = self.window.contentView;
-    self.presetLabel = [NSTextField labelWithString:@""];
-    self.presetLabel.frame = NSMakeRect(24, 315, 420, 24);
-    self.presetLabel.font = [NSFont boldSystemFontOfSize:13];
-    [content addSubview:self.presetLabel];
+    NSGridView *grid = [NSGridView gridViewWithNumberOfColumns:3 rows:0];
+    grid.rowSpacing = 12;
+    grid.columnSpacing = 10;
+    grid.rowAlignment = NSGridRowAlignmentFirstBaseline;
+    grid.translatesAutoresizingMaskIntoConstraints = NO;
+
+    self.presetPopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    for (NSInteger shader = 0; shader < FE8_HOST_SHADER_COUNT; ++shader)
+        [self.presetPopup addItemWithTitle:[NSString stringWithUTF8String:
+            fe8_host_shader_name((enum Fe8HostShader)shader)]];
+    self.presetPopup.target = self;
+    self.presetPopup.action = @selector(presetChanged:);
+    NSTextField *presetTitle = [NSTextField labelWithString:@"Preset:"];
+    NSGridRow *presetRow = [grid addRowWithViews:@[presetTitle, self.presetPopup]];
+    [presetRow mergeCellsInRange:NSMakeRange(1, 2)];
+
+    self.presetLabel = [NSTextField wrappingLabelWithString:@""];
+    self.presetLabel.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    self.presetLabel.textColor = NSColor.secondaryLabelColor;
+    self.presetLabel.preferredMaxLayoutWidth = 300;
+    NSGridRow *hintRow = [grid addRowWithViews:@[NSGridCell.emptyContentView, self.presetLabel]];
+    [hintRow mergeCellsInRange:NSMakeRange(1, 2)];
+    hintRow.topPadding = -6;
+
+    NSBox *line = [[NSBox alloc] init];
+    line.boxType = NSBoxSeparator;
+    NSGridRow *lineRow = [grid addRowWithViews:@[line]];
+    [lineRow mergeCellsInRange:NSMakeRange(0, 3)];
+    [lineRow cellAtIndex:0].xPlacement = NSGridCellPlacementFill;
+    lineRow.topPadding = 2;
+    lineRow.bottomPadding = 2;
 
     NSArray<NSString *> *names = @[
-        @"Scanline strength", @"Mask strength", @"Horizontal blur",
-        @"Bloom", @"Curvature", @"Saturation"
+        @"Scanlines:", @"Mask:", @"Horizontal blur:",
+        @"Bloom:", @"Curvature:", @"Saturation:"
     ];
-    for (NSInteger i = 0; i < names.count; ++i) {
-        CGFloat y = 270 - i * 40;
+    for (NSInteger i = 0; i < (NSInteger)names.count; ++i) {
         NSTextField *label = [NSTextField labelWithString:names[i]];
-        label.frame = NSMakeRect(28, y + 3, 125, 20);
-        [content addSubview:label];
         NSSlider *slider = [NSSlider sliderWithValue:0.0
             minValue:[self minimumForParameter:i]
             maxValue:[self maximumForParameter:i]
             target:self action:@selector(parameterChanged:)];
-        slider.frame = NSMakeRect(155, y, 220, 24);
         slider.continuous = YES;
         slider.tag = i;
+        [slider.widthAnchor constraintEqualToConstant:220].active = YES;
         [self.sliders addObject:slider];
-        [content addSubview:slider];
-        NSTextField *value = [NSTextField labelWithString:@""];
-        value.frame = NSMakeRect(382, y + 3, 60, 20);
+        NSTextField *value = [NSTextField labelWithString:@"0.00"];
+        value.font = [NSFont monospacedDigitSystemFontOfSize:NSFont.smallSystemFontSize
+            weight:NSFontWeightRegular];
         value.alignment = NSTextAlignmentRight;
+        [value.widthAnchor constraintEqualToConstant:42].active = YES;
         [self.valueLabels addObject:value];
-        [content addSubview:value];
+        [grid addRowWithViews:@[label, slider, value]];
     }
-    NSButton *reset = [NSButton buttonWithTitle:@"Reset Preset"
+    [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
+
+    self.resetButton = [NSButton buttonWithTitle:@"Reset to Defaults"
         target:self action:@selector(resetPreset:)];
-    reset.frame = NSMakeRect(315, 18, 130, 30);
-    [content addSubview:reset];
+    self.resetButton.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSView *content = [[NSView alloc] initWithFrame:NSZeroRect];
+    [content addSubview:grid];
+    [content addSubview:self.resetButton];
+    [NSLayoutConstraint activateConstraints:@[
+        [grid.topAnchor constraintEqualToAnchor:content.topAnchor constant:22],
+        [grid.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24],
+        [grid.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24],
+        [self.resetButton.topAnchor constraintEqualToAnchor:grid.bottomAnchor constant:20],
+        [self.resetButton.trailingAnchor constraintEqualToAnchor:grid.trailingAnchor],
+        [self.resetButton.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-20],
+    ]];
+
+    NSSize size = content.fittingSize;
+    self.window = [[NSWindow alloc]
+        initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
+        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+        backing:NSBackingStoreBuffered defer:NO];
+    self.window.title = @"Video Shader";
+    self.window.releasedWhenClosed = NO;
+    self.window.delegate = self;
+    self.window.contentView = content;
     [self.window center];
     [self refreshControls];
     return self;
 }
 
-- (void)installMenu {
-    NSMenu *mainMenu = NSApp.mainMenu;
-    if (!mainMenu) {
-        mainMenu = [[NSMenu alloc] initWithTitle:@""];
-        NSApp.mainMenu = mainMenu;
-    }
-    NSMenuItem *root = [[NSMenuItem alloc] initWithTitle:@"Shaders" action:nil keyEquivalent:@""];
-    self.menu = [[NSMenu alloc] initWithTitle:@"Shaders"];
+- (void)installMenuInto:(NSMenu *)parent {
+    NSMenuItem *root = [[NSMenuItem alloc] initWithTitle:@"Video Shader" action:nil
+        keyEquivalent:@""];
+    self.menu = [[NSMenu alloc] initWithTitle:@"Video Shader"];
     self.menu.delegate = self;
     for (NSInteger shader = 0; shader < FE8_HOST_SHADER_COUNT; ++shader) {
         NSMenuItem *item = [[NSMenuItem alloc]
@@ -223,21 +282,43 @@ static NSString *const kShaderParameterPrefix = @"FE8ShaderParameter";
         item.tag = shader;
         item.target = self;
         [self.menu addItem:item];
+        if (shader == FE8_HOST_SHADER_OFF)
+            [self.menu addItem:NSMenuItem.separatorItem];
     }
     [self.menu addItem:NSMenuItem.separatorItem];
     NSMenuItem *configure = [[NSMenuItem alloc]
-        initWithTitle:@"Shader Settings…" action:@selector(showShaderSettings:)
+        initWithTitle:@"Adjust Shader…" action:@selector(showShaderSettings:)
         keyEquivalent:@""];
     configure.target = self;
     [self.menu addItem:configure];
     root.submenu = self.menu;
-    [mainMenu addItem:root];
+    [parent addItem:root];
 }
 
 @end
 
 static Fe8ShaderMenuController *shaderMenuController;
 
+static Fe8ShaderMenuController *ensureShaderController(void) {
+    if (!shaderMenuController)
+        shaderMenuController = [[Fe8ShaderMenuController alloc] init];
+    return shaderMenuController;
+}
+
+void fe8_macos_install_shader_menu(NSMenu *menu);
+void fe8_macos_show_shader_settings(void);
+
+void fe8_macos_install_shader_menu(NSMenu *menu) {
+    [ensureShaderController() installMenuInto:menu];
+}
+
+void fe8_macos_show_shader_settings(void) {
+    [ensureShaderController() showShaderSettings:nil];
+}
+
+/* Persisted per-preset parameters must be loaded as soon as AppKit is up,
+ * before the first frame is presented; the menu is attached later by
+ * fe8_macos_install_settings_menu(). */
 __attribute__((constructor))
 static void fe8_register_shader_menu(void) {
     @autoreleasepool {
@@ -246,10 +327,7 @@ static void fe8_register_shader_menu(void) {
             object:nil queue:NSOperationQueue.mainQueue
             usingBlock:^(NSNotification *note) {
                 (void)note;
-                if (!shaderMenuController) {
-                    shaderMenuController = [[Fe8ShaderMenuController alloc] init];
-                    [shaderMenuController installMenu];
-                }
+                ensureShaderController();
             }];
     }
 }
