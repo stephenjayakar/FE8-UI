@@ -6,6 +6,10 @@
 #define FE8_EWRAM_END UINT32_C(0x02040000)
 #define FE8_ROM_START UINT32_C(0x08000000)
 #define FE8_ROM_END UINT32_C(0x0A000000)
+#define FE8_ITEM_DATA_SIZE UINT32_C(0x24)
+#define ARCHANAE_ITEM_TABLE UINT32_C(0x09AA54F8)
+#define ARCHANAE_PROMOTION_TABLE UINT32_C(0x08B2B928)
+#define ARCHANAE_PROMOTION_ENTRY_SIZE UINT32_C(0x0C)
 #define FE8_UNIT_SIZE UINT32_C(0x48)
 #define FE8_UNIT_ITEM_OFFSET UINT32_C(0x1E)
 #define FE8_UNIT_RANK_OFFSET UINT32_C(0x28)
@@ -138,6 +142,60 @@ bool fe8_inventory_management_available(
     return false;
 }
 
+/* The SHA-verified Archanae build replaces FE8's vanilla promotion check with
+   a 12-byte table: item ID, class-list pointer, optional native predicate.
+   Its ItemData +0x22 byte is the minimum level used by that same routine.
+   Only callback-free entries are complete enough for the host to call Ready;
+   story-gated entries stay Unknown instead of guessing. */
+static void apply_archanae_promotion_rules(const Fe8MemoryReader *memory,
+    const Fe8Profile *profile, Fe8ItemInfo *item) {
+    unsigned index;
+    uint32_t item_record;
+    if (!memory || !profile || !item || !item->id ||
+            profile->inventory.item_table != ARCHANAE_ITEM_TABLE)
+        return;
+    item_record = profile->inventory.item_table +
+        (uint32_t)item->id * FE8_ITEM_DATA_SIZE;
+    if (!valid_range(item_record, FE8_ITEM_DATA_SIZE, FE8_ROM_START, FE8_ROM_END) ||
+            read8(memory, item_record + 6) != item->id)
+        return;
+    for (index = 0; index < 32; ++index) {
+        uint32_t entry = ARCHANAE_PROMOTION_TABLE +
+            (uint32_t)index * ARCHANAE_PROMOTION_ENTRY_SIZE;
+        uint16_t promotion_item;
+        uint32_t classes;
+        uint32_t extra_predicate;
+        unsigned n;
+        if (!valid_range(entry, ARCHANAE_PROMOTION_ENTRY_SIZE,
+                FE8_ROM_START, FE8_ROM_END))
+            return;
+        promotion_item = read16(memory, entry);
+        if (promotion_item == UINT16_C(0xFFFF))
+            return;
+        if (promotion_item != item->id)
+            continue;
+        item->promotion_item = true;
+        item->promotion_level = read8(memory, item_record + UINT32_C(0x22));
+        classes = read32(memory, entry + 4);
+        extra_predicate = read32(memory, entry + 8);
+        if (extra_predicate || !valid_range(classes, 1, FE8_ROM_START, FE8_ROM_END))
+            return;
+        for (n = 0; n < 256; ++n) {
+            uint8_t class_id;
+            if (!valid_range(classes + n, 1, FE8_ROM_START, FE8_ROM_END))
+                return;
+            class_id = read8(memory, classes + n);
+            if (!class_id) {
+                item->promotion_rules_complete = true;
+                return;
+            }
+            item->promotion_class_ids[class_id / 8] |=
+                (uint8_t)(1u << (class_id % 8));
+        }
+        return;
+    }
+}
+
 static bool missing_item_lock(uint32_t item_attributes, uint32_t unit_attributes) {
     static const struct {
         uint32_t item;
@@ -166,6 +224,16 @@ Fe8InventoryUseState fe8_inventory_item_use_state(
     bool staff;
     if (!unit || !item || !item->id)
         return FE8_INVENTORY_USE_ITEM;
+    if (item->promotion_item) {
+        uint8_t class_id = unit->class_id;
+        if (!item->promotion_rules_complete)
+            return FE8_INVENTORY_USE_UNKNOWN;
+        if (unit->level < item->promotion_level || !class_id ||
+                !(item->promotion_class_ids[class_id / 8] &
+                    (1u << (class_id % 8))))
+            return FE8_INVENTORY_USE_LOCKED;
+        return FE8_INVENTORY_USE_READY;
+    }
     attributes = item->attributes;
     weapon = (attributes & FE8_ITEM_ATTRIBUTE_WEAPON) != 0;
     staff = (attributes & FE8_ITEM_ATTRIBUTE_STAFF) != 0;
@@ -287,6 +355,7 @@ bool fe8_extract_prebattle_inventory(
         {
             unit->items[slot] = read16(memory, address + FE8_UNIT_ITEM_OFFSET + slot * 2);
             fe8_catalog_item(memory, catalog, unit->items[slot], &unit->item_info[slot]);
+            apply_archanae_promotion_rules(memory, profile, &unit->item_info[slot]);
         }
     }
     if (valid_range(supply_address, supply_capacity * 2,
@@ -297,6 +366,8 @@ bool fe8_extract_prebattle_inventory(
                 snapshot->supply_display_slots[snapshot->supply_count] = (uint16_t)index;
                 ++snapshot->supply_count;
                 fe8_catalog_item(memory, catalog, snapshot->supply[index],
+                    &snapshot->supply_info[index]);
+                apply_archanae_promotion_rules(memory, profile,
                     &snapshot->supply_info[index]);
             } else if (snapshot->first_empty_supply == supply_capacity) {
                 snapshot->first_empty_supply = (uint16_t)index;
